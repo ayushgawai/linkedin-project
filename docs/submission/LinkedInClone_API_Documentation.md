@@ -4,7 +4,7 @@
 **Professor:** Simon Shim  
 **Group Members:** Naman Vipul Chheda, Khushi Donda, Ayush Sunil Gawai, Bhoomika Lnu, Manav Patel, Parth Patel, Sharan Somshekhar Patil, Centhurvelan Ramalingam Sakthivel
 
-![LinkedInClone Architecture Diagram](./LinkedInClone_Architecture_Diagram.svg)
+![LinkedInClone Architecture Diagram](./LinkedInClone_Architecture_Diagram.png)
 
 ## 1. Scope and Service Boundaries
 

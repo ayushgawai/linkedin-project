@@ -29,3 +29,6 @@
 - Re-ran submission checks inside `linkedin` venv and validated fallback path without `rg`.
 - Added architecture diagram image: `docs/submission/LinkedInClone_Architecture_Diagram.svg`.
 - Embedded architecture diagram into submission document and regenerated DOCX.
+- Improved DOCX table formatting: enforced full table borders, bold + shaded header rows, and removed fixed table layout to reduce awkward line wrapping.
+- Converted architecture diagram to PNG for Google Docs compatibility: `docs/submission/LinkedInClone_Architecture_Diagram.png`.
+- Updated submission doc to reference PNG and regenerated DOCX with formatting fixes preserved.
