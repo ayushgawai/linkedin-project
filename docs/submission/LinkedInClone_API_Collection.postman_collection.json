@@ -1,0 +1,87 @@
+{
+  "info": {
+    "name": "LinkedInClone Group API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "profile_base", "value": "http://localhost:8001" },
+    { "key": "job_base", "value": "http://localhost:8002" },
+    { "key": "application_base", "value": "http://localhost:8003" },
+    { "key": "messaging_base", "value": "http://localhost:8004" },
+    { "key": "connection_base", "value": "http://localhost:8005" },
+    { "key": "analytics_base", "value": "http://localhost:8006" },
+    { "key": "ai_base", "value": "http://localhost:8007" }
+  ],
+  "item": [
+    {
+      "name": "Profile Service",
+      "item": [
+        { "name": "Create Member", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{profile_base}}/members/create", "body": { "mode": "raw", "raw": "{\n  \"first_name\": \"Jane\",\n  \"last_name\": \"Doe\",\n  \"email\": \"jane@example.com\"\n}" } } },
+        { "name": "Get Member", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{profile_base}}/members/get", "body": { "mode": "raw", "raw": "{\n  \"member_id\": \"<member-id>\"\n}" } } },
+        { "name": "Update Member", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{profile_base}}/members/update", "body": { "mode": "raw", "raw": "{\n  \"member_id\": \"<member-id>\",\n  \"fields_to_update\": {\"headline\": \"Senior Engineer\"}\n}" } } },
+        { "name": "Delete Member", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{profile_base}}/members/delete", "body": { "mode": "raw", "raw": "{\n  \"member_id\": \"<member-id>\"\n}" } } },
+        { "name": "Search Members", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{profile_base}}/members/search", "body": { "mode": "raw", "raw": "{\n  \"keyword\": \"backend\",\n  \"page\": 1,\n  \"page_size\": 20\n}" } } }
+      ]
+    },
+    {
+      "name": "Job Service",
+      "item": [
+        { "name": "Create Job", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{job_base}}/jobs/create", "body": { "mode": "raw", "raw": "{\n  \"company_id\": \"<company-id>\",\n  \"recruiter_id\": \"<recruiter-id>\",\n  \"title\": \"Backend Engineer\",\n  \"description\": \"Build APIs\"\n}" } } },
+        { "name": "Get Job", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{job_base}}/jobs/get", "body": { "mode": "raw", "raw": "{\n  \"job_id\": \"<job-id>\"\n}" } } },
+        { "name": "Update Job", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{job_base}}/jobs/update", "body": { "mode": "raw", "raw": "{\n  \"job_id\": \"<job-id>\",\n  \"fields\": {\"title\": \"Senior Backend Engineer\"}\n}" } } },
+        { "name": "Search Jobs", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{job_base}}/jobs/search", "body": { "mode": "raw", "raw": "{\n  \"keyword\": \"backend\",\n  \"page\": 1,\n  \"page_size\": 20\n}" } } },
+        { "name": "Close Job", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{job_base}}/jobs/close", "body": { "mode": "raw", "raw": "{\n  \"job_id\": \"<job-id>\"\n}" } } },
+        { "name": "Jobs By Recruiter", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{job_base}}/jobs/byRecruiter", "body": { "mode": "raw", "raw": "{\n  \"recruiter_id\": \"<recruiter-id>\",\n  \"page\": 1,\n  \"page_size\": 20\n}" } } }
+      ]
+    },
+    {
+      "name": "Application Service",
+      "item": [
+        { "name": "Submit Application", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{application_base}}/applications/submit", "body": { "mode": "raw", "raw": "{\n  \"job_id\": \"<job-id>\",\n  \"member_id\": \"<member-id>\"\n}" } } },
+        { "name": "Get Application", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{application_base}}/applications/get", "body": { "mode": "raw", "raw": "{\n  \"application_id\": \"<application-id>\"\n}" } } },
+        { "name": "Applications By Job", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{application_base}}/applications/byJob", "body": { "mode": "raw", "raw": "{\n  \"job_id\": \"<job-id>\",\n  \"page\": 1,\n  \"page_size\": 20\n}" } } },
+        { "name": "Applications By Member", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{application_base}}/applications/byMember", "body": { "mode": "raw", "raw": "{\n  \"member_id\": \"<member-id>\",\n  \"page\": 1,\n  \"page_size\": 20\n}" } } },
+        { "name": "Update Application Status", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{application_base}}/applications/updateStatus", "body": { "mode": "raw", "raw": "{\n  \"application_id\": \"<application-id>\",\n  \"status\": \"reviewing\"\n}" } } },
+        { "name": "Add Application Note", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{application_base}}/applications/addNote", "body": { "mode": "raw", "raw": "{\n  \"application_id\": \"<application-id>\",\n  \"recruiter_id\": \"<recruiter-id>\",\n  \"note_text\": \"Strong fit\"\n}" } } }
+      ]
+    },
+    {
+      "name": "Messaging Service",
+      "item": [
+        { "name": "Open Thread", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{messaging_base}}/threads/open", "body": { "mode": "raw", "raw": "{\n  \"participant_ids\": [\"<id1>\", \"<id2>\"]\n}" } } },
+        { "name": "Get Thread", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{messaging_base}}/threads/get", "body": { "mode": "raw", "raw": "{\n  \"thread_id\": \"<thread-id>\"\n}" } } },
+        { "name": "List Messages", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{messaging_base}}/messages/list", "body": { "mode": "raw", "raw": "{\n  \"thread_id\": \"<thread-id>\",\n  \"page\": 1,\n  \"page_size\": 20\n}" } } },
+        { "name": "Send Message", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{messaging_base}}/messages/send", "body": { "mode": "raw", "raw": "{\n  \"thread_id\": \"<thread-id>\",\n  \"sender_id\": \"<sender-id>\",\n  \"message_text\": \"hello\"\n}" } } },
+        { "name": "Threads By User", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{messaging_base}}/threads/byUser", "body": { "mode": "raw", "raw": "{\n  \"user_id\": \"<user-id>\",\n  \"page\": 1,\n  \"page_size\": 20\n}" } } }
+      ]
+    },
+    {
+      "name": "Connection Service",
+      "item": [
+        { "name": "Request Connection", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{connection_base}}/connections/request", "body": { "mode": "raw", "raw": "{\n  \"requester_id\": \"<id1>\",\n  \"receiver_id\": \"<id2>\"\n}" } } },
+        { "name": "Accept Connection", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{connection_base}}/connections/accept", "body": { "mode": "raw", "raw": "{\n  \"request_id\": \"<request-id>\"\n}" } } },
+        { "name": "Reject Connection", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{connection_base}}/connections/reject", "body": { "mode": "raw", "raw": "{\n  \"request_id\": \"<request-id>\"\n}" } } },
+        { "name": "List Connections", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{connection_base}}/connections/list", "body": { "mode": "raw", "raw": "{\n  \"user_id\": \"<user-id>\",\n  \"page\": 1,\n  \"page_size\": 20\n}" } } },
+        { "name": "Mutual Connections", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{connection_base}}/connections/mutual", "body": { "mode": "raw", "raw": "{\n  \"user_id\": \"<user-id>\",\n  \"other_id\": \"<other-id>\"\n}" } } }
+      ]
+    },
+    {
+      "name": "Analytics Service",
+      "item": [
+        { "name": "Ingest Event", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{analytics_base}}/events/ingest", "body": { "mode": "raw", "raw": "{\n  \"event_type\": \"job.viewed\",\n  \"actor_id\": \"<id>\",\n  \"entity_type\": \"job\",\n  \"entity_id\": \"<job-id>\",\n  \"payload\": {},\n  \"trace_id\": \"<trace-id>\"\n}" } } },
+        { "name": "Top Jobs", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{analytics_base}}/analytics/jobs/top", "body": { "mode": "raw", "raw": "{\n  \"metric\": \"applications\",\n  \"window_days\": 30,\n  \"limit\": 10\n}" } } },
+        { "name": "Funnel", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{analytics_base}}/analytics/funnel", "body": { "mode": "raw", "raw": "{\n  \"job_id\": \"<job-id>\",\n  \"window_days\": 30\n}" } } },
+        { "name": "Geo", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{analytics_base}}/analytics/geo", "body": { "mode": "raw", "raw": "{\n  \"job_id\": \"<job-id>\",\n  \"window_days\": 30\n}" } } },
+        { "name": "Member Dashboard", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{analytics_base}}/analytics/member/dashboard", "body": { "mode": "raw", "raw": "{\n  \"member_id\": \"<member-id>\",\n  \"window_days\": 30\n}" } } }
+      ]
+    },
+    {
+      "name": "AI Agent Service",
+      "item": [
+        { "name": "AI Request", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{ai_base}}/ai/request", "body": { "mode": "raw", "raw": "{\n  \"job_id\": \"<job-id>\",\n  \"recruiter_id\": \"<recruiter-id>\",\n  \"task_type\": \"shortlist\"\n}" } } },
+        { "name": "AI Status", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{ai_base}}/ai/status", "body": { "mode": "raw", "raw": "{\n  \"task_id\": \"<task-id>\"\n}" } } },
+        { "name": "AI Approve", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{ai_base}}/ai/approve", "body": { "mode": "raw", "raw": "{\n  \"task_id\": \"<task-id>\",\n  \"action\": \"approve\"\n}" } } }
+      ]
+    }
+  ]
+}
