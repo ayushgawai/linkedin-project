@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  docs-and-contract-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Run API documentation contract checks
+        run: |
+          bash tests/submission_contract_check.sh
+
+      - name: Validate Postman collection JSON
+        run: python3 - << 'PY'
+import json
+with open('docs/submission/LinkedInClone_API_Collection.postman_collection.json', 'r', encoding='utf-8') as f:
+    json.load(f)
+print('Postman collection JSON is valid')
+PY

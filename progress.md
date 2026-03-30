@@ -6,3 +6,26 @@
 - Added `.gitignore` with `personal/` exclusion.
 - Added `.env.example`.
 - Added project `README.md` with team roles and setup skeleton.
+- Added service placeholders (`services/*`) with health endpoint stubs and Dockerfiles.
+- Added Member 1 API documentation artifacts:
+  - `docs/api/member1-api-documentation.md`
+  - `docs/api/member1-openapi.yaml`
+  - `docs/api/member1-postman-collection.json`
+- Added API contract verification script: `tests/api_contract_check.sh`.
+- Created private draft docx in `personal/member1-api-documentation-draft.docx` (excluded from git).
+- Ran API doc validation script: passed.
+- Validated Postman collection JSON syntax: passed.
+- Validated Docker Compose config rendering: passed.
+- Reworked documentation from internal member scope to full group submission scope.
+- Created final submission package:
+  - `docs/submission/LinkedInClone_API_Documentation.md`
+  - `docs/submission/LinkedInClone_API_Documentation.docx`
+  - `docs/submission/LinkedInClone_API_Collection.postman_collection.json`
+- Added full contract validation script: `tests/submission_contract_check.sh`.
+- Added initial CI workflow: `.github/workflows/ci.yml` (documentation + collection checks).
+- Moved internal-only source docs and member-level drafts into `personal/internal_docs/` (not committed).
+- Fixed `tests/submission_contract_check.sh` to fallback to `grep` when `rg` is unavailable.
+- Created local virtual environment `linkedin/` for aligned local development/testing.
+- Re-ran submission checks inside `linkedin` venv and validated fallback path without `rg`.
+- Added architecture diagram image: `docs/submission/LinkedInClone_Architecture_Diagram.svg`.
+- Embedded architecture diagram into submission document and regenerated DOCX.

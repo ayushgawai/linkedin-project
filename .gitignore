@@ -17,6 +17,7 @@ coverage/
 
 # Personal workspace (never commit)
 personal/
+linkedin/
 
 # IDE
 .vscode/
