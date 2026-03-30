@@ -1,0 +1,11 @@
+{
+  "name": "linkedinclone",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "services/*"
+  ],
+  "scripts": {
+    "test:api-doc": "bash tests/submission_contract_check.sh"
+  }
+}
