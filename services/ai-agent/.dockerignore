@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+ENV/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Local / secret config — never ship these into the image
+.env
+.env.*
+!.env.example
+*.local
+
+# Git / docs / repo-level files not needed in the container
+.git/
+.gitignore
+.gitattributes
+.github/
+*.md
+!services/ai-agent/README.md
+
+# Test artefacts
+tests/
+test/
+*.log
+
+# Models cache (sentence-transformers downloads at runtime)
+.cache/
+models/

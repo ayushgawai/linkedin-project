@@ -1,0 +1,92 @@
+---
+title: AI Agent Service — Hiring Assistant Workflow
+---
+flowchart TD
+    subgraph Frontend["Frontend (React :3000)"]
+        F1[Recruiter clicks\n'AI Shortlist']
+        F2[WebSocket /ai/stream/task_id]
+        F3[Review & Approve / Edit / Reject]
+    end
+
+    subgraph AIService["AI Agent Service (:8007)"]
+        A1["POST /ai/request\n(generate task_id + trace_id)"]
+        A2["MongoDB\nai_traces\n(status: pending)"]
+        A3["Kafka Producer\nai.requests topic"]
+
+        subgraph Supervisor["Hiring Assistant Supervisor"]
+            S1["Fetch Applications\nfrom Application Service :8003"]
+            S2["Fetch Member Profiles\nfrom Profile Service :8001"]
+            S3["Resume Parser Skill\n(per applicant)"]
+            S4["Job-Candidate Matcher\n(0.6 × skill_overlap\n+0.4 × embedding_sim)"]
+            S5["Outreach Drafter Skill\n(top-N candidates)"]
+            S6["Final Result\nshortlist + metrics"]
+        end
+
+        A4["Kafka Consumer\nai.requests\n(group: ai-supervisor-group)"]
+        A5["Kafka Producer\nai.results topic"]
+        A6["WebSocket Manager\nbroadcast to task_id clients"]
+        A7["POST /ai/approve\nstore decision in MongoDB"]
+    end
+
+    subgraph ExternalServices["External Services (mocked)"]
+        E1[Application Service :8003\nPOST /applications/byJob]
+        E2[Profile Service :8001\nPOST /members/get]
+        E3[Messaging Service :8004\nPOST /messages/send]
+    end
+
+    subgraph DataStores["Data Stores"]
+        DB1[(MongoDB\nai_traces)]
+        DB2[(Kafka\nai.requests)]
+        DB3[(Kafka\nai.results)]
+    end
+
+    %% Request flow
+    F1 --> A1
+    A1 --> A2
+    A1 --> A3
+    A3 --> DB2
+    DB2 --> A4
+    A4 --> Supervisor
+
+    %% Supervisor orchestration
+    Supervisor --> S1
+    S1 --> E1
+    S1 --> S2
+    S2 --> E2
+    S2 --> S3
+    S3 --> S4
+    S4 --> S5
+    S5 --> S6
+
+    %% Progress emission (after each step)
+    S1 -- "emit progress" --> A5
+    S2 -- "emit progress" --> A5
+    S3 -- "emit progress" --> A5
+    S4 -- "emit progress" --> A5
+    S5 -- "emit progress" --> A5
+    S6 -- "final result" --> A5
+
+    A5 --> DB3
+    A5 --> A6
+    A6 --> F2
+    S6 --> DB1
+
+    %% MongoDB writes
+    A2 --> DB1
+    Supervisor -- "step records" --> DB1
+
+    %% Approval
+    F2 --> F3
+    F3 --> A7
+    A7 --> DB1
+
+    %% Outreach (after approve)
+    A7 -- "if action=approve" --> E3
+
+    %% trace_id propagation
+    A1 -. "trace_id flows through\nall steps & Kafka messages" .-> S6
+
+    style Supervisor fill:#e8f4fd,stroke:#2196F3
+    style ExternalServices fill:#fff3e0,stroke:#FF9800
+    style DataStores fill:#f3e5f5,stroke:#9C27B0
+    style Frontend fill:#e8f5e9,stroke:#4CAF50
