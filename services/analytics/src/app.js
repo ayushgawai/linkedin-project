@@ -4,6 +4,7 @@ import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { healthRouter } from './routes/health.js';
 import { eventsRouter } from './routes/events.js';
 import { analyticsRouter } from './routes/analytics.js';
+import { benchmarkRouter } from './routes/benchmark.js';
 
 export function createApp() {
   const app = express();
@@ -15,6 +16,7 @@ export function createApp() {
   app.use(healthRouter);
   app.use(eventsRouter);
   app.use(analyticsRouter);
+  app.use(benchmarkRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

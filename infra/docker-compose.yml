@@ -220,6 +220,7 @@ services:
       KAFKA_CONSUMER_GROUP: analytics-consumer-group
       KAFKA_ENABLED: ${KAFKA_ENABLED:-true}
       ANALYTICS_CACHE_TTL_SEC: ${ANALYTICS_CACHE_TTL_SEC:-60}
+      BENCH_ADMIN_TOKEN: ${BENCH_ADMIN_TOKEN:-dev-only}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       mysql:

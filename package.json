@@ -6,6 +6,9 @@
     "services/*"
   ],
   "scripts": {
-    "test:api-doc": "bash tests/submission_contract_check.sh"
+    "test:api-doc": "bash tests/submission_contract_check.sh",
+    "seed": "node scripts/bench/seed.js",
+    "seed:reset": "node scripts/bench/seed.js --reset",
+    "seed:events": "node scripts/bench/seed.js --only=events"
   }
 }

@@ -36,6 +36,8 @@ const EnvSchema = z.object({
     .default('info'),
 
   ANALYTICS_CACHE_TTL_SEC: z.coerce.number().int().positive().default(60),
+
+  BENCH_ADMIN_TOKEN: z.string().default('dev-only'),
 });
 
 function loadConfig() {
