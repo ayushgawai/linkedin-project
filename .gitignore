@@ -22,3 +22,17 @@ linkedin/
 # IDE
 .vscode/
 .idea/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
+# Data pipeline — raw CSVs and generated seeds are local-only
+data/raw/
+data/seeds/
+
+# Test coverage output
+tests/coverage/
