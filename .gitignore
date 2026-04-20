@@ -31,6 +31,8 @@ venv/
 *.jtl
 infra/perf/results/
 infra/perf/logs/
+# Extracted test data (regenerated from seed via extract_ids.js)
+infra/perf/data/
 
 # IDE
 .vscode/

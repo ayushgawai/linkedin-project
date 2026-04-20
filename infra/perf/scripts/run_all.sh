@@ -73,10 +73,15 @@ flip_redis() {
     REDIS_ENABLED="$value" docker compose -f "$COMPOSE_FILE" \
       up -d --no-deps --force-recreate profile job analytics >/dev/null
   )
-  # Wait for services to report healthy
-  for port in 8001 8002 8006; do
+  # Wait for services to report healthy.
+  # NOTE: use `hp` (not `port`) because bash uses dynamic scoping — naming
+  # this loop variable `port` clobbers the caller's `port` and every scenario
+  # ends up invoked with the last healthcheck port (8006). That bug silently
+  # made scenarios A and C hit the analytics service, producing 404s.
+  local hp
+  for hp in 8001 8002 8006; do
     for i in {1..30}; do
-      if curl -sf "http://${HOST}:${port}/health" >/dev/null 2>&1; then
+      if curl -sf "http://${HOST}:${hp}/health" >/dev/null 2>&1; then
         break
       fi
       sleep 1
