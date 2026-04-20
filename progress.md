@@ -34,7 +34,9 @@
 - Updated submission doc to reference PNG and regenerated DOCX with formatting fixes preserved.
 
 ## 2026-04-19
-- Created branch `ayush/member1-foundation` for Member 1 implementation work.
+- Created branch `feature/ayush/backend-infra-foundation` for Member 1 implementation work.
+- Added Member 1 demo seed data in `data/member1_demo_seed.sql`.
+- Added repeatable smoke-test helper in `scripts/member1_smoke_test.sh`.
 - Implemented Profile Service API contract in `services/profile/src/app.js` with:
   - member create/get/update/delete/search
   - validation and standardized success/error envelopes

@@ -1,6 +1,6 @@
 # Member 1 Manual Follow-Up Checklist
 
-This document covers the work that still needs a human account owner or project lead to complete after the code on `ayush/member1-foundation` is ready.
+This document covers the work that still needs a human account owner or project lead to complete after the code on `feature/ayush/backend-infra-foundation` is ready.
 
 ## 1. What Is Already Done In Code
 
@@ -14,7 +14,7 @@ This document covers the work that still needs a human account owner or project 
 ## 2. GitHub Steps You Still Need To Do
 
 1. Open the pushed branch:
-   `ayush/member1-foundation`
+   `feature/ayush/backend-infra-foundation`
 2. Create a PR from that branch into your target base branch.
 3. Do not merge yet.
 4. Request review from Claude Opus 4.6 and any teammates/prof-required reviewers.
@@ -128,12 +128,14 @@ After the stack is up:
 2. Connect using a MySQL client.
 3. Run the schema file:
    `data/schema.sql`
-4. Seed any recruiter/member demo data you need for testing.
+4. Load demo data from:
+   `data/member1_demo_seed.sql`
 
 Example:
 
 ```bash
 mysql -h <rds-endpoint> -u admin -p linkedinclone < data/schema.sql
+mysql -h <rds-endpoint> -u admin -p linkedinclone < data/member1_demo_seed.sql
 ```
 
 ## 9. Build And Push Images
@@ -183,7 +185,8 @@ After stack deployment:
 curl http://<alb-dns>/health
 curl http://<alb-dns>/members/search -H 'content-type: application/json' -d '{"page":1,"page_size":5}'
 curl http://<alb-dns>/jobs/search -H 'content-type: application/json' -d '{"page":1,"page_size":5}'
-curl http://<alb-dns>/applications/byMember -H 'content-type: application/json' -d '{"member_id":"demo","page":1,"page_size":5}'
+curl http://<alb-dns>/applications/byMember -H 'content-type: application/json' -d '{"member_id":"22222222-2222-2222-2222-222222222222","page":1,"page_size":5}'
+bash scripts/member1_smoke_test.sh http://<alb-dns>
 ```
 
 5. If these fail, check:
@@ -195,7 +198,7 @@ curl http://<alb-dns>/applications/byMember -H 'content-type: application/json' 
 
 ## 12. Demo Data You Will Likely Need
 
-Before demo/review, manually insert at least:
+Before demo/review, load the provided seed data or insert at least:
 
 - one recruiter
 - one or more members
@@ -204,6 +207,7 @@ Before demo/review, manually insert at least:
 Why:
 - `jobs/create` requires a valid recruiter
 - `applications/submit` requires valid member and job records
+- a ready seed file is already provided in `data/member1_demo_seed.sql`
 
 ## 13. CI Troubleshooting If GitHub Fails
 

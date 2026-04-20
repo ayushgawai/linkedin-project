@@ -17,7 +17,9 @@ This deployment covers Ayush's Member 1 scope:
 ```bash
 npm install
 docker compose -f infra/docker-compose.yml up --build -d mysql profile job application
+mysql -h 127.0.0.1 -u root -plinkedin linkedinclone < data/member1_demo_seed.sql
 npm test
+bash scripts/member1_smoke_test.sh
 ```
 
 If you need a clean schema refresh, remove the MySQL volume first:
@@ -31,7 +33,8 @@ docker compose -f infra/docker-compose.yml down -v
 1. Build and push the three service images to ECR.
 2. Deploy the CloudFormation stack with those image URIs.
 3. Wait for ECS services and the RDS instance to become healthy.
-4. Test the ALB endpoints for `/members/*`, `/jobs/*`, and `/applications/*`.
+4. Load `data/schema.sql` and `data/member1_demo_seed.sql` into RDS.
+5. Test the ALB endpoints for `/members/*`, `/jobs/*`, and `/applications/*`.
 
 ### Example ECR Image Build
 
@@ -77,13 +80,15 @@ curl http://<alb-dns>/jobs/search \
 
 curl http://<alb-dns>/applications/byMember \
   -H 'content-type: application/json' \
-  -d '{"member_id":"demo","page":1,"page_size":5}'
+  -d '{"member_id":"22222222-2222-2222-2222-222222222222","page":1,"page_size":5}'
 ```
 
 ## Notes
 
 - The CloudFormation stack provisions a fresh RDS instance, so for demos it is easiest to deploy into a dedicated test account or project VPC.
 - The schema file at [data/schema.sql](/Users/spartan/Documents/GitHub/Linkedin-Project/data/schema.sql:1) is mounted automatically in local Docker, but in AWS you should run the schema once against the RDS endpoint after the database is reachable.
+- Demo data for recruiter/member/job setup is in [data/member1_demo_seed.sql](/Users/spartan/Documents/GitHub/Linkedin-Project/data/member1_demo_seed.sql:1).
+- Repeatable smoke testing is in [scripts/member1_smoke_test.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/member1_smoke_test.sh:1).
 - The ALB uses path-based routing:
   `/members/*` -> profile
   `/jobs/*` -> job
