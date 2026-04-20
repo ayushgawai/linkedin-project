@@ -66,9 +66,11 @@ export async function startKafkaConsumer() {
 }
 
 // Exported so HTTP /events/ingest and the Kafka consumer share one code path.
+// ctx.collection is an optional seam for tests — production callers rely on
+// the default resolver which lazily connects to Mongo.
 export async function ingestEnvelope(envelope, ctx = {}) {
-  const db = await connectMongo();
-  const events = db.collection('events');
+  const events =
+    ctx.collection ?? (await connectMongo()).collection('events');
 
   if (!envelope?.idempotency_key) {
     logger.warn({ ctx }, 'envelope missing idempotency_key — rejecting');

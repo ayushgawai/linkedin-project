@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test tests/",
+    "test": "LOG_LEVEL=fatal node --test tests/*.test.js",
+    "test:spec": "LOG_LEVEL=fatal node --test --test-reporter=spec tests/*.test.js",
     "seed": "node ../../scripts/bench/seed.js",
     "seed:reset": "node ../../scripts/bench/seed.js --reset"
   },
