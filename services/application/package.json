@@ -1,0 +1,13 @@
+{
+  "name": "@linkedinclone/application-service",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "mysql2": "^3.15.2"
+  }
+}

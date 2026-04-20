@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Build/logs
+*.log
+dist/
+build/
+coverage/
+
+# OS
+.DS_Store
+
+# Personal workspace (never commit)
+personal/
+linkedin/
+
+# IDE
+.vscode/
+.idea/
