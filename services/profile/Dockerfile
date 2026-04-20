@@ -14,7 +14,13 @@ COPY services/profile/package.json ./
 COPY services/profile/src ./src
 COPY services/shared ../shared
 
-RUN addgroup -S app && adduser -S app -G app && chown -R app:app /app ../shared
+# /shared/cache.js imports `ioredis`. Because /shared sits outside /app,
+# Node's ESM walk-up resolution never reaches /app/node_modules. Symlinking
+# node_modules into /shared makes the walk-up find every dep the service
+# already installed, without duplicating packages or touching import paths.
+RUN ln -s /app/node_modules /shared/node_modules
+
+RUN addgroup -S app && adduser -S app -G app && chown -R app:app /app /shared
 USER app
 
 EXPOSE 8001

@@ -15,7 +15,15 @@ COPY services/analytics/src ./src
 COPY services/shared ../shared
 COPY scripts/bench /scripts/bench
 
-RUN addgroup -S app && adduser -S app -G app && chown -R app:app /app ../shared /scripts
+# Files under /shared and /scripts import bare modules (ioredis, mysql2,
+# mongodb) that Node can only find in /app/node_modules. Because both live
+# outside the /app tree, the ESM walk-up never reaches that dir. Symlinks
+# into each path make the walk-up resolve without duplicating packages or
+# editing import statements.
+RUN ln -s /app/node_modules /shared/node_modules \
+ && ln -s /app/node_modules /scripts/node_modules
+
+RUN addgroup -S app && adduser -S app -G app && chown -R app:app /app /shared /scripts
 USER app
 
 EXPOSE 8006
