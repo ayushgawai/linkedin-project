@@ -17,8 +17,26 @@ coverage/
 
 # Personal workspace (never commit)
 personal/
+_personal/
 linkedin/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# JMeter / performance artifacts
+*.jtl
+infra/perf/results/
+infra/perf/logs/
 
 # IDE
 .vscode/
 .idea/
+*.swp
+
+# OS junk
+Thumbs.db
+~$*
