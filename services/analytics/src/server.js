@@ -5,6 +5,7 @@ import { connectMongo, closeMongo } from './db/mongo.js';
 import { getPool, closeMySQL } from './db/mysql.js';
 import { getRedis, closeRedis } from './db/redis.js';
 import { startKafkaConsumer, stopKafkaConsumer } from './kafka/consumer.js';
+import { setMetricSink as setCacheMetricSink, closeCache } from '../../shared/cache.js';
 
 async function main() {
   // Fail fast if the DB layer can't come up. Redis and Kafka are allowed to
@@ -15,6 +16,11 @@ async function main() {
   if (config.REDIS_ENABLED) {
     getRedis();
   }
+
+  // Route cache metrics into pino so we can later ship them to the
+  // cache_metrics collection during Phase 5 charting. Kept at debug so prod
+  // log volume stays low unless we opt in.
+  setCacheMetricSink((m) => logger.debug(m, 'cache_metric'));
 
   // Kafka consumer is fire-and-forget — we don't block startup on it so that
   // the HTTP server is reachable for /health probes even if Kafka is slow
@@ -38,6 +44,7 @@ async function main() {
     server.close(async () => {
       await stopKafkaConsumer();
       await closeRedis();
+      await closeCache();
       await closeMongo();
       await closeMySQL();
       logger.info('shutdown complete');

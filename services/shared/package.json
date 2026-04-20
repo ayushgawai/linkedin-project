@@ -1,0 +1,8 @@
+{
+  "name": "@linkedinclone/shared",
+  "version": "1.0.0",
+  "description": "Shared utilities (cache-aside helper, envelope) imported by Node services.",
+  "type": "module",
+  "main": "cache.js",
+  "private": true
+}
