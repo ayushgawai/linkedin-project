@@ -42,3 +42,9 @@ infra/perf/data/
 # OS junk
 Thumbs.db
 ~$*
+
+# Local reference docs / working copies kept outside version control.
+# The spec lives in docs/submission/ — keep these copies untracked so the
+# repo root stays clean. Remove the pattern if you ever want to commit them.
+LinkedInClone_*.docx
+LinkedInClone_*.txt
