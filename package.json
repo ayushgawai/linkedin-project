@@ -2,10 +2,16 @@
   "name": "linkedinclone",
   "private": true,
   "version": "0.1.0",
+  "type": "module",
   "workspaces": [
     "services/*"
   ],
   "scripts": {
+    "test": "npm run test:member1 && npm run test:api-doc",
+    "test:member1": "node --test tests/member1-services.test.js",
     "test:api-doc": "bash tests/submission_contract_check.sh"
+  },
+  "devDependencies": {
+    "supertest": "^7.1.1"
   }
 }

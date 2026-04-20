@@ -84,6 +84,60 @@ services:
       timeout: 10s
       retries: 10
 
+  profile:
+    build:
+      context: ..
+      dockerfile: services/profile/Dockerfile
+    container_name: linkedinclone-profile
+    environment:
+      PORT: 8001
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASS: ${DB_PASS:-linkedin}
+      DB_NAME: ${DB_NAME:-linkedinclone}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - '8001:8001'
+
+  job:
+    build:
+      context: ..
+      dockerfile: services/job/Dockerfile
+    container_name: linkedinclone-job
+    environment:
+      PORT: 8002
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASS: ${DB_PASS:-linkedin}
+      DB_NAME: ${DB_NAME:-linkedinclone}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - '8002:8002'
+
+  application:
+    build:
+      context: ..
+      dockerfile: services/application/Dockerfile
+    container_name: linkedinclone-application
+    environment:
+      PORT: 8003
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASS: ${DB_PASS:-linkedin}
+      DB_NAME: ${DB_NAME:-linkedinclone}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - '8003:8003'
+
 volumes:
   mysql_data:
   mongo_data:

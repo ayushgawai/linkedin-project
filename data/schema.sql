@@ -69,8 +69,10 @@ CREATE TABLE IF NOT EXISTS applications (
   resume_url VARCHAR(500),
   resume_text TEXT,
   cover_letter TEXT,
+  answers JSON,
   application_datetime DATETIME DEFAULT CURRENT_TIMESTAMP,
   status ENUM('submitted', 'reviewing', 'interview', 'offer', 'rejected') DEFAULT 'submitted',
+  status_note TEXT,
   UNIQUE KEY uk_job_member (job_id, member_id),
   CONSTRAINT fk_applications_job FOREIGN KEY (job_id) REFERENCES jobs(job_id),
   CONSTRAINT fk_applications_member FOREIGN KEY (member_id) REFERENCES members(member_id)
