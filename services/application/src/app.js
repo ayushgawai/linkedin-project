@@ -1,4 +1,5 @@
 import express from 'express';
+import { randomUUID } from 'node:crypto';
 
 import { getPagination, sendError, sendSuccess } from '../../shared/src/http.js';
 import { checkMySqlHealth, query, withTransaction } from '../../shared/src/mysql.js';
@@ -11,6 +12,7 @@ const VALID_TRANSITIONS = {
   offer: new Set(),
   rejected: new Set()
 };
+const VALID_APPLICATION_STATUSES = new Set(Object.keys(VALID_TRANSITIONS));
 
 function validateSubmitPayload(body) {
   return {
@@ -86,11 +88,13 @@ export function createApplicationMySqlRepository() {
           return { conflict: 'DUPLICATE_APPLICATION' };
         }
 
+        const applicationId = randomUUID();
         await connection.execute(
           `INSERT INTO applications
-            (job_id, member_id, resume_url, resume_text, cover_letter, answers, status, status_note)
-           VALUES (?, ?, ?, ?, ?, ?, 'submitted', NULL)`,
+            (application_id, job_id, member_id, resume_url, resume_text, cover_letter, answers, status, status_note)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted', NULL)`,
           [
+            applicationId,
             input.job_id,
             input.member_id,
             input.resume_url,
@@ -101,17 +105,7 @@ export function createApplicationMySqlRepository() {
         );
 
         await connection.execute('UPDATE jobs SET applicants_count = applicants_count + 1 WHERE job_id = ?', [input.job_id]);
-
-        const [[row]] = await connection.query(
-          `SELECT application_id
-             FROM applications
-            WHERE job_id = ? AND member_id = ?
-         ORDER BY application_datetime DESC
-            LIMIT 1`,
-          [input.job_id, input.member_id]
-        );
-
-        return hydrateApplication(row.application_id, connection.query.bind(connection));
+        return hydrateApplication(applicationId, connection.query.bind(connection));
       });
     },
 
@@ -163,20 +157,12 @@ export function createApplicationMySqlRepository() {
         return null;
       }
 
+      const noteId = randomUUID();
       await query(
-        'INSERT INTO application_notes (application_id, recruiter_id, note_text) VALUES (?, ?, ?)',
-        [applicationId, recruiterId, noteText]
+        'INSERT INTO application_notes (note_id, application_id, recruiter_id, note_text) VALUES (?, ?, ?, ?)',
+        [noteId, applicationId, recruiterId, noteText]
       );
-      const [[note]] = await query(
-        `SELECT note_id, application_id, recruiter_id, note_text, created_at
-           FROM application_notes
-          WHERE application_id = ? AND recruiter_id = ? AND note_text = ?
-       ORDER BY created_at DESC
-          LIMIT 1`,
-        [applicationId, recruiterId, noteText]
-      );
-
-      return note;
+      return { note_id: noteId };
     }
   };
 }
@@ -254,6 +240,12 @@ export function createApplicationApp({ repository }) {
       const applicationId = requireString(req.body.application_id, 'application_id');
       const status = requireString(req.body.status, 'status');
       const note = optionalString(req.body.note);
+      if (!VALID_APPLICATION_STATUSES.has(status)) {
+        return sendError(res, 400, 'VALIDATION_ERROR', 'status must be a valid application status', {
+          field: 'status',
+          allowed: [...VALID_APPLICATION_STATUSES]
+        });
+      }
       const current = await repository.getApplication(applicationId);
       if (!current) {
         throw new NotFoundError('APPLICATION_NOT_FOUND', 'application was not found');

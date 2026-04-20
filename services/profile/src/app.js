@@ -1,4 +1,5 @@
 import express from 'express';
+import { randomUUID } from 'node:crypto';
 
 import { getPagination, normalizeStringArray, sendError, sendSuccess } from '../../shared/src/http.js';
 import { checkMySqlHealth, query, withTransaction } from '../../shared/src/mysql.js';
@@ -125,11 +126,13 @@ export function createProfileMySqlRepository() {
     async createMember(input) {
       try {
         return await withTransaction(async (connection) => {
-          const [result] = await connection.execute(
+          const memberId = randomUUID();
+          await connection.execute(
             `INSERT INTO members
-              (first_name, last_name, email, phone, location, headline, about, profile_photo_url)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+              (member_id, first_name, last_name, email, phone, location, headline, about, profile_photo_url)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
+              memberId,
               input.first_name,
               input.last_name,
               input.email,
@@ -141,12 +144,8 @@ export function createProfileMySqlRepository() {
             ]
           );
 
-          const memberId = result.insertId ? String(result.insertId) : null;
-          const [[row]] = await connection.query('SELECT member_id FROM members WHERE email = ?', [input.email]);
-          const resolvedMemberId = row?.member_id || memberId;
-
           for (const skill of input.skills) {
-            await connection.execute('INSERT INTO member_skills (member_id, skill) VALUES (?, ?)', [resolvedMemberId, skill]);
+            await connection.execute('INSERT INTO member_skills (member_id, skill) VALUES (?, ?)', [memberId, skill]);
           }
 
           for (const experience of input.experience) {
@@ -182,7 +181,7 @@ export function createProfileMySqlRepository() {
             );
           }
 
-          return hydrateMember(resolvedMemberId, connection.query.bind(connection));
+          return hydrateMember(memberId, connection.query.bind(connection));
         });
       } catch (error) {
         if (error.code === 'ER_DUP_ENTRY') {

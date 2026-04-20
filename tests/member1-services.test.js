@@ -71,6 +71,19 @@ test('profile service rejects duplicate emails', async () => {
   assert.equal(duplicate.body.error.code, 'DUPLICATE_EMAIL');
 });
 
+test('profile service validates update payloads and reports missing members', async () => {
+  const repository = createProfileMemoryRepository();
+  const app = createProfileApp({ repository });
+
+  await request(app).post('/members/update').send({ member_id: 'missing-member' }).expect(400);
+  const missing = await request(app)
+    .post('/members/update')
+    .send({ member_id: 'missing-member', headline: 'Updated' })
+    .expect(404);
+
+  assert.equal(missing.body.error.code, 'MEMBER_NOT_FOUND');
+});
+
 test('job service enforces recruiter existence, search, close, and recruiter listing', async () => {
   const repository = createJobMemoryRepository({
     recruiters: [{
@@ -129,6 +142,33 @@ test('job service enforces recruiter existence, search, close, and recruiter lis
   await request(app).post('/jobs/close').send({ job_id: jobId }).expect(200);
   const alreadyClosed = await request(app).post('/jobs/close').send({ job_id: jobId }).expect(409);
   assert.equal(alreadyClosed.body.error.code, 'ALREADY_CLOSED');
+
+  const missingRecruiterUpdate = await request(app)
+    .post('/jobs/update')
+    .send({ job_id: jobId, recruiter_id: 'recruiter-404' })
+    .expect(404);
+  assert.equal(missingRecruiterUpdate.body.error.code, 'RECRUITER_NOT_FOUND');
+});
+
+test('job service validates enums and required fields', async () => {
+  const repository = createJobMemoryRepository();
+  const app = createJobApp({ repository });
+
+  const invalid = await request(app)
+    .post('/jobs/create')
+    .send({
+      company_id: 'company-1',
+      recruiter_id: 'recruiter-1',
+      title: 'Backend Engineer',
+      description: 'Own APIs',
+      seniority_level: 'guru',
+      employment_type: 'full_time',
+      remote_type: 'hybrid',
+      status: 'open'
+    })
+    .expect(400);
+
+  assert.equal(invalid.body.error.code, 'VALIDATION_ERROR');
 });
 
 test('application service validates submit, listing, notes, and status transitions', async () => {
@@ -171,6 +211,7 @@ test('application service validates submit, listing, notes, and status transitio
     .send({ application_id: applicationId })
     .expect(200);
   assert.equal(getResponse.body.data.status, 'submitted');
+  assert.deepEqual(getResponse.body.data.answers, { visa: 'yes' });
 
   await request(app)
     .post('/applications/updateStatus')
@@ -188,6 +229,12 @@ test('application service validates submit, listing, notes, and status transitio
     .expect(200);
   assert.ok(noteResponse.body.data.note_id);
 
+  const afterNote = await request(app)
+    .post('/applications/get')
+    .send({ application_id: applicationId })
+    .expect(200);
+  assert.equal(afterNote.body.data.notes.length, 1);
+
   const byJob = await request(app)
     .post('/applications/byJob')
     .send({ job_id: 'job-1', page: 1, page_size: 10 })
@@ -199,4 +246,31 @@ test('application service validates submit, listing, notes, and status transitio
     .send({ member_id: 'member-1', page: 1, page_size: 10 })
     .expect(200);
   assert.equal(byMember.body.data.results[0].application_id, applicationId);
+});
+
+test('application service validates status values and missing entities', async () => {
+  const repository = createApplicationMemoryRepository({
+    jobs: [{ job_id: 'job-1', status: 'open' }],
+    members: [{ member_id: 'member-1' }]
+  });
+  const app = createApplicationApp({ repository });
+
+  const submitResponse = await request(app)
+    .post('/applications/submit')
+    .send({ job_id: 'job-1', member_id: 'member-1' })
+    .expect(201);
+
+  const applicationId = submitResponse.body.data.application_id;
+
+  const invalidStatus = await request(app)
+    .post('/applications/updateStatus')
+    .send({ application_id: applicationId, status: 'hired' })
+    .expect(400);
+  assert.equal(invalidStatus.body.error.code, 'VALIDATION_ERROR');
+
+  const missingNote = await request(app)
+    .post('/applications/addNote')
+    .send({ application_id: 'missing', recruiter_id: 'recruiter-1', note_text: 'test' })
+    .expect(404);
+  assert.equal(missingNote.body.error.code, 'APPLICATION_NOT_FOUND');
 });

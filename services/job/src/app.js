@@ -1,4 +1,5 @@
 import express from 'express';
+import { randomUUID } from 'node:crypto';
 
 import { getPagination, normalizeStringArray, sendError, sendSuccess } from '../../shared/src/http.js';
 import { checkMySqlHealth, query, withTransaction } from '../../shared/src/mysql.js';
@@ -101,11 +102,13 @@ export function createJobMySqlRepository() {
           return { recruiterMissing: true };
         }
 
+        const jobId = randomUUID();
         await connection.execute(
           `INSERT INTO jobs
-            (company_id, recruiter_id, title, description, seniority_level, employment_type, location, remote_type, salary_range, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (job_id, company_id, recruiter_id, title, description, seniority_level, employment_type, location, remote_type, salary_range, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
+            jobId,
             input.company_id,
             input.recruiter_id,
             input.title,
@@ -119,19 +122,11 @@ export function createJobMySqlRepository() {
           ]
         );
 
-        const [[jobRow]] = await connection.query(
-          `SELECT job_id FROM jobs
-            WHERE recruiter_id = ? AND title = ?
-         ORDER BY posted_datetime DESC
-            LIMIT 1`,
-          [input.recruiter_id, input.title]
-        );
-
         for (const skill of input.skills_required) {
-          await connection.execute('INSERT INTO job_skills (job_id, skill) VALUES (?, ?)', [jobRow.job_id, skill]);
+          await connection.execute('INSERT INTO job_skills (job_id, skill) VALUES (?, ?)', [jobId, skill]);
         }
 
-        return hydrateJob(jobRow.job_id, connection.query.bind(connection));
+        return hydrateJob(jobId, connection.query.bind(connection));
       });
     },
 
@@ -145,38 +140,53 @@ export function createJobMySqlRepository() {
         return null;
       }
 
-      return withTransaction(async (connection) => {
-        const next = { ...existing, ...changes };
+      try {
+        return await withTransaction(async (connection) => {
+          const next = { ...existing, ...changes };
 
-        await connection.execute(
-          `UPDATE jobs
-              SET company_id = ?, recruiter_id = ?, title = ?, description = ?, seniority_level = ?,
-                  employment_type = ?, location = ?, remote_type = ?, salary_range = ?, status = ?
-            WHERE job_id = ?`,
-          [
-            next.company_id,
-            next.recruiter_id,
-            next.title,
-            next.description,
-            next.seniority_level,
-            next.employment_type,
-            next.location,
-            next.remote_type,
-            next.salary_range,
-            next.status,
-            jobId
-          ]
-        );
+          if ('recruiter_id' in changes) {
+            const [recruiterRows] = await connection.execute(
+              'SELECT recruiter_id FROM recruiters WHERE recruiter_id = ?',
+              [next.recruiter_id]
+            );
 
-        if ('skills_required' in changes) {
-          await connection.execute('DELETE FROM job_skills WHERE job_id = ?', [jobId]);
-          for (const skill of changes.skills_required) {
-            await connection.execute('INSERT INTO job_skills (job_id, skill) VALUES (?, ?)', [jobId, skill]);
+            if (!recruiterRows.length) {
+              return { recruiterMissing: true };
+            }
           }
-        }
 
-        return hydrateJob(jobId, connection.query.bind(connection));
-      });
+          await connection.execute(
+            `UPDATE jobs
+                SET company_id = ?, recruiter_id = ?, title = ?, description = ?, seniority_level = ?,
+                    employment_type = ?, location = ?, remote_type = ?, salary_range = ?, status = ?
+              WHERE job_id = ?`,
+            [
+              next.company_id,
+              next.recruiter_id,
+              next.title,
+              next.description,
+              next.seniority_level,
+              next.employment_type,
+              next.location,
+              next.remote_type,
+              next.salary_range,
+              next.status,
+              jobId
+            ]
+          );
+
+          if ('skills_required' in changes) {
+            await connection.execute('DELETE FROM job_skills WHERE job_id = ?', [jobId]);
+            for (const skill of changes.skills_required) {
+              await connection.execute('INSERT INTO job_skills (job_id, skill) VALUES (?, ?)', [jobId, skill]);
+            }
+          }
+
+          return hydrateJob(jobId, connection.query.bind(connection));
+        });
+      } catch (error) {
+        throw error;
+      }
     },
 
     async searchJobs(filters) {
@@ -266,6 +276,10 @@ function handleError(res, error) {
     return sendError(res, 404, error.code, error.message, error.details);
   }
 
+  if (error.code === 'RECRUITER_NOT_FOUND') {
+    return sendError(res, 404, 'RECRUITER_NOT_FOUND', 'recruiter was not found');
+  }
+
   return sendError(res, 500, 'INTERNAL_SERVER_ERROR', 'unexpected server error');
 }
 
@@ -306,6 +320,9 @@ export function createJobApp({ repository }) {
     try {
       const { job_id: jobId, changes } = validateUpdatePayload(req.body);
       const job = await repository.updateJob(jobId, changes);
+      if (job?.recruiterMissing) {
+        throw new NotFoundError('RECRUITER_NOT_FOUND', 'recruiter was not found');
+      }
       if (!job) {
         throw new NotFoundError('JOB_NOT_FOUND', 'job was not found');
       }

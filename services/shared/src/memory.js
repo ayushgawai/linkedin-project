@@ -138,6 +138,10 @@ export function createJobMemoryRepository(seed = {}) {
         return null;
       }
 
+      if ('recruiter_id' in changes && !recruiters.has(changes.recruiter_id)) {
+        return { recruiterMissing: true };
+      }
+
       const updated = { ...job, ...clone(changes), job_id: job.job_id };
       jobs.set(jobId, updated);
       return clone(updated);
