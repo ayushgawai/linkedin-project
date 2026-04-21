@@ -1,9 +1,9 @@
 # AWS Deployment Runbook
 
-This is the single source of truth for Ayush's deployment flow.
+This is the single source of truth for the backend deployment flow.
 
 Scope:
-- ECR repositories for the three Member 1 services
+- ECR repositories for the three backend services
 - ECS Fargate deployment behind an Application Load Balancer
 - RDS MySQL database
 - Demo schema and seed loading
@@ -11,14 +11,16 @@ Scope:
 
 ## Files Used
 
-- Env template: [/.env.aws.example](/Users/spartan/Documents/GitHub/Linkedin-Project/.env.aws.example:1)
-- ECR IaC: [member1-ecr.yaml](/Users/spartan/Documents/GitHub/Linkedin-Project/infra/aws/member1-ecr.yaml:1)
-- ECS/RDS IaC: [member1-ecs-rds.yaml](/Users/spartan/Documents/GitHub/Linkedin-Project/infra/aws/member1-ecs-rds.yaml:1)
-- Bootstrap script: [member1_aws_bootstrap.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/member1_aws_bootstrap.sh:1)
-- Deploy script: [member1_aws_deploy.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/member1_aws_deploy.sh:1)
+- Single env template: [/.env.example](/Users/spartan/Documents/GitHub/Linkedin-Project/.env.example:1)
+- ECR IaC: [backend-ecr.yaml](/Users/spartan/Documents/GitHub/Linkedin-Project/infra/aws/backend-ecr.yaml:1)
+- ECS/RDS IaC: [backend-platform.yaml](/Users/spartan/Documents/GitHub/Linkedin-Project/infra/aws/backend-platform.yaml:1)
+- Bootstrap script: [aws_bootstrap_backend.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/aws_bootstrap_backend.sh:1)
+- Deploy script: [aws_deploy_backend.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/aws_deploy_backend.sh:1)
+- Destroy script: [aws_destroy_backend.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/aws_destroy_backend.sh:1)
+- Cost-stop script: [aws_stop_backend_costs.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/aws_stop_backend_costs.sh:1)
 - Schema: [schema.sql](/Users/spartan/Documents/GitHub/Linkedin-Project/data/schema.sql:1)
-- Demo seed: [member1_demo_seed.sql](/Users/spartan/Documents/GitHub/Linkedin-Project/data/member1_demo_seed.sql:1)
-- Smoke test: [member1_smoke_test.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/member1_smoke_test.sh:1)
+- Demo seed: [backend_demo_seed.sql](/Users/spartan/Documents/GitHub/Linkedin-Project/data/backend_demo_seed.sql:1)
+- Smoke test: [backend_smoke_test.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/backend_smoke_test.sh:1)
 
 ## Why This Flow
 
@@ -33,8 +35,7 @@ These are the only console steps I want from your end before we run the scripts:
 
 1. Sign in to the AWS account.
 2. Confirm billing is enabled.
-3. Choose a single region.
-   Recommended: `us-west-2`
+3. Choose a single region and keep all resources in that same region.
 4. Create an IAM user or role for programmatic access if you have not already.
 5. Give that principal access for:
    - CloudFormation
@@ -45,7 +46,9 @@ These are the only console steps I want from your end before we run the scripts:
    - RDS
    - CloudWatch Logs
 6. Generate access credentials for the AWS CLI.
-7. Put those credentials into a local `.env.aws` file copied from `.env.aws.example`.
+7. Put those credentials into your local `.env` file copied from `.env.example`.
+
+Do not use the AWS root account for regular deployment work unless there is no alternative for initial account bootstrap.
 
 You do not need to create ECS, ECR, RDS, ALB, or VPC resources manually in the console if we use the scripts in this repo.
 
@@ -64,12 +67,12 @@ mysql --version
 
 If any of those are missing, install them first.
 
-## 1. Create The AWS Env File
+## 1. Update The Single Env File
 
 Copy the template:
 
 ```bash
-cp .env.aws.example .env.aws
+cp .env.example .env
 ```
 
 Fill in at least:
@@ -79,8 +82,10 @@ Fill in at least:
 - `AWS_SECRET_ACCESS_KEY`
 - `AWS_SESSION_TOKEN` if your credentials are temporary
 - `AWS_DB_PASSWORD`
+- `AWS_ADMIN_CIDR` with your current public IP in CIDR form, for example `203.0.113.10/32`
 
 The repository names and stack names can stay as the defaults unless you want different names.
+If `AWS_ADMIN_CIDR` is omitted, the deploy script will try to detect your public IP automatically and use `<your-ip>/32`.
 
 ## 2. Validate The Repo Before AWS
 
@@ -89,14 +94,15 @@ Run:
 ```bash
 npm install
 npm test
+npm run test:backend-services
 ```
 
 Optional local container validation:
 
 ```bash
 docker compose -f infra/docker-compose.yml up --build -d mysql profile job application
-mysql -h 127.0.0.1 -u root -plinkedin linkedinclone < data/member1_demo_seed.sql
-bash scripts/member1_smoke_test.sh
+mysql -h 127.0.0.1 -u root -plinkedin linkedinclone < data/backend_demo_seed.sql
+bash scripts/backend_smoke_test.sh
 ```
 
 ## 3. Bootstrap ECR Repositories
@@ -104,13 +110,13 @@ bash scripts/member1_smoke_test.sh
 This creates the three Amazon ECR repositories using CloudFormation:
 
 ```bash
-bash scripts/member1_aws_bootstrap.sh
+bash scripts/aws_bootstrap_backend.sh
 ```
 
-If your `.env.aws` is not in the repo root:
+If your `.env` file is not in the repo root:
 
 ```bash
-bash scripts/member1_aws_bootstrap.sh /full/path/to/.env.aws
+bash scripts/aws_bootstrap_backend.sh /full/path/to/.env
 ```
 
 ## 4. Build, Push, And Deploy The App Stack
@@ -118,7 +124,7 @@ bash scripts/member1_aws_bootstrap.sh /full/path/to/.env.aws
 Run:
 
 ```bash
-bash scripts/member1_aws_deploy.sh
+bash scripts/aws_deploy_backend.sh
 ```
 
 That script will:
@@ -137,10 +143,10 @@ After the stack finishes:
 
 ```bash
 mysql -h <rds-endpoint> -u admin -p linkedinclone < data/schema.sql
-mysql -h <rds-endpoint> -u admin -p linkedinclone < data/member1_demo_seed.sql
+mysql -h <rds-endpoint> -u admin -p linkedinclone < data/backend_demo_seed.sql
 ```
 
-If the database name or user changed in `.env.aws`, use those values instead.
+If the database name or user changed in `.env`, use those values instead.
 
 ## 6. Run Smoke Tests Against AWS
 
@@ -149,7 +155,7 @@ The stack outputs include the ALB DNS name.
 Run:
 
 ```bash
-bash scripts/member1_smoke_test.sh http://<alb-dns>
+bash scripts/backend_smoke_test.sh http://<alb-dns>
 ```
 
 Because the helper script defaults to localhost ports, it is usually easier to run these manually against the ALB:
@@ -201,6 +207,8 @@ Manual from your side:
 - This stack uses public subnets and a publicly accessible RDS instance because it is optimized for class-project speed and simpler testing, not production hardening.
 - The ECS tasks now log to CloudWatch Logs through the ECS task execution role path.
 - The deployment flow intentionally does not merge any branch.
+- To reduce ongoing cost without deleting the full environment, run `bash scripts/aws_stop_backend_costs.sh`.
+- To fully remove the backend environment and avoid ongoing AWS cost, run `bash scripts/aws_destroy_backend.sh`.
 
 ## References
 

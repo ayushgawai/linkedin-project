@@ -61,13 +61,15 @@ See [LinkedInClone_Architecture_Diagram.png](/Users/spartan/Documents/GitHub/Lin
 Use [aws-deployment-runbook.md](/Users/spartan/Documents/GitHub/Linkedin-Project/docs/aws-deployment-runbook.md:1) as the canonical AWS deployment document.
 
 Useful files:
-- AWS env template: [.env.aws.example](/Users/spartan/Documents/GitHub/Linkedin-Project/.env.aws.example:1)
-- ECR bootstrap stack: [member1-ecr.yaml](/Users/spartan/Documents/GitHub/Linkedin-Project/infra/aws/member1-ecr.yaml:1)
-- App stack: [member1-ecs-rds.yaml](/Users/spartan/Documents/GitHub/Linkedin-Project/infra/aws/member1-ecs-rds.yaml:1)
-- Bootstrap script: [member1_aws_bootstrap.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/member1_aws_bootstrap.sh:1)
-- Deploy script: [member1_aws_deploy.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/member1_aws_deploy.sh:1)
-- Demo seed: [member1_demo_seed.sql](/Users/spartan/Documents/GitHub/Linkedin-Project/data/member1_demo_seed.sql:1)
-- Smoke test: [member1_smoke_test.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/member1_smoke_test.sh:1)
+- Single env template: [.env.example](/Users/spartan/Documents/GitHub/Linkedin-Project/.env.example:1)
+- ECR bootstrap stack: [backend-ecr.yaml](/Users/spartan/Documents/GitHub/Linkedin-Project/infra/aws/backend-ecr.yaml:1)
+- App stack: [backend-platform.yaml](/Users/spartan/Documents/GitHub/Linkedin-Project/infra/aws/backend-platform.yaml:1)
+- Bootstrap script: [aws_bootstrap_backend.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/aws_bootstrap_backend.sh:1)
+- Deploy script: [aws_deploy_backend.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/aws_deploy_backend.sh:1)
+- Destroy script: [aws_destroy_backend.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/aws_destroy_backend.sh:1)
+- Cost-stop script: [aws_stop_backend_costs.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/aws_stop_backend_costs.sh:1)
+- Demo seed: [backend_demo_seed.sql](/Users/spartan/Documents/GitHub/Linkedin-Project/data/backend_demo_seed.sql:1)
+- Smoke test: [backend_smoke_test.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/backend_smoke_test.sh:1)
 
 ## Team Rules
 

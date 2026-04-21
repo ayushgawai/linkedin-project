@@ -7,8 +7,8 @@
     "services/*"
   ],
   "scripts": {
-    "test": "npm run test:member1 && npm run test:api-doc",
-    "test:member1": "node --test tests/member1-services.test.js",
+    "test": "npm run test:backend-services && npm run test:api-doc",
+    "test:backend-services": "node --test tests/backend-services.test.js",
     "test:api-doc": "bash tests/submission_contract_check.sh"
   },
   "devDependencies": {

@@ -28,8 +28,8 @@ jobs:
         run: |
           bash tests/submission_contract_check.sh
 
-      - name: Run Member 1 service tests
-        run: npm run test:member1
+      - name: Run backend service tests
+        run: npm run test:backend-services
 
       - name: Validate Postman collection JSON
         run: |

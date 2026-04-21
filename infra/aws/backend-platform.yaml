@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Member 1 deployment stack for LinkedInClone profile, job, and application services.
+Description: LinkedInClone backend services platform with ECS Fargate, ALB, and RDS MySQL.
 
 Parameters:
   VpcCidr:
@@ -11,6 +11,9 @@ Parameters:
   PublicSubnet2Cidr:
     Type: String
     Default: 10.40.2.0/24
+  AdminCidr:
+    Type: String
+    Description: CIDR allowed to connect directly to the RDS instance for schema and seed loading.
   DbName:
     Type: String
     Default: linkedinclone
@@ -24,6 +27,9 @@ Parameters:
   DbInstanceClass:
     Type: String
     Default: db.t3.micro
+  DbEngineVersion:
+    Type: String
+    Default: '8.0.45'
   ProfileImageUri:
     Type: String
   JobImageUri:
@@ -40,7 +46,7 @@ Resources:
       EnableDnsSupport: true
       Tags:
         - Key: Name
-          Value: linkedinclone-member1-vpc
+          Value: linkedinclone-backend-vpc
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
@@ -95,7 +101,7 @@ Resources:
   AlbSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow HTTP access to ALB
+      GroupDescription: Allow HTTP traffic to the backend load balancer
       VpcId: !Ref Vpc
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -106,7 +112,7 @@ Resources:
   ServiceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow ALB to reach ECS services
+      GroupDescription: Allow ALB traffic to backend ECS services
       VpcId: !Ref Vpc
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -117,18 +123,22 @@ Resources:
   DatabaseSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow ECS to reach MySQL
+      GroupDescription: Allow backend ECS services to reach MySQL
       VpcId: !Ref Vpc
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 3306
           ToPort: 3306
           SourceSecurityGroupId: !Ref ServiceSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: !Ref AdminCidr
 
   DbSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
-      DBSubnetGroupDescription: Member 1 RDS subnet group
+      DBSubnetGroupDescription: Backend database subnet group
       SubnetIds:
         - !Ref PublicSubnet1
         - !Ref PublicSubnet2
@@ -140,7 +150,7 @@ Resources:
       DBName: !Ref DbName
       DBInstanceClass: !Ref DbInstanceClass
       Engine: mysql
-      EngineVersion: '8.0.35'
+      EngineVersion: !Ref DbEngineVersion
       MasterUsername: !Ref DbUser
       MasterUserPassword: !Ref DbPassword
       PubliclyAccessible: true
@@ -155,24 +165,24 @@ Resources:
   Cluster:
     Type: AWS::ECS::Cluster
     Properties:
-      ClusterName: linkedinclone-member1
+      ClusterName: linkedinclone-backend-cluster
 
   ProfileLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /ecs/linkedinclone/profile
+      LogGroupName: /ecs/linkedinclone/profile-service
       RetentionInDays: 7
 
   JobLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /ecs/linkedinclone/job
+      LogGroupName: /ecs/linkedinclone/job-service
       RetentionInDays: 7
 
   ApplicationLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /ecs/linkedinclone/application
+      LogGroupName: /ecs/linkedinclone/application-service
       RetentionInDays: 7
 
   ExecutionRole:
@@ -191,7 +201,7 @@ Resources:
   LoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: linkedinclone-m1-alb
+      Name: linkedinclone-backend-alb
       Scheme: internet-facing
       SecurityGroups:
         - !Ref AlbSecurityGroup
@@ -265,7 +275,7 @@ Resources:
   ProfileTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
-      Family: linkedinclone-profile
+      Family: linkedinclone-profile-service
       Cpu: 256
       Memory: 512
       NetworkMode: awsvpc
@@ -273,7 +283,7 @@ Resources:
         - FARGATE
       ExecutionRoleArn: !GetAtt ExecutionRole.Arn
       ContainerDefinitions:
-        - Name: profile
+        - Name: profile-service
           Image: !Ref ProfileImageUri
           PortMappings:
             - ContainerPort: 8001
@@ -300,7 +310,7 @@ Resources:
   JobTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
-      Family: linkedinclone-job
+      Family: linkedinclone-job-service
       Cpu: 256
       Memory: 512
       NetworkMode: awsvpc
@@ -308,7 +318,7 @@ Resources:
         - FARGATE
       ExecutionRoleArn: !GetAtt ExecutionRole.Arn
       ContainerDefinitions:
-        - Name: job
+        - Name: job-service
           Image: !Ref JobImageUri
           PortMappings:
             - ContainerPort: 8002
@@ -335,7 +345,7 @@ Resources:
   ApplicationTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
-      Family: linkedinclone-application
+      Family: linkedinclone-application-service
       Cpu: 256
       Memory: 512
       NetworkMode: awsvpc
@@ -343,7 +353,7 @@ Resources:
         - FARGATE
       ExecutionRoleArn: !GetAtt ExecutionRole.Arn
       ContainerDefinitions:
-        - Name: application
+        - Name: application-service
           Image: !Ref ApplicationImageUri
           PortMappings:
             - ContainerPort: 8003
@@ -384,7 +394,7 @@ Resources:
             - !Ref PublicSubnet1
             - !Ref PublicSubnet2
       LoadBalancers:
-        - ContainerName: profile
+        - ContainerName: profile-service
           ContainerPort: 8001
           TargetGroupArn: !Ref ProfileTargetGroup
 
@@ -405,7 +415,7 @@ Resources:
             - !Ref PublicSubnet1
             - !Ref PublicSubnet2
       LoadBalancers:
-        - ContainerName: job
+        - ContainerName: job-service
           ContainerPort: 8002
           TargetGroupArn: !Ref JobTargetGroup
 
@@ -426,7 +436,7 @@ Resources:
             - !Ref PublicSubnet1
             - !Ref PublicSubnet2
       LoadBalancers:
-        - ContainerName: application
+        - ContainerName: application-service
           ContainerPort: 8003
           TargetGroupArn: !Ref ApplicationTargetGroup
 
