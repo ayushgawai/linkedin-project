@@ -68,3 +68,14 @@ Useful files:
 - Deploy script: [member1_aws_deploy.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/member1_aws_deploy.sh:1)
 - Demo seed: [member1_demo_seed.sql](/Users/spartan/Documents/GitHub/Linkedin-Project/data/member1_demo_seed.sql:1)
 - Smoke test: [member1_smoke_test.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/member1_smoke_test.sh:1)
+
+## Team Rules
+
+- The professor project document in `personal/internal_docs/Class_Project_Description_LinkedIn_AgenticAI.docx` is the highest-priority source of truth for requirements.
+- The team should re-check implementation and documentation against the professor document regularly, especially before merge, demo, and deployment.
+- Internal prompts, personal notes, and branch-specific plans can help execution, but they do not override the professor document.
+- Every branch should keep GitHub Actions green before requesting review or merge.
+- Minimum CI expectation for all contributors: do not merge with failing workflow runs.
+- Before pushing significant changes, run local validation relevant to your scope, and at minimum run `npm test` when touching shared repo behavior or CI-checked files.
+- Keep API contracts, docs, and code aligned; if one changes, update the others in the same branch.
+- Parth owns merge coordination; no one should merge unreviewed work directly into the main integration branch.
