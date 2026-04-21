@@ -1,5 +1,7 @@
 # Member 1 AWS Deployment
 
+Canonical deployment guide: [aws-deployment-runbook.md](/Users/spartan/Documents/GitHub/Linkedin-Project/docs/aws-deployment-runbook.md:1)
+
 This deployment covers Ayush's Member 1 scope:
 - Profile Service
 - Job Service

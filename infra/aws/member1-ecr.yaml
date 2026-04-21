@@ -1,0 +1,35 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Member 1 Amazon ECR repositories for LinkedInClone backend services.
+
+Resources:
+  ProfileRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: linkedinclone-profile
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+
+  JobRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: linkedinclone-job
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+
+  ApplicationRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: linkedinclone-application
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+
+Outputs:
+  ProfileRepositoryUri:
+    Value: !GetAtt ProfileRepository.RepositoryUri
+  JobRepositoryUri:
+    Value: !GetAtt JobRepository.RepositoryUri
+  ApplicationRepositoryUri:
+    Value: !GetAtt ApplicationRepository.RepositoryUri

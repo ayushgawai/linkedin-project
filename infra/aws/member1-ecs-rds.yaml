@@ -157,6 +157,24 @@ Resources:
     Properties:
       ClusterName: linkedinclone-member1
 
+  ProfileLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/linkedinclone/profile
+      RetentionInDays: 7
+
+  JobLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/linkedinclone/job
+      RetentionInDays: 7
+
+  ApplicationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/linkedinclone/application
+      RetentionInDays: 7
+
   ExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -259,6 +277,12 @@ Resources:
           Image: !Ref ProfileImageUri
           PortMappings:
             - ContainerPort: 8001
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ProfileLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
           Environment:
             - Name: PORT
               Value: '8001'
@@ -288,6 +312,12 @@ Resources:
           Image: !Ref JobImageUri
           PortMappings:
             - ContainerPort: 8002
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref JobLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
           Environment:
             - Name: PORT
               Value: '8002'
@@ -317,6 +347,12 @@ Resources:
           Image: !Ref ApplicationImageUri
           PortMappings:
             - ContainerPort: 8003
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ApplicationLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
           Environment:
             - Name: PORT
               Value: '8003'

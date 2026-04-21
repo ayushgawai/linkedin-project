@@ -1,5 +1,7 @@
 # Member 1 Manual Follow-Up Checklist
 
+Canonical deployment guide: [aws-deployment-runbook.md](/Users/spartan/Documents/GitHub/Linkedin-Project/docs/aws-deployment-runbook.md:1)
+
 This document covers the work that still needs a human account owner or project lead to complete after the code on `feature/ayush/backend-infra-foundation` is ready.
 
 ## 1. What Is Already Done In Code
