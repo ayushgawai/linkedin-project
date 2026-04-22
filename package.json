@@ -6,6 +6,7 @@
     "services/*"
   ],
   "scripts": {
+    "test": "npm run test:api-doc",
     "test:api-doc": "bash tests/submission_contract_check.sh"
   }
 }

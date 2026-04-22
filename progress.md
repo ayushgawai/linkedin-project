@@ -20,7 +20,7 @@
 - Created final submission package:
   - `docs/submission/LinkedInClone_API_Documentation.md`
   - `docs/submission/LinkedInClone_API_Documentation.docx`
-  - `docs/submission/LinkedInClone_API_Collection.postman_collection.json`
+  - `docs/LinkedInClone.postman_collection.json` (canonical; keep `docs/submission/` copy in sync for course packaging)
 - Added full contract validation script: `tests/submission_contract_check.sh`.
 - Added initial CI workflow: `.github/workflows/ci.yml` (documentation + collection checks).
 - Moved internal-only source docs and member-level drafts into `personal/internal_docs/` (not committed).

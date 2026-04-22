@@ -22,7 +22,14 @@ jobs:
       - name: Validate Postman collection JSON
         run: python3 - << 'PY'
 import json
-with open('docs/submission/LinkedInClone_API_Collection.postman_collection.json', 'r', encoding='utf-8') as f:
+# Canonical per integration rules: docs/LinkedInClone.postman_collection.json
+with open('docs/LinkedInClone.postman_collection.json', 'r', encoding='utf-8') as f:
     json.load(f)
 print('Postman collection JSON is valid')
 PY
+
+      - name: Assert submission Postman copy matches canonical
+        run: |
+          cmp -s docs/LinkedInClone.postman_collection.json \
+            docs/submission/LinkedInClone_API_Collection.postman_collection.json
+          echo "Canonical and submission Postman files are in sync"
