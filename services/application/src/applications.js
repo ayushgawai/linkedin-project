@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { pool } from '../../shared/db.js';
+import { produceEvent, buildEnvelope } from '../../shared/kafka.js';
 import { successResponse, errorResponse } from '../../shared/response.js';
 
 const DUPLICATE = 'ER_DUP_ENTRY';
@@ -94,6 +95,14 @@ export async function submit(req, res) {
     conn.release();
   }
 
+  produceEvent('application.submitted', buildEnvelope({
+    eventType: 'application.submitted',
+    actorId: memberId,
+    entityType: 'application',
+    entityId: applicationId,
+    payload: { application_id: applicationId, job_id: jobId, member_id: memberId },
+  })).catch(() => {});
+
   return ok(res, { application_id: applicationId }, 201);
 }
 
@@ -187,6 +196,14 @@ export async function updateStatus(req, res) {
   await pool.execute(
     'UPDATE applications SET status = ? WHERE application_id = ?', [newStatus, id],
   );
+
+  produceEvent('application.status.updated', buildEnvelope({
+    eventType: 'application.status.updated',
+    actorId: b.recruiter_id || 'system',
+    entityType: 'application',
+    entityId: id,
+    payload: { application_id: id, previous_status: currentStatus, new_status: newStatus },
+  })).catch(() => {});
 
   return ok(res, { updated: true, application_id: id, status: newStatus });
 }

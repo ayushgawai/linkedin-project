@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import { pingDb } from '../../shared/db.js';
+import { connectProducer, isKafkaConnected } from '../../shared/kafka.js';
 import { errorResponse } from '../../shared/response.js';
 import * as jobs from './jobs.js';
 
@@ -13,7 +14,7 @@ app.get('/health', async (_req, res) => {
   try {
     if (await pingDb()) dbState = 'connected';
   } catch { /* leave disconnected */ }
-  res.json({ status: 'ok', service: 'job', db: dbState, kafka: 'disconnected' });
+  res.json({ status: 'ok', service: 'job', db: dbState, kafka: isKafkaConnected() ? 'connected' : 'disconnected' });
 });
 
 const wrap = (fn) => (req, res) => {
@@ -37,4 +38,5 @@ app.use((_req, res) => {
 const port = Number(process.env.PORT || 8002);
 app.listen(port, () => {
   console.log(JSON.stringify({ service: 'job', port, status: 'started' }));
+  connectProducer().catch(() => {});
 });

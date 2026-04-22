@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { pool } from '../../shared/db.js';
+import { produceEvent, buildEnvelope } from '../../shared/kafka.js';
 import { successResponse, errorResponse } from '../../shared/response.js';
 
 const DUPLICATE = 'ER_DUP_ENTRY';
@@ -133,6 +134,15 @@ export async function getJob(req, res) {
 
   const job = await loadJobWithSkills(id);
   if (!job) return err(res, 404, 'JOB_NOT_FOUND', 'No job with this id', { job_id: id });
+
+  produceEvent('job.viewed', buildEnvelope({
+    eventType: 'job.viewed',
+    actorId: req.body.viewer_id || 'anonymous',
+    entityType: 'job',
+    entityId: id,
+    payload: { job_id: id, title: job.title },
+  })).catch(() => {});
+
   return ok(res, job);
 }
 
