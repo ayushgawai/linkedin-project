@@ -1,4 +1,5 @@
 import express from 'express';
+import cors from 'cors';
 import { traceMiddleware } from './middleware/trace.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { healthRouter } from './routes/health.js';
@@ -10,6 +11,7 @@ export function createApp() {
   const app = express();
 
   app.disable('x-powered-by');
+  app.use(cors());
   app.use(express.json({ limit: '1mb' }));
   app.use(traceMiddleware);
 
