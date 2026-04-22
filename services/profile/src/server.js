@@ -1,32 +1,25 @@
-import crypto from 'node:crypto';
 import express from 'express';
+import cors from 'cors';
 import { pingDb } from './db.js';
+import { errorResponse } from '../../shared/response.js';
 import * as members from './members.js';
 
 const app = express();
+app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:3000' }));
 app.use(express.json());
 
 app.get('/health', async (_req, res) => {
   let dbState = 'disconnected';
   try {
-    if (await pingDb()) {
-      dbState = 'connected';
-    }
-  } catch {
-    dbState = 'disconnected';
-  }
-  // Kafka: wire when this service produces events; contract allows disconnected until then
+    if (await pingDb()) dbState = 'connected';
+  } catch { /* leave disconnected */ }
   res.json({ status: 'ok', service: 'profile', db: dbState, kafka: 'disconnected' });
 });
 
 const wrap = (fn) => (req, res) => {
   Promise.resolve(fn(req, res)).catch((e) => {
     console.error(e);
-    res.status(500).json({
-      success: false,
-      error: { code: 'INTERNAL', message: e.message || 'Server error', details: {} },
-      trace_id: crypto.randomUUID(),
-    });
+    res.status(500).json(errorResponse('INTERNAL', e.message || 'Server error'));
   });
 };
 
@@ -37,11 +30,7 @@ app.post('/members/delete', wrap(members.deleteMember));
 app.post('/members/search', wrap(members.searchMembers));
 
 app.use((_req, res) => {
-  res.status(404).json({
-    success: false,
-    error: { code: 'NOT_FOUND', message: 'no route for this path', details: {} },
-    trace_id: crypto.randomUUID(),
-  });
+  res.status(404).json(errorResponse('NOT_FOUND', 'no route for this path'));
 });
 
 const port = Number(process.env.PORT || 8001);

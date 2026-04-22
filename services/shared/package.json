@@ -1,0 +1,10 @@
+{
+  "name": "@linkedinclone/shared",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.js",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "mysql2": "^3.9.7"
+  }
+}

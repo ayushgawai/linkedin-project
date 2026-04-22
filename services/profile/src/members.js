@@ -1,23 +1,16 @@
 import crypto from 'node:crypto';
 import { pool } from './db.js';
+import { successResponse, errorResponse } from '../../shared/response.js';
 
 const DUPLICATE = 'ER_DUP_ENTRY';
 const FOREIGN_KEY = 'ER_ROW_IS_REFERENCED_2';
 
-function trace() {
-  return crypto.randomUUID();
-}
-
 function err(res, status, code, message, details = {}) {
-  return res.status(status).json({
-    success: false,
-    error: { code, message, details },
-    trace_id: trace(),
-  });
+  return res.status(status).json(errorResponse(code, message, details));
 }
 
 function ok(res, data, status = 200) {
-  return res.status(status).json({ success: true, data, trace_id: trace() });
+  return res.status(status).json(successResponse(data));
 }
 
 const MEMBER_SELECT = `SELECT member_id, first_name, last_name, email, phone, location, headline, about, profile_photo_url, connections_count, created_at, updated_at
