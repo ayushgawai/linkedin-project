@@ -175,39 +175,18 @@ def _get_producer() -> KafkaProducer:
 
 @app.get("/health", tags=["Health"])
 def health() -> dict[str, str]:
-    """Liveness + readiness check for MongoDB, Kafka producer, and both consumers."""
+    """LinkedInClone_API_Documentation.md §3 — only these four fields; db/kafka per wire-up."""
     db_status = "connected" if check_db_connection() else "disconnected"
     kafka_status = (
         "connected"
         if (_kafka_producer and _kafka_producer.is_connected())
         else "disconnected"
     )
-    requests_consumer_status = (
-        "alive"
-        if (_kafka_consumer and _kafka_consumer.is_alive())
-        else "down"
-    )
-    results_consumer_status = (
-        "alive"
-        if (_kafka_results_consumer and _kafka_results_consumer.is_alive())
-        else "down"
-    )
-
-    overall = (
-        "ok"
-        if db_status == "connected"
-        and kafka_status == "connected"
-        and requests_consumer_status == "alive"
-        and results_consumer_status == "alive"
-        else "degraded"
-    )
     return {
-        "status": overall,
+        "status": "ok",
         "service": "ai-agent",
         "db": db_status,
         "kafka": kafka_status,
-        "requests_consumer": requests_consumer_status,
-        "results_consumer": results_consumer_status,
     }
 
 

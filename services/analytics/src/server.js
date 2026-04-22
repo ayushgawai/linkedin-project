@@ -4,7 +4,7 @@ const app = express();
 app.use(express.json());
 
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'analytics', db: 'unknown', kafka: 'unknown' });
+  res.json({ status: 'ok', service: 'analytics', db: 'disconnected', kafka: 'disconnected' });
 });
 
 app.use((_req, res) => {
@@ -19,7 +19,7 @@ app.use((_req, res) => {
   });
 });
 
-const port = Number(process.env.PORT || 8000);
+const port = Number(process.env.PORT || 8006);
 app.listen(port, () => {
   console.log(JSON.stringify({ service: 'analytics', port, status: 'started' }));
 });
