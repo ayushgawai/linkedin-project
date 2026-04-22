@@ -1,9 +1,12 @@
 import express from 'express';
+import cors from 'cors';
 import { randomUUID } from 'node:crypto';
 
 import { getPagination, normalizeStringArray, sendError, sendSuccess } from '../../shared/src/http.js';
 import { checkMySqlHealth, query, withTransaction } from '../../shared/src/mysql.js';
 import { NotFoundError, ValidationError, optionalString, requireString } from '../../shared/src/validation.js';
+import { publishOrOutbox } from '../../shared/src/outbox.js';
+import { buildEnvelope, isKafkaConnected } from '../../shared/src/kafka.js';
 
 const SENIORITY = new Set(['internship', 'entry', 'associate', 'mid', 'senior', 'director', 'executive']);
 const EMPLOYMENT = new Set(['full_time', 'part_time', 'contract', 'temporary', 'volunteer', 'internship']);
@@ -132,6 +135,10 @@ export function createJobMySqlRepository() {
 
     async getJob(jobId) {
       return hydrateJob(jobId);
+    },
+
+    async incrementViews(jobId) {
+      await query('UPDATE jobs SET views_count = views_count + 1 WHERE job_id = ?', [jobId]);
     },
 
     async updateJob(jobId, changes) {
@@ -285,11 +292,13 @@ function handleError(res, error) {
 
 export function createJobApp({ repository }) {
   const app = express();
+  app.use(cors());
   app.use(express.json());
 
   app.get('/health', async (_req, res) => {
     const db = await repository.health();
-    res.json({ status: db === 'connected' ? 'ok' : 'degraded', service: 'job', db, kafka: 'disconnected' });
+    const kafkaOk = isKafkaConnected();
+    res.json({ status: db === 'connected' ? 'ok' : 'degraded', service: 'job', db, kafka: kafkaOk ? 'connected' : 'disconnected' });
   });
 
   app.post('/jobs/create', async (req, res) => {
@@ -306,10 +315,22 @@ export function createJobApp({ repository }) {
 
   app.post('/jobs/get', async (req, res) => {
     try {
-      const job = await repository.getJob(requireString(req.body.job_id, 'job_id'));
+      const jobId = requireString(req.body.job_id, 'job_id');
+      const job = await repository.getJob(jobId);
       if (!job) {
         throw new NotFoundError('JOB_NOT_FOUND', 'job was not found');
       }
+
+      await repository.incrementViews(jobId);
+
+      publishOrOutbox('job.viewed', buildEnvelope({
+        eventType: 'job.viewed',
+        actorId: req.body.viewer_id || 'anonymous',
+        entityType: 'job',
+        entityId: jobId,
+        payload: { job_id: jobId, title: job.title }
+      })).catch(() => {});
+
       return sendSuccess(res, job);
     } catch (error) {
       return handleError(res, error);

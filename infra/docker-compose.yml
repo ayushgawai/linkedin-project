@@ -6,7 +6,7 @@ services:
       MYSQL_ROOT_PASSWORD: ${DB_PASS:-linkedin}
       MYSQL_DATABASE: ${DB_NAME:-linkedinclone}
     ports:
-      - '3306:3306'
+      - '3307:3306'
     volumes:
       - mysql_data:/var/lib/mysql
       - ../data/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
@@ -15,6 +15,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 30s
 
   mongodb:
     image: mongo:7
@@ -29,6 +30,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 20s
 
   redis:
     image: redis:7-alpine
@@ -42,6 +44,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 5s
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.1
@@ -49,16 +52,18 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+      KAFKA_OPTS: '-Dzookeeper.4lw.commands.whitelist=*'
     ports:
       - '2181:2181'
     volumes:
       - zookeeper_data:/var/lib/zookeeper/data
       - zookeeper_log:/var/lib/zookeeper/log
     healthcheck:
-      test: ['CMD-SHELL', 'echo ruok | nc localhost 2181 | grep imok']
+      test: ['CMD-SHELL', 'echo srvr | nc localhost 2181 | grep -q Zookeeper']
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 40s
 
   kafka:
     image: confluentinc/cp-kafka:7.6.1
@@ -83,6 +88,7 @@ services:
       interval: 15s
       timeout: 10s
       retries: 10
+      start_period: 50s
 
   profile:
     build:
@@ -114,8 +120,11 @@ services:
       DB_USER: root
       DB_PASS: ${DB_PASS:-linkedin}
       DB_NAME: ${DB_NAME:-linkedinclone}
+      KAFKA_BROKERS: kafka:9092
     depends_on:
       mysql:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     ports:
       - '8002:8002'
@@ -132,8 +141,11 @@ services:
       DB_USER: root
       DB_PASS: ${DB_PASS:-linkedin}
       DB_NAME: ${DB_NAME:-linkedinclone}
+      KAFKA_BROKERS: kafka:9092
     depends_on:
       mysql:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     ports:
       - '8003:8003'

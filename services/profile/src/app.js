@@ -1,4 +1,5 @@
 import express from 'express';
+import cors from 'cors';
 import { randomUUID } from 'node:crypto';
 
 import { getPagination, normalizeStringArray, sendError, sendSuccess } from '../../shared/src/http.js';
@@ -154,7 +155,7 @@ export function createProfileMySqlRepository() {
                 (member_id, company, title, start_date, end_date, description, is_current)
                VALUES (?, ?, ?, ?, ?, ?, ?)`,
               [
-                resolvedMemberId,
+                memberId,
                 experience.company,
                 experience.title,
                 experience.start_date,
@@ -171,7 +172,7 @@ export function createProfileMySqlRepository() {
                 (member_id, institution, degree, field, start_year, end_year)
                VALUES (?, ?, ?, ?, ?, ?)`,
               [
-                resolvedMemberId,
+                memberId,
                 education.institution,
                 education.degree,
                 education.field,
@@ -348,6 +349,7 @@ function handleError(res, error) {
 
 export function createProfileApp({ repository }) {
   const app = express();
+  app.use(cors());
   app.use(express.json());
 
   app.get('/health', async (_req, res) => {

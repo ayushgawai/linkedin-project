@@ -1,0 +1,9 @@
+{
+  "name": "@linkedinclone/shared",
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "kafkajs": "^2.2.4",
+    "mysql2": "^3.15.2"
+  }
+}
