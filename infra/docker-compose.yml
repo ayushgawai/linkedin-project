@@ -5,16 +5,19 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_PASS:-linkedin}
       MYSQL_DATABASE: ${DB_NAME:-linkedinclone}
+    # Host 3307 -> container 3306 (avoids "address already in use" if Homebrew/local MySQL uses 3306)
     ports:
-      - '3306:3306'
+      - '3307:3306'
     volumes:
       - mysql_data:/var/lib/mysql
       - ../data/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     healthcheck:
+      # First boot can run schema init; allow time before health counts
       test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD']
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 30s
 
   mongodb:
     image: mongo:7
@@ -25,10 +28,12 @@ services:
       - mongo_data:/data/db
       - ../data/mongo_setup.js:/docker-entrypoint-initdb.d/mongo_setup.js:ro
     healthcheck:
-      test: ['CMD-SHELL', "echo 'db.runCommand({ ping: 1 })' | mongosh --quiet"]
+      # Reliable ping without stdin piping (avoids empty mongosh issues)
+      test: ['CMD', 'mongosh', '--quiet', '--eval', 'db.runCommand({ ping: 1 })']
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 20s
 
   redis:
     image: redis:7-alpine
@@ -42,6 +47,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 5s
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.1
@@ -49,16 +55,20 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+      # ZK 3.5+ disables most four-letter word commands; whitelist for health + debugging (Confluent-recommended form)
+      KAFKA_OPTS: '-Dzookeeper.4lw.commands.whitelist=*'
     ports:
       - '2181:2181'
     volumes:
       - zookeeper_data:/var/lib/zookeeper/data
       - zookeeper_log:/var/lib/zookeeper/log
     healthcheck:
-      test: ['CMD-SHELL', 'echo ruok | nc localhost 2181 | grep imok']
+      # ZK 3.8+ often has 'ruok' off; 'srvr' is reliable (first line(s) include Zookeeper version / Mode)
+      test: ['CMD-SHELL', "printf 'srvr' | nc -w 2 127.0.0.1 2181 2>/dev/null | grep -qE 'Zookeeper|Mode|standalone|leader|follower' || exit 1"]
       interval: 10s
-      timeout: 5s
-      retries: 10
+      timeout: 10s
+      retries: 12
+      start_period: 40s
 
   kafka:
     image: confluentinc/cp-kafka:7.6.1
@@ -82,7 +92,8 @@ services:
       test: ['CMD-SHELL', 'kafka-topics --bootstrap-server localhost:9092 --list > /dev/null 2>&1']
       interval: 15s
       timeout: 10s
-      retries: 10
+      retries: 12
+      start_period: 50s
 
 volumes:
   mysql_data:

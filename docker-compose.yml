@@ -1,0 +1,4 @@
+# Run from repository root: `docker compose up -d`
+# Includes MySQL, MongoDB, Redis, Zookeeper, Kafka (see infra/ for service definitions + healthchecks).
+include:
+  - path: ./infra/docker-compose.yml
