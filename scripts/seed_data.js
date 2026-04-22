@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 /**
- * Seed loader — inserts demo data into MySQL for local development and testing.
- * Re-runnable: skips rows that already exist (uses INSERT IGNORE).
+ * Seed loader — inserts demo data into MySQL + MongoDB for local dev and testing.
+ * Re-runnable and idempotent: uses INSERT IGNORE (MySQL) and upserts (MongoDB).
  *
  * Usage:  node scripts/seed_data.js
- * Requires: .env at repo root with DB_HOST, DB_PORT, DB_USER, DB_PASS, DB_NAME
+ * Requires: .env at repo root
  */
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 import mysql from 'mysql2/promise';
+import { MongoClient } from 'mongodb';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
@@ -111,10 +112,10 @@ async function seed() {
   const [sr] = await pool.query('INSERT IGNORE INTO member_skills (member_id, skill) VALUES ?', [skillRows]);
   console.log(`Member skills: ${sr.affectedRows} inserted`);
 
-  // --- Recruiters (20) ---
+  // --- Recruiters (100) ---
   const recruiterIds = [];
   const recruiterRows = [];
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 100; i++) {
     const id = uuid();
     const co = COMPANIES[i % COMPANIES.length];
     const companyId = uuid();
@@ -179,6 +180,57 @@ async function seed() {
   // Update applicants_count on jobs
   await pool.query(`UPDATE jobs j SET applicants_count = (SELECT COUNT(*) FROM applications a WHERE a.job_id = j.job_id)`);
   console.log('Jobs applicants_count updated');
+
+  // --- MongoDB: resumes collection ---
+  const mongoUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/linkedinclone';
+  const mongoClient = new MongoClient(mongoUri);
+  try {
+    await mongoClient.connect();
+    const db = mongoClient.db();
+    const resumes = db.collection('resumes');
+
+    const resumeDocs = memberIds.map((mid, idx) => {
+      const fn = memberRows[idx][1];
+      const ln = memberRows[idx][2];
+      const memberSkills = pickN(SKILLS, 3 + Math.floor(Math.random() * 5));
+      return {
+        member_id: mid,
+        full_name: `${fn} ${ln}`,
+        headline: memberRows[idx][6],
+        location: memberRows[idx][5],
+        skills: memberSkills,
+        experience: [
+          {
+            company: pick(COMPANIES).name,
+            title: `${pick(SENIORITY)} ${pick(SKILLS)} Engineer`,
+            years: 1 + Math.floor(Math.random() * 8),
+          },
+        ],
+        education: [
+          {
+            institution: pick(['Stanford', 'MIT', 'SJSU', 'UC Berkeley', 'Georgia Tech', 'CMU', 'UCLA', 'UT Austin']),
+            degree: pick(['BS', 'MS', 'PhD']),
+            field: pick(['Computer Science', 'Data Science', 'Information Systems', 'Software Engineering']),
+          },
+        ],
+        resume_text: `${fn} ${ln} is a ${pick(SENIORITY)} professional specializing in ${memberSkills.join(', ')}. Located in ${memberRows[idx][5]}.`,
+        updated_at: new Date(),
+      };
+    });
+
+    let upserted = 0;
+    for (const doc of resumeDocs) {
+      const result = await resumes.updateOne(
+        { member_id: doc.member_id },
+        { $set: doc },
+        { upsert: true },
+      );
+      if (result.upsertedCount || result.modifiedCount) upserted++;
+    }
+    console.log(`MongoDB resumes: ${upserted} upserted (${resumeDocs.length} attempted)`);
+  } finally {
+    await mongoClient.close();
+  }
 
   console.log('\nSeed complete!');
   await pool.end();
