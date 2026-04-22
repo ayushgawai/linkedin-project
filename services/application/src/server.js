@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { pingDb } from '../../shared/db.js';
 import { connectProducer, isKafkaConnected } from '../../shared/kafka.js';
+import { startOutboxPoller } from '../../shared/outbox.js';
 import { errorResponse } from '../../shared/response.js';
 import * as applications from './applications.js';
 
@@ -38,5 +39,5 @@ app.use((_req, res) => {
 const port = Number(process.env.PORT || 8003);
 app.listen(port, () => {
   console.log(JSON.stringify({ service: 'application', port, status: 'started' }));
-  connectProducer().catch(() => {});
+  connectProducer().then(() => startOutboxPoller()).catch(() => {});
 });
