@@ -2,7 +2,7 @@
 Database Models — Messaging Service
 """
 
-from sqlalchemy import Column, String, Text, DateTime, UniqueConstraint, ForeignKey
+from sqlalchemy import Column, String, Text, DateTime, BigInteger, Boolean, ForeignKey
 from sqlalchemy.sql import func
 from database import Base
 
@@ -37,12 +37,13 @@ class OutboxEvent(Base):
     If Kafka is unavailable, events are stored here and retried by the outbox poller.
     """
     __tablename__ = "outbox_events"
+    __table_args__ = {"extend_existing": True}
 
-    id = Column(String(36), primary_key=True)
-    topic = Column(String(255), nullable=False)
-    envelope = Column(Text, nullable=False)   # JSON string
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    topic = Column(String(120), nullable=False)
+    envelope = Column(Text, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
-    sent = Column(String(5), default="false") # "true" / "false" as string for MySQL compat
+    sent = Column(Boolean, default=False)
 
 
 class ProcessedEvent(Base):

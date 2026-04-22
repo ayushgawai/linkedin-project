@@ -114,10 +114,9 @@ def send_message(body: SendMessageRequest, db: Session = Depends(get_db)):
     if not kafka_ok:
         log.warning(f"Kafka unavailable — storing message {message_id} in outbox.")
         outbox_entry = OutboxEvent(
-            id=str(uuid.uuid4()),
             topic="message.sent",
             envelope=json.dumps(envelope),
-            sent="false",
+            sent=False,
         )
         db.add(outbox_entry)
         db.commit()
