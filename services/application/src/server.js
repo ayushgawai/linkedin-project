@@ -1,25 +1,14 @@
-import express from 'express';
+import 'dotenv/config';
+import { createApplicationApp, createApplicationMySqlRepository } from './app.js';
+import { connectProducer } from '../../shared/src/kafka.js';
+import { startOutboxPoller } from '../../shared/src/outbox.js';
 
-const app = express();
-app.use(express.json());
+const port = Number(process.env.PORT || 8003);
+const app = createApplicationApp({ repository: createApplicationMySqlRepository() });
 
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'application', db: 'unknown', kafka: 'unknown' });
-});
-
-app.use((_req, res) => {
-  res.status(501).json({
-    success: false,
-    error: {
-      code: 'NOT_IMPLEMENTED',
-      message: 'application service route not implemented yet',
-      details: {}
-    },
-    trace_id: 'pending'
-  });
-});
-
-const port = Number(process.env.PORT || 8000);
 app.listen(port, () => {
   console.log(JSON.stringify({ service: 'application', port, status: 'started' }));
+  connectProducer()
+    .then(() => startOutboxPoller())
+    .catch(() => {});
 });

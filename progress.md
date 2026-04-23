@@ -32,3 +32,40 @@
 - Improved DOCX table formatting: enforced full table borders, bold + shaded header rows, and removed fixed table layout to reduce awkward line wrapping.
 - Converted architecture diagram to PNG for Google Docs compatibility: `docs/submission/LinkedInClone_Architecture_Diagram.png`.
 - Updated submission doc to reference PNG and regenerated DOCX with formatting fixes preserved.
+
+## 2026-04-19
+- Created branch `feature/ayush/backend-infra-foundation` for Member 1 implementation work.
+- Added Member 1 demo seed data in `data/member1_demo_seed.sql`.
+- Added repeatable smoke-test helper in `scripts/member1_smoke_test.sh`.
+- Implemented Profile Service API contract in `services/profile/src/app.js` with:
+  - member create/get/update/delete/search
+  - validation and standardized success/error envelopes
+  - MySQL-backed repository and health checks
+- Implemented Job Service API contract in `services/job/src/app.js` with:
+  - job create/get/update/search/close/byRecruiter
+  - recruiter existence checks and standardized error handling
+  - MySQL-backed repository and health checks
+- Implemented Application Service API contract in `services/application/src/app.js` with:
+  - submit/get/byJob/byMember/updateStatus/addNote
+  - duplicate-application and closed-job protections
+  - status transition enforcement
+  - MySQL-backed repository and health checks
+- Added shared service helpers under `services/shared/src/` for:
+  - HTTP response envelopes
+  - validation errors
+  - MySQL connection management
+  - in-memory repositories for fast tests
+- Extended `data/schema.sql` to support application `answers` and `status_note`.
+- Updated service Dockerfiles to include shared code and expose the correct Member 1 ports.
+- Extended `infra/docker-compose.yml` to run `profile`, `job`, and `application` services with MySQL.
+- Added AWS deployment assets:
+  - `infra/aws/member1-ecs-rds.yaml`
+  - `docs/member1-aws-deployment.md`
+- Added automated Member 1 tests in `tests/member1-services.test.js`.
+- Updated root package scripts and CI workflow to install dependencies and run Member 1 tests.
+- Verification completed:
+  - `npm run test:member1` passed
+  - `npm test` passed
+  - `npm run test:api-doc` passed
+  - module import smoke check passed
+- Local `docker compose config` verification could not be run in this shell because `docker` is not installed on PATH.

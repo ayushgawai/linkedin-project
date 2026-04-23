@@ -1,3 +1,11 @@
+# LinkedInClone — MySQL, MongoDB, Redis, Kafka, Zookeeper, Profile, Job,
+# Application, Analytics. Build context is repo root.
+#
+#   docker compose -f infra/docker-compose.yml up -d
+#   cd infra && docker compose up -d
+
+name: linkedinclone
+
 services:
   mysql:
     image: mysql:8.4
@@ -6,7 +14,7 @@ services:
       MYSQL_ROOT_PASSWORD: ${DB_PASS:-linkedin}
       MYSQL_DATABASE: ${DB_NAME:-linkedinclone}
     ports:
-      - '3306:3306'
+      - '${DB_PORT_HOST:-3307}:3306'
     volumes:
       - mysql_data:/var/lib/mysql
       - ../data/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
@@ -15,12 +23,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 30s
+    networks: [backend]
 
   mongodb:
     image: mongo:7
     container_name: linkedinclone-mongodb
     ports:
-      - '27017:27017'
+      - '${MONGO_PORT_HOST:-27017}:27017'
     volumes:
       - mongo_data:/data/db
       - ../data/mongo_setup.js:/docker-entrypoint-initdb.d/mongo_setup.js:ro
@@ -29,12 +39,15 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 20s
+    networks: [backend]
 
   redis:
     image: redis:7-alpine
     container_name: linkedinclone-redis
+    command: ['redis-server', '--maxmemory', '256mb', '--maxmemory-policy', 'allkeys-lru']
     ports:
-      - '6379:6379'
+      - '${REDIS_PORT_HOST:-6379}:6379'
     volumes:
       - redis_data:/data
     healthcheck:
@@ -42,6 +55,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 5s
+    networks: [backend]
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.1
@@ -49,16 +64,19 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_4LW_COMMANDS_WHITELIST: 'srvr,ruok,stat,mntr,conf'
     ports:
-      - '2181:2181'
+      - '${ZOOKEEPER_PORT_HOST:-2181}:2181'
     volumes:
       - zookeeper_data:/var/lib/zookeeper/data
       - zookeeper_log:/var/lib/zookeeper/log
     healthcheck:
-      test: ['CMD-SHELL', 'echo ruok | nc localhost 2181 | grep imok']
+      test: ['CMD-SHELL', 'cub zk-ready localhost:2181 5']
       interval: 10s
-      timeout: 5s
+      timeout: 10s
       retries: 10
+      start_period: 15s
+    networks: [backend]
 
   kafka:
     image: confluentinc/cp-kafka:7.6.1
@@ -67,12 +85,15 @@ services:
       zookeeper:
         condition: service_healthy
     ports:
-      - '9092:9092'
+      - '${KAFKA_PORT_HOST:-9092}:9092'
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_LISTENERS: INSIDE://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INSIDE://kafka:29092,OUTSIDE://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INSIDE:PLAINTEXT,OUTSIDE:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INSIDE
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
@@ -83,6 +104,217 @@ services:
       interval: 15s
       timeout: 10s
       retries: 10
+      start_period: 50s
+    networks: [backend]
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: linkedinclone-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command:
+      - bash
+      - -c
+      - |
+        set -eu
+        TOPICS="job.viewed job.saved application.submitted application.status.updated connection.accepted connection.requested message.sent member.created member.updated member.deleted job.created job.closed"
+        for t in $$TOPICS; do
+          kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists \
+            --topic "$$t" --partitions 3 --replication-factor 1
+        done
+        echo 'kafka topics ready'
+    networks: [backend]
+    restart: 'no'
+
+  profile:
+    build:
+      context: ..
+      dockerfile: services/profile/Dockerfile
+    container_name: linkedinclone-profile
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 8001
+      SERVICE_NAME: profile
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASS: ${DB_PASS:-linkedin}
+      DB_NAME: ${DB_NAME:-linkedinclone}
+      DB_POOL_MAX: ${DB_POOL_MAX:-20}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_ENABLED: ${REDIS_ENABLED:-true}
+      CACHE_TTL_ENTITY_SEC: ${CACHE_TTL_ENTITY_SEC:-300}
+      CACHE_TTL_SEARCH_SEC: ${CACHE_TTL_SEARCH_SEC:-60}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - '${PROFILE_PORT_HOST:-8001}:8001'
+    networks: [backend]
+    restart: unless-stopped
+
+  job:
+    build:
+      context: ..
+      dockerfile: services/job/Dockerfile
+    container_name: linkedinclone-job
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 8002
+      SERVICE_NAME: job
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASS: ${DB_PASS:-linkedin}
+      DB_NAME: ${DB_NAME:-linkedinclone}
+      DB_POOL_MAX: ${DB_POOL_MAX:-20}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_ENABLED: ${REDIS_ENABLED:-true}
+      CACHE_TTL_ENTITY_SEC: ${CACHE_TTL_ENTITY_SEC:-300}
+      CACHE_TTL_SEARCH_SEC: ${CACHE_TTL_SEARCH_SEC:-60}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - '${JOB_PORT_HOST:-8002}:8002'
+    networks: [backend]
+    restart: unless-stopped
+
+  application:
+    build:
+      context: ..
+      dockerfile: services/application/Dockerfile
+    container_name: linkedinclone-application
+    environment:
+      PORT: 8003
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASS: ${DB_PASS:-linkedin}
+      DB_NAME: ${DB_NAME:-linkedinclone}
+      KAFKA_BROKERS: kafka:29092
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - '${APPLICATION_PORT_HOST:-8003}:8003'
+    networks: [backend]
+    restart: unless-stopped
+
+  messaging:
+    build:
+      context: ..
+      dockerfile: services/messaging/Dockerfile
+    container_name: linkedinclone-messaging
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASS: ${DB_PASS:-linkedin}
+      DB_NAME: ${DB_NAME:-linkedinclone}
+      KAFKA_BROKERS: kafka:29092
+      ANALYTICS_SERVICE_URL: http://analytics:8006
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - '${MESSAGING_PORT_HOST:-8004}:8004'
+    networks: [backend]
+    restart: unless-stopped
+
+  connection:
+    build:
+      context: ..
+      dockerfile: services/connection/Dockerfile
+    container_name: linkedinclone-connection
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASS: ${DB_PASS:-linkedin}
+      DB_NAME: ${DB_NAME:-linkedinclone}
+      KAFKA_BROKERS: kafka:29092
+      ANALYTICS_SERVICE_URL: http://analytics:8006
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - '${CONNECTION_PORT_HOST:-8005}:8005'
+    networks: [backend]
+    restart: unless-stopped
+
+  analytics:
+    build:
+      context: ..
+      dockerfile: services/analytics/Dockerfile
+    container_name: linkedinclone-analytics
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 8006
+      SERVICE_NAME: analytics
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASS: ${DB_PASS:-linkedin}
+      DB_NAME: ${DB_NAME:-linkedinclone}
+      DB_POOL_MAX: ${DB_POOL_MAX:-20}
+      MONGO_URI: mongodb://mongodb:27017
+      MONGO_DB: ${MONGO_DB:-linkedinclone}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_ENABLED: ${REDIS_ENABLED:-true}
+      KAFKA_BROKERS: kafka:29092
+      KAFKA_CLIENT_ID: analytics-service
+      KAFKA_CONSUMER_GROUP: analytics-consumer-group
+      KAFKA_ENABLED: ${KAFKA_ENABLED:-true}
+      ANALYTICS_CACHE_TTL_SEC: ${ANALYTICS_CACHE_TTL_SEC:-60}
+      BENCH_ADMIN_TOKEN: ${BENCH_ADMIN_TOKEN:-dev-only}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - '${ANALYTICS_PORT_HOST:-8006}:8006'
+    networks: [backend]
+    restart: unless-stopped
+
+networks:
+  backend:
+    driver: bridge
+    name: linkedinclone-backend
 
 volumes:
   mysql_data:
