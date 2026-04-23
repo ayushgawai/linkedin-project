@@ -1,6 +1,5 @@
 // Pure unit tests for the API response envelope helpers.
-// No DB, no Redis, no Kafka — these just validate the shape the master
-// prompt freezes for every response in the system.
+// No DB, no Redis, no Kafka — these validate the shape frozen in the API contract.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

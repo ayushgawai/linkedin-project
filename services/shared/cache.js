@@ -163,7 +163,7 @@ function sortKeys(value) {
   return value;
 }
 
-/** Centralised cache key conventions — matches the master prompt. */
+/** Centralised cache key conventions — aligned with the group API documentation. */
 export const keys = {
   member: (id) => `member:${id}`,
   job: (id) => `job:${id}`,

@@ -17,7 +17,7 @@ This document covers the work that still needs a human account owner or project 
    `feature/ayush/backend-infra-foundation`
 2. Create a PR from that branch into your target base branch.
 3. Do not merge yet.
-4. Request review from Claude Opus 4.6 and any teammates/prof-required reviewers.
+4. Request technical review from teammates and any course-required reviewers.
 5. Confirm GitHub Actions is green on the PR.
 6. Only after review, you decide whether to merge manually.
 
@@ -234,7 +234,7 @@ npm test
 
 Do all of this first:
 
-1. Claude Opus 4.6 review completed
+1. Peer / technical review completed
 2. GitHub CI green
 3. Local `npm test` green
 4. PR diff reviewed

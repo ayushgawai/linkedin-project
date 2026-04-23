@@ -30,11 +30,14 @@ LinkedIn-like distributed system for SJSU Distributed Systems course project.
 | Member 5 | Analytics + Redis + Performance |
 | Member 6 | Data Engineering + Testing + Documentation |
 
-## Architecture Diagram
-> Placeholder: add final distributed architecture diagram in `docs/architecture-diagram.png`.
+## Architecture diagram
+Submission-ready diagrams live under `docs/submission/`:
 
-## Monorepo Structure
-- `frontend/`
+- `LinkedInClone_Architecture_Diagram.svg`
+- `LinkedInClone_Architecture_Diagram.png`
+
+## Monorepo structure
+- `frontend/` *(React app — add here when the frontend branch lands; not yet in this repo)*
 - `services/profile/`
 - `services/job/`
 - `services/application/`
@@ -48,11 +51,14 @@ LinkedIn-like distributed system for SJSU Distributed Systems course project.
 - `docs/`
 - `tests/`
 
-## Setup (Skeleton)
-1. Copy `.env.example` to `.env` and update values.
-2. Start infra: `docker compose -f infra/docker-compose.yml up -d`.
-3. Load DB schemas in `data/`.
-4. Start services per folder instructions.
+## Local setup
+1. Copy `.env.example` to `.env` and adjust host ports if needed.
+2. Start the stack: `docker compose -f infra/docker-compose.yml up -d` (MySQL, MongoDB, Redis, Zookeeper, Kafka, profile, job, application, messaging, connection, analytics).
+3. MySQL loads `data/schema.sql` on first container start; use the data pipeline below for large seeds.
+4. Run individual services locally only when you need hot reload; otherwise prefer Docker.
+
+## Integration branch
+Active integration work is merged on **`integration/parth/sequential-merge`** (Ayush → Naman → Khushi services → Sharan tests/data). Open a PR into `main` after review.
 
 ## Data Pipeline (Member 6)
 
@@ -98,11 +104,20 @@ python3.11 data/seed_loader.py
 
 The seed loader is **idempotent** — safe to run multiple times without creating duplicates.
 
-## Running Tests
+## Running tests
+
+**Node (CI-aligned, no Docker required):**
+
+```bash
+npm install
+npm test
+```
+
+This runs Member 1 in-memory service tests, analytics unit tests, and the submission API contract script.
+
+**Python integration tests** (require services on ports 8001–8007; they skip when a service is down):
 
 ```bash
 pip3.11 install pytest pytest-cov requests
-pytest tests/ -v
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest tests/ -q -o addopts=
 ```
-
-Tests require the microservices to be running on their respective ports (8001–8007). Tests skip gracefully if a service is not reachable.
