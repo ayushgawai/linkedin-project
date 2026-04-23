@@ -218,6 +218,56 @@ services:
     networks: [backend]
     restart: unless-stopped
 
+  messaging:
+    build:
+      context: ..
+      dockerfile: services/messaging/Dockerfile
+    container_name: linkedinclone-messaging
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASS: ${DB_PASS:-linkedin}
+      DB_NAME: ${DB_NAME:-linkedinclone}
+      KAFKA_BROKERS: kafka:29092
+      ANALYTICS_SERVICE_URL: http://analytics:8006
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - '${MESSAGING_PORT_HOST:-8004}:8004'
+    networks: [backend]
+    restart: unless-stopped
+
+  connection:
+    build:
+      context: ..
+      dockerfile: services/connection/Dockerfile
+    container_name: linkedinclone-connection
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASS: ${DB_PASS:-linkedin}
+      DB_NAME: ${DB_NAME:-linkedinclone}
+      KAFKA_BROKERS: kafka:29092
+      ANALYTICS_SERVICE_URL: http://analytics:8006
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - '${CONNECTION_PORT_HOST:-8005}:8005'
+    networks: [backend]
+    restart: unless-stopped
+
   analytics:
     build:
       context: ..

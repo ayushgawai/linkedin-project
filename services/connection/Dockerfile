@@ -1,7 +1,12 @@
-FROM node:20-alpine
+FROM python:3.11-slim
+
 WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm install --omit=dev || npm install --omit=dev
-COPY src ./src
-EXPOSE 8000
-CMD ["npm", "start"]
+
+COPY services/connection/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY services/connection/ .
+
+EXPOSE 8005
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8005"]
