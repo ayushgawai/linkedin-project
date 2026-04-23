@@ -53,7 +53,7 @@ Submission-ready diagrams live under `docs/submission/`:
 
 ## Local setup
 1. Copy `.env.example` to `.env` and adjust host ports if needed.
-2. Start the stack: `docker compose -f infra/docker-compose.yml up -d` (MySQL, MongoDB, Redis, Zookeeper, Kafka, profile, job, application, messaging, connection, analytics).
+2. Start the stack: `docker compose -f infra/docker-compose.yml up -d` (MySQL, MongoDB, Redis, Zookeeper, Kafka, profile, job, application, messaging, connection, analytics, **ai-agent on 8007**).
 3. MySQL loads `data/schema.sql` on first container start; use the data pipeline below for large seeds.
 4. Run individual services locally only when you need hot reload; otherwise prefer Docker.
 
