@@ -17,8 +17,34 @@ coverage/
 
 # Personal workspace (never commit)
 personal/
+_personal/
 linkedin/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# JMeter / performance artifacts
+*.jtl
+infra/perf/results/
+infra/perf/logs/
+# Extracted test data (regenerated from seed via extract_ids.js)
+infra/perf/data/
 
 # IDE
 .vscode/
 .idea/
+*.swp
+
+# OS junk
+Thumbs.db
+~$*
+
+# Local reference docs / working copies kept outside version control.
+# The spec lives in docs/submission/ — keep these copies untracked so the
+# repo root stays clean. Remove the pattern if you ever want to commit them.
+LinkedInClone_*.docx
+LinkedInClone_*.txt

@@ -9,7 +9,10 @@
   "scripts": {
     "test": "npm run test:member1 && npm run test:api-doc",
     "test:member1": "node --test tests/member1-services.test.js",
-    "test:api-doc": "bash tests/submission_contract_check.sh"
+    "test:api-doc": "bash tests/submission_contract_check.sh",
+    "seed": "node scripts/bench/seed.js",
+    "seed:reset": "node scripts/bench/seed.js --reset",
+    "seed:events": "node scripts/bench/seed.js --only=events"
   },
   "devDependencies": {
     "supertest": "^7.1.1"
