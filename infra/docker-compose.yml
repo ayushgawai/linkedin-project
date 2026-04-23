@@ -1,5 +1,5 @@
 # LinkedInClone — MySQL, MongoDB, Redis, Kafka, Zookeeper, Profile, Job,
-# Application, Analytics. Build context is repo root.
+# Application, Messaging, Connection, Analytics, AI Agent. Build context is repo root.
 #
 #   docker compose -f infra/docker-compose.yml up -d
 #   cd infra && docker compose up -d
@@ -118,7 +118,7 @@ services:
       - -c
       - |
         set -eu
-        TOPICS="job.viewed job.saved application.submitted application.status.updated connection.accepted connection.requested message.sent member.created member.updated member.deleted job.created job.closed"
+        TOPICS="job.viewed job.saved application.submitted application.status.updated connection.accepted connection.requested message.sent member.created member.updated member.deleted job.created job.closed ai.requests ai.results"
         for t in $$TOPICS; do
           kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists \
             --topic "$$t" --partitions 3 --replication-factor 1
@@ -308,6 +308,47 @@ services:
         condition: service_completed_successfully
     ports:
       - '${ANALYTICS_PORT_HOST:-8006}:8006'
+    networks: [backend]
+    restart: unless-stopped
+
+  ai-agent:
+    build:
+      context: ..
+      dockerfile: services/ai-agent/Dockerfile
+    container_name: linkedinclone-ai-agent
+    environment:
+      MONGO_URI: mongodb://mongodb:27017
+      MONGO_DB: ${MONGO_DB:-linkedinclone}
+      KAFKA_BROKERS: kafka:29092
+      KAFKA_CONSUMER_GROUP: ${KAFKA_CONSUMER_GROUP:-ai-supervisor-group}
+      KAFKA_TOPIC_REQUESTS: ai.requests
+      KAFKA_TOPIC_RESULTS: ai.results
+      PROFILE_SERVICE_URL: http://profile:8001
+      JOB_SERVICE_URL: http://job:8002
+      APPLICATION_SERVICE_URL: http://application:8003
+      MESSAGING_SERVICE_URL: http://messaging:8004
+      USE_MOCK_SERVICES: "false"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      SERVICE_PORT: 8007
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      CORS_ORIGINS: http://localhost:3000
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      profile:
+        condition: service_started
+      job:
+        condition: service_started
+      application:
+        condition: service_started
+      messaging:
+        condition: service_started
+    ports:
+      - '${AI_PORT_HOST:-8007}:8007'
     networks: [backend]
     restart: unless-stopped
 
