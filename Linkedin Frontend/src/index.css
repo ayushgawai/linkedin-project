@@ -1,0 +1,152 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --brand-primary: #0a66c2;
+  --brand-primary-hover: #004182;
+  --brand-dark: #004182;
+  --surface: #f4f2ee;
+  --surface-raised: #ffffff;
+  --border: #e0dfdc;
+  --text-primary: #000000e6;
+  --text-secondary: #00000099;
+  --text-tertiary: #00000073;
+  --success: #057642;
+  --danger: #cc1016;
+  --warning: #915907;
+
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+:root[data-theme='dark'] {
+  --brand-primary: #6cb6ff;
+  --brand-primary-hover: #8dc5ff;
+  --brand-dark: #6cb6ff;
+  --surface: #121212;
+  --surface-raised: #1f1f1f;
+  --border: #2f2f2f;
+  --text-primary: #f3f3f3;
+  --text-secondary: #c3c3c3;
+  --text-tertiary: #a0a0a0;
+  --success: #1faa62;
+  --danger: #ff6b6b;
+  --warning: #e9b44c;
+}
+
+/* Dark mode normalization for components still using hard-coded light palette classes. */
+:root[data-theme='dark'] body {
+  color-scheme: dark;
+}
+
+:root[data-theme='dark'] .bg-white,
+:root[data-theme='dark'] .bg-surface-raised {
+  background-color: #1f1f1f !important;
+}
+
+:root[data-theme='dark'] .bg-\[\#f3f2ef\],
+:root[data-theme='dark'] .bg-surface {
+  background-color: #121212 !important;
+}
+
+:root[data-theme='dark'] .bg-\[\#f9f9f9\],
+:root[data-theme='dark'] .bg-\[\#eef3f8\],
+:root[data-theme='dark'] .bg-\[\#f5f1eb\],
+:root[data-theme='dark'] .bg-\[\#f3f0fa\] {
+  background-color: #242424 !important;
+}
+
+:root[data-theme='dark'] .border,
+:root[data-theme='dark'] .border-border,
+:root[data-theme='dark'] .border-\[\#e0e0e0\],
+:root[data-theme='dark'] .border-\[\#e0dfdc\],
+:root[data-theme='dark'] .border-\[\#d0d0d0\] {
+  border-color: #333 !important;
+}
+
+:root[data-theme='dark'] .text-\[\#1f1f1f\],
+:root[data-theme='dark'] .text-\[\#191919\],
+:root[data-theme='dark'] .text-text-primary {
+  color: #f3f3f3 !important;
+}
+
+:root[data-theme='dark'] .text-\[\#666666\],
+:root[data-theme='dark'] .text-\[\#444\],
+:root[data-theme='dark'] .text-\[\#404040\],
+:root[data-theme='dark'] .text-text-secondary,
+:root[data-theme='dark'] .text-text-tertiary {
+  color: #c3c3c3 !important;
+}
+
+:root[data-theme='dark'] .text-\[\#888\] {
+  color: #a8a8a8 !important;
+}
+
+:root[data-theme='dark'] .hover\:bg-black\/5:hover,
+:root[data-theme='dark'] .hover\:bg-black\/\[0\.03\]:hover,
+:root[data-theme='dark'] .hover\:bg-black\/\[0\.04\]:hover,
+:root[data-theme='dark'] .hover\:bg-black\/\[0\.06\]:hover {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+:root[data-theme='dark'] .shadow-sm,
+:root[data-theme='dark'] .shadow-\[0_1px_4px_rgba\(0\,0\,0\,0\.08\)\] {
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.55) !important;
+}
+
+:root[data-theme='dark'] input,
+:root[data-theme='dark'] textarea,
+:root[data-theme='dark'] select {
+  background-color: #1a1a1a !important;
+  color: #f3f3f3 !important;
+  border-color: #3a3a3a !important;
+}
+
+:root[data-theme='dark'] input::placeholder,
+:root[data-theme='dark'] textarea::placeholder {
+  color: #a8a8a8 !important;
+}
+
+:root[data-theme='dark'] .bg-black\/5 {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: var(--surface);
+  color: var(--text-primary);
+  font-size: 14px;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  letter-spacing: -0.01em;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
