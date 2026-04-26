@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from pydantic import BaseModel
+from typing import Optional
 
 from database import get_db
 from models import Message, ThreadParticipant, OutboxEvent
@@ -25,7 +26,10 @@ router = APIRouter()
 class SendMessageRequest(BaseModel):
     thread_id: str
     sender_id: str
-    message_text: str
+    # Frontend sends `text`; professor spec uses `message_text`. Accept both.
+    message_text: Optional[str] = None
+    text: Optional[str] = None
+    idempotency_key: Optional[str] = None
 
 class ListMessagesRequest(BaseModel):
     thread_id: str
@@ -76,8 +80,10 @@ def send_message(body: SendMessageRequest, db: Session = Depends(get_db)):
         else:
             error("FORBIDDEN", "Sender is not a participant in this thread.", 403)
 
+    message_text = (body.message_text or body.text or "").strip()
+
     # Validate message content
-    if not body.message_text or not body.message_text.strip():
+    if not message_text:
         error("VALIDATION_ERROR", "message_text cannot be empty.")
 
     # Write message to DB
@@ -86,7 +92,7 @@ def send_message(body: SendMessageRequest, db: Session = Depends(get_db)):
         message_id=message_id,
         thread_id=body.thread_id,
         sender_id=body.sender_id,
-        message_text=body.message_text.strip(),
+        message_text=message_text,
     )
     db.add(msg)
     db.commit()
@@ -104,7 +110,7 @@ def send_message(body: SendMessageRequest, db: Session = Depends(get_db)):
             "message_id": message_id,
             "thread_id": body.thread_id,
             "sender_id": body.sender_id,
-            "message_text": body.message_text.strip(),
+            "message_text": message_text,
         },
     )
 
@@ -163,6 +169,7 @@ def list_messages(body: ListMessagesRequest, db: Session = Depends(get_db)):
                 "thread_id": m.thread_id,
                 "sender_id": m.sender_id,
                 "message_text": m.message_text,
+                "text": m.message_text,
                 "sent_at": m.sent_at.isoformat() if m.sent_at else None,
             }
             for m in messages

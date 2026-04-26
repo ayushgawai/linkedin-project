@@ -242,8 +242,12 @@ export async function listThreadsByUser(user_id: string): Promise<ThreadListItem
     })
     return items
   }
-  const response = await apiClient.post<ThreadListItem[]>('/threads/byUser', { user_id })
-  return response.data
+  const response = await apiClient.post<unknown>('/threads/byUser', { user_id })
+  const data = response.data as any
+  // Backend may return { threads, total } or a raw array.
+  if (Array.isArray(data)) return data as ThreadListItem[]
+  if (data && Array.isArray(data.threads)) return data.threads as ThreadListItem[]
+  return []
 }
 
 export async function listMessages(thread_id: string, pagination?: { page?: number; pageSize?: number }): Promise<MessagesListResponse> {
@@ -255,12 +259,20 @@ export async function listMessages(thread_id: string, pagination?: { page?: numb
     }
     return { messages: MOCK_MESSAGES_BY_THREAD[thread_id] ?? [], has_more: false }
   }
-  const response = await apiClient.post<MessagesListResponse>('/messages/list', {
+  const response = await apiClient.post<unknown>('/messages/list', {
     thread_id,
     page: pagination?.page ?? 1,
     pageSize: pagination?.pageSize ?? 50,
   })
-  return response.data
+  const data = response.data as any
+  // Backend returns { messages, total, page, page_size } while frontend expects { messages, has_more }.
+  if (data && Array.isArray(data.messages)) {
+    const pageSize = Number(data.page_size || pagination?.pageSize || 50)
+    const page = Number(data.page || pagination?.page || 1)
+    const total = Number(data.total || data.messages.length)
+    return { messages: data.messages, has_more: page * pageSize < total }
+  }
+  return data as MessagesListResponse
 }
 
 export type SendMessageOptions = {
@@ -302,7 +314,7 @@ export async function sendMessage(
     row.unreadByUser[other] = (row.unreadByUser[other] ?? 0) + 1
     return rec
   }
-  const response = await apiClient.post<MessageRecord>('/messages/send', {
+  const response = await apiClient.post<unknown>('/messages/send', {
     thread_id,
     sender_id,
     text,
@@ -311,7 +323,24 @@ export async function sendMessage(
     attachment_url: options?.attachment_url,
     attachment_filename: options?.attachment_filename,
   })
-  return response.data
+  const data = response.data as any
+  // Backend may return { message_id, kafka_status } or a full record.
+  if (data && typeof data === 'object' && typeof data.message_id === 'string') {
+    return {
+      message_id: data.message_id,
+      thread_id,
+      sender_id,
+      sender_name: useAuthStore.getState().user?.full_name || 'Member',
+      text,
+      sent_at: new Date().toISOString(),
+      status: 'delivered',
+      idempotency_key,
+      image_url: options?.image_url ?? undefined,
+      attachment_url: options?.attachment_url ?? undefined,
+      attachment_filename: options?.attachment_filename ?? undefined,
+    } as MessageRecord
+  }
+  return data as MessageRecord
 }
 
 export async function markThreadRead(thread_id: string, reader_id: string): Promise<void> {
