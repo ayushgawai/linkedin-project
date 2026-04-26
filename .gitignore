@@ -55,5 +55,8 @@ LinkedInClone_*.txt
 data/raw/
 data/seeds/
 
+# Local dataset drop (do not commit)
+Data_2/
+
 # Test coverage output
 tests/coverage/
