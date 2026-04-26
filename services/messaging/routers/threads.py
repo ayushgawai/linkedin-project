@@ -7,7 +7,8 @@ POST /threads/byUser
 
 import uuid
 import logging
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import select, and_
 from pydantic import BaseModel
@@ -43,13 +44,27 @@ class ThreadUserActionRequest(BaseModel):
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def error(code: str, message: str, status: int = 400) -> dict:
-    from fastapi import HTTPException
-    raise HTTPException(status_code=status, detail={
-        "success": False,
-        "error": {"code": code, "message": message, "details": {}},
-        "trace_id": str(uuid.uuid4()),
-    })
+def _trace_id(req: Request | None = None) -> str:
+    tid = getattr(req.state, "trace_id", None) if req else None
+    return tid or str(uuid.uuid4())
+
+
+def ok(data, req: Request | None = None, status: int = 200):
+    return JSONResponse(
+        status_code=status,
+        content={"success": True, "data": data, "trace_id": _trace_id(req)},
+    )
+
+
+def err(code: str, message: str, status: int, req: Request | None = None, details: dict | None = None):
+    return JSONResponse(
+        status_code=status,
+        content={
+            "success": False,
+            "error": {"code": code, "message": message, "details": details or {}},
+            "trace_id": _trace_id(req),
+        },
+    )
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -61,7 +76,8 @@ def open_thread(body: OpenThreadRequest, db: Session = Depends(get_db)):
     Idempotent — returns existing thread if one already exists between the same pair.
     """
     if len(body.participant_ids) < 2:
-        error("VALIDATION_ERROR", "At least 2 participant_ids required.")
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="At least 2 participant_ids required.")
 
     # Sort participant IDs so (A,B) and (B,A) resolve to the same thread
     sorted_ids = sorted(body.participant_ids)
@@ -97,6 +113,129 @@ def open_thread(body: OpenThreadRequest, db: Session = Depends(get_db)):
 
     log.info(f"Created thread {thread_id} for participants {sorted_ids}")
     return {"thread_id": thread_id}
+
+
+# ── REST compatibility for pytest (/threads*) ──────────────────────────────────
+
+class OpenThreadRestRequest(BaseModel):
+    participants: List[str] | None = None
+
+
+@router.post("", include_in_schema=False)
+def open_thread_rest(req: Request, body: OpenThreadRestRequest, db: Session = Depends(get_db)):
+    participants = body.participants or []
+    if len(participants) < 2:
+        return err("VALIDATION_ERROR", "participants must contain at least 2 ids", 400, req)
+
+    sorted_ids = sorted(participants)
+
+    # Find existing thread (idempotent)
+    existing_thread_id = None
+    threads_for_p1 = db.execute(
+        select(ThreadParticipant.thread_id).where(ThreadParticipant.user_id == sorted_ids[0])
+    ).scalars().all()
+    for tid in threads_for_p1:
+        participants_in_thread = db.execute(
+            select(ThreadParticipant.user_id).where(ThreadParticipant.thread_id == tid)
+        ).scalars().all()
+        if set(sorted_ids) == set(participants_in_thread):
+            existing_thread_id = tid
+            break
+
+    if existing_thread_id:
+        return ok({"thread_id": existing_thread_id}, req, status=200)
+
+    thread_id = str(uuid.uuid4())
+    db.add(Thread(thread_id=thread_id))
+    for uid in sorted_ids:
+        db.add(ThreadParticipant(thread_id=thread_id, user_id=uid))
+    db.commit()
+    return ok({"thread_id": thread_id}, req, status=201)
+
+
+@router.get("/{thread_id}", include_in_schema=False)
+def get_thread_rest(thread_id: str, req: Request, db: Session = Depends(get_db)):
+    thread = db.get(Thread, thread_id)
+    if not thread:
+        return err("NOT_FOUND", "thread was not found", 404, req)
+    participants = db.execute(
+        select(ThreadParticipant.user_id).where(ThreadParticipant.thread_id == thread_id)
+    ).scalars().all()
+    return ok({"thread_id": thread_id, "participants": participants}, req)
+
+
+@router.get("", include_in_schema=False)
+def threads_by_user_rest(user_id: str | None = None, req: Request = None, db: Session = Depends(get_db)):
+    if not user_id:
+        return err("VALIDATION_ERROR", "user_id query param is required", 400, req)
+    thread_ids = db.execute(
+        select(ThreadParticipant.thread_id).where(ThreadParticipant.user_id == user_id)
+    ).scalars().all()
+    items = [{"thread_id": tid} for tid in thread_ids]
+    return ok({"items": items}, req)
+
+
+@router.get("/{thread_id}/messages", include_in_schema=False)
+def list_messages_rest(thread_id: str, req: Request, db: Session = Depends(get_db)):
+    thread_exists = db.execute(
+        select(ThreadParticipant).where(ThreadParticipant.thread_id == thread_id)
+    ).first()
+    if not thread_exists:
+        return err("NOT_FOUND", "thread was not found", 404, req)
+    messages = db.execute(
+        select(Message).where(Message.thread_id == thread_id).order_by(Message.sent_at.asc())
+    ).scalars().all()
+    items = [
+        {
+            "message_id": m.message_id,
+            "thread_id": m.thread_id,
+            "sender_id": m.sender_id,
+            "message_text": m.message_text,
+            "sent_at": m.sent_at.isoformat() if m.sent_at else None,
+        }
+        for m in messages
+    ]
+    return ok({"items": items}, req)
+
+
+class SendMessageRestRequest(BaseModel):
+    sender_id: str | None = None
+    message_text: str | None = None
+
+
+@router.post("/{thread_id}/messages", include_in_schema=False)
+def send_message_rest(thread_id: str, req: Request, body: SendMessageRestRequest, db: Session = Depends(get_db)):
+    if not body.sender_id or not body.message_text or not body.message_text.strip():
+        return err("VALIDATION_ERROR", "sender_id and message_text are required", 400, req)
+    participant = db.execute(
+        select(ThreadParticipant).where(
+            ThreadParticipant.thread_id == thread_id,
+            ThreadParticipant.user_id == body.sender_id,
+        )
+    ).scalar_one_or_none()
+    if not participant:
+        any_participant = db.execute(
+            select(ThreadParticipant).where(ThreadParticipant.thread_id == thread_id)
+        ).first()
+        if not any_participant:
+            return err("NOT_FOUND", "thread was not found", 404, req)
+        return err("FORBIDDEN", "sender is not a participant", 403, req)
+
+    message_id = str(uuid.uuid4())
+    msg = Message(
+        message_id=message_id,
+        thread_id=thread_id,
+        sender_id=body.sender_id,
+        message_text=body.message_text.strip(),
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+    return ok(
+        {"message_id": message_id, "thread_id": thread_id, "sender_id": body.sender_id, "message_text": msg.message_text},
+        req,
+        status=201,
+    )
 
 
 @router.post("/get")
