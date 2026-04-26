@@ -161,3 +161,22 @@ export async function rejectOutput(task_id: string, step_id: string, reason: str
   const response = await apiClient.post<{ success: boolean }>('/ai/tasks/reject', { task_id, step_id, reason })
   return response.data
 }
+
+export type CareerCoachResponse = {
+  task_id?: string
+  trace_id?: string
+  member_id?: string
+  target_job_id?: string
+  suggestions?: {
+    headline?: string
+    summary?: string
+    skills_to_add?: string[]
+    resume_bullets?: string[]
+  }
+  rationale?: string[]
+}
+
+export async function getCareerCoaching(member_id: string, target_job_id: string): Promise<CareerCoachResponse> {
+  const response = await apiClient.post<CareerCoachResponse>('/ai/coach', { member_id, target_job_id })
+  return response.data
+}

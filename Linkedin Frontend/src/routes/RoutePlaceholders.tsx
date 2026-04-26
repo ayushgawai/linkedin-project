@@ -1,5 +1,6 @@
-import { Eye, Lock, Plus, Shield, Bell, Database, BadgeInfo, ChevronRight } from 'lucide-react'
+import { Eye, Lock, Plus, Shield, Bell, Database, BadgeInfo, ChevronRight, Sparkles } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Button, Card, Input, Modal, Textarea } from '../components/ui'
 import { cn } from '../lib/cn'
 import { useTheme } from '../lib/theme'
@@ -166,6 +167,7 @@ export const SettingsPage = (): JSX.Element => {
   const { theme, setTheme } = useTheme()
   const profile = useProfileStore((s) => s.profile)
   const updateBasicInfo = useProfileStore((s) => s.updateBasicInfo)
+  const navigate = useNavigate()
   const [saved, setSaved] = useState(false)
   const [form, setForm] = useState({
     first_name: profile.first_name,
@@ -235,6 +237,20 @@ export const SettingsPage = (): JSX.Element => {
       </aside>
 
       <main className="space-y-3 lg:col-span-9">
+        <Card>
+          <Card.Body className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold text-text-primary">Career Coach</h2>
+              <p className="mt-1 text-sm text-text-secondary">
+                Get AI suggestions to tailor your profile for a target job.
+              </p>
+            </div>
+            <Button variant="primary" onClick={() => navigate('/coach')} leftIcon={<Sparkles className="h-4 w-4" />}>
+              Open coach
+            </Button>
+          </Card.Body>
+        </Card>
+
         <Card>
           <Card.Header>
             <h2 className="text-xl font-semibold text-text-primary">Profile information</h2>
