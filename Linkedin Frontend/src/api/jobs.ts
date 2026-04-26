@@ -47,7 +47,20 @@ export async function listJobs(filters: JobSearchFilters): Promise<JobSearchResp
     page: filters.page ?? 1,
     pageSize: filters.pageSize ?? 20,
   })
-  return response.data
+  const data: any = response.data as any
+  // Backend returns { results, total, page, page_size }, mock expects { jobs, has_more }.
+  if (data && Array.isArray(data.results)) {
+    const page = Number(data.page || filters.page || 1)
+    const pageSize = Number(data.page_size || filters.pageSize || 20)
+    const total = Number(data.total || 0)
+    return {
+      jobs: data.results,
+      page,
+      has_more: page * pageSize < total,
+      total,
+    }
+  }
+  return data
 }
 
 export async function getJob(job_id: string): Promise<JobRecord> {
@@ -134,8 +147,12 @@ export async function listJobsByRecruiter(recruiter_id: string): Promise<JobReco
     await mockDelay(220)
     return getMockJobs().filter((job) => job.recruiter_id === recruiter_id)
   }
-  const response = await apiClient.post<JobRecord[]>('/jobs/byRecruiter', { recruiter_id })
-  return response.data
+  const response = await apiClient.post<unknown>('/jobs/byRecruiter', { recruiter_id })
+  const data: any = response.data as any
+  if (Array.isArray(data)) return data as JobRecord[]
+  if (data && Array.isArray(data.results)) return data.results as JobRecord[]
+  if (data && Array.isArray(data.jobs)) return data.jobs as JobRecord[]
+  return []
 }
 
 export async function incrementJobViews(job_id: string): Promise<void> {
