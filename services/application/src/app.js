@@ -1,9 +1,12 @@
 import express from 'express';
+import cors from 'cors';
 import { randomUUID } from 'node:crypto';
 
 import { getPagination, sendError, sendSuccess } from '../../shared/src/http.js';
 import { checkMySqlHealth, query, withTransaction } from '../../shared/src/mysql.js';
 import { NotFoundError, ValidationError, optionalString, requireString } from '../../shared/src/validation.js';
+import { publishOrOutbox } from '../../shared/src/outbox.js';
+import { buildEnvelope, isKafkaConnected } from '../../shared/src/kafka.js';
 
 const VALID_TRANSITIONS = {
   submitted: new Set(['reviewing', 'rejected']),
@@ -181,11 +184,13 @@ function handleError(res, error) {
 
 export function createApplicationApp({ repository }) {
   const app = express();
+  app.use(cors());
   app.use(express.json());
 
   app.get('/health', async (_req, res) => {
     const db = await repository.health();
-    res.json({ status: db === 'connected' ? 'ok' : 'degraded', service: 'application', db, kafka: 'disconnected' });
+    const kafkaOk = isKafkaConnected();
+    res.json({ status: db === 'connected' ? 'ok' : 'degraded', service: 'application', db, kafka: kafkaOk ? 'connected' : 'disconnected' });
   });
 
   app.post('/applications/submit', async (req, res) => {
@@ -197,6 +202,15 @@ export function createApplicationApp({ repository }) {
       if (created.conflict) {
         return sendError(res, 409, created.conflict, created.conflict === 'JOB_CLOSED' ? 'job is closed' : 'member has already applied');
       }
+
+      publishOrOutbox('application.submitted', buildEnvelope({
+        eventType: 'application.submitted',
+        actorId: req.body.member_id,
+        entityType: 'application',
+        entityId: created.application_id,
+        payload: { application_id: created.application_id, job_id: req.body.job_id, member_id: req.body.member_id }
+      })).catch(() => {});
+
       return sendSuccess(res, { application_id: created.application_id }, 201);
     } catch (error) {
       return handleError(res, error);
@@ -257,6 +271,15 @@ export function createApplicationApp({ repository }) {
         });
       }
       const result = await repository.updateStatus(applicationId, status, note);
+
+      publishOrOutbox('application.status.updated', buildEnvelope({
+        eventType: 'application.status.updated',
+        actorId: 'system',
+        entityType: 'application',
+        entityId: applicationId,
+        payload: { application_id: applicationId, from: current.status, to: status }
+      })).catch(() => {});
+
       return sendSuccess(res, result);
     } catch (error) {
       return handleError(res, error);

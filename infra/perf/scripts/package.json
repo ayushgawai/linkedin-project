@@ -1,0 +1,7 @@
+{
+  "name": "@linkedinclone/perf-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "extract_ids.js"
+}

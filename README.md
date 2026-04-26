@@ -32,11 +32,14 @@ LinkedIn-like distributed system for SJSU Distributed Systems course project.
 | Sharan Somshekhar Patil | Data engineering, testing, and presentation support |
 | Parth Patel | Integration, merge coordination, unit testing, and integration testing |
 
-## Architecture Diagram
-See [LinkedInClone_Architecture_Diagram.png](/Users/spartan/Documents/GitHub/Linkedin-Project/docs/submission/LinkedInClone_Architecture_Diagram.png:1).
+## Architecture diagram
+Submission-ready diagrams live under `docs/submission/`:
 
-## Monorepo Structure
-- `frontend/`
+- `LinkedInClone_Architecture_Diagram.svg`
+- `LinkedInClone_Architecture_Diagram.png`
+
+## Monorepo structure
+- `frontend/` *(React app — add here when the frontend branch lands; not yet in this repo)*
 - `services/profile/`
 - `services/job/`
 - `services/application/`
@@ -50,34 +53,73 @@ See [LinkedInClone_Architecture_Diagram.png](/Users/spartan/Documents/GitHub/Lin
 - `docs/`
 - `tests/`
 
-## Setup (Skeleton)
-1. Copy `.env.example` to `.env` and update values.
-2. Start infra: `docker compose -f infra/docker-compose.yml up -d`.
-3. Load DB schemas in `data/`.
-4. Start services per folder instructions.
+## Local setup
+1. Copy `.env.example` to `.env` and adjust host ports if needed.
+2. Start the stack: `docker compose -f infra/docker-compose.yml up -d` (MySQL, MongoDB, Redis, Zookeeper, Kafka, profile, job, application, messaging, connection, analytics, **ai-agent on 8007**).
+3. MySQL loads `data/schema.sql` on first container start; use the data pipeline below for large seeds.
+4. Run individual services locally only when you need hot reload; otherwise prefer Docker.
 
-## Deployment Guide
+## Integration branch
+Active integration work is merged on **`integration/parth/sequential-merge`** (Ayush → Naman → Khushi services → Sharan tests/data). Open a PR into `main` after review.
 
-Use [aws-deployment-runbook.md](/Users/spartan/Documents/GitHub/Linkedin-Project/docs/aws-deployment-runbook.md:1) as the canonical AWS deployment document.
+## Data Pipeline (Member 6)
 
-Useful files:
-- Single env template: [.env.example](/Users/spartan/Documents/GitHub/Linkedin-Project/.env.example:1)
-- ECR bootstrap stack: [backend-ecr.yaml](/Users/spartan/Documents/GitHub/Linkedin-Project/infra/aws/backend-ecr.yaml:1)
-- App stack: [backend-platform.yaml](/Users/spartan/Documents/GitHub/Linkedin-Project/infra/aws/backend-platform.yaml:1)
-- Bootstrap script: [aws_bootstrap_backend.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/aws_bootstrap_backend.sh:1)
-- Deploy script: [aws_deploy_backend.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/aws_deploy_backend.sh:1)
-- Destroy script: [aws_destroy_backend.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/aws_destroy_backend.sh:1)
-- Cost-stop script: [aws_stop_backend_costs.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/aws_stop_backend_costs.sh:1)
-- Demo seed: [backend_demo_seed.sql](/Users/spartan/Documents/GitHub/Linkedin-Project/data/backend_demo_seed.sql:1)
-- Smoke test: [backend_smoke_test.sh](/Users/spartan/Documents/GitHub/Linkedin-Project/scripts/backend_smoke_test.sh:1)
+### Datasets
+| Dataset | Source | Contents |
+|---|---|---|
+| LinkedIn Job Postings 2023 | [Kaggle](https://www.kaggle.com/datasets/rajatraj0502/linkedin-job-2023) | 15K jobs, companies, skills |
+| Resume Dataset | [Kaggle](https://www.kaggle.com/datasets/snehaanbhawal/resume-dataset) | 2.4K resumes across 24 categories |
 
-## Team Rules
+Raw CSVs are **not committed** (gitignored). Download them into `data/raw/` before running the pipeline.
 
-- The professor project document in `personal/internal_docs/Class_Project_Description_LinkedIn_AgenticAI.docx` is the highest-priority source of truth for requirements.
-- The team should re-check implementation and documentation against the professor document regularly, especially before merge, demo, and deployment.
-- Internal prompts, personal notes, and branch-specific plans can help execution, but they do not override the professor document.
-- Every branch should keep GitHub Actions green before requesting review or merge.
-- Minimum CI expectation for all contributors: do not merge with failing workflow runs.
-- Before pushing significant changes, run local validation relevant to your scope, and at minimum run `npm test` when touching shared repo behavior or CI-checked files.
-- Keep API contracts, docs, and code aligned; if one changes, update the others in the same branch.
-- Parth owns merge coordination; no one should merge unreviewed work directly into the main integration branch.
+### How to seed the database
+
+**Prerequisites:** Python 3.11, MySQL running, MongoDB running.
+
+```bash
+# 1. Install dependencies
+pip3.11 install pandas faker mysql-connector-python pymongo python-dotenv kaggle
+
+# 2. Download datasets (requires Kaggle API token at ~/.kaggle/kaggle.json)
+cd data/raw
+kaggle datasets download -d rajatraj0502/linkedin-job-2023 --unzip
+kaggle datasets download -d snehaanbhawal/resume-dataset --unzip
+cd ../..
+
+# 3. Transform raw CSVs → clean JSON seeds
+python3.11 data/transform.py
+
+# 4. Load seeds into MySQL + MongoDB
+python3.11 data/seed_loader.py
+```
+
+**Expected output after seeding:**
+
+| Table / Collection | Count |
+|---|---|
+| members | 10,000 |
+| recruiters | 10,000 |
+| jobs | 10,000 |
+| applications | ~50,000 |
+| connections | 10,000 |
+| MongoDB events | 100,000+ |
+
+The seed loader is **idempotent** — safe to run multiple times without creating duplicates.
+
+## Running tests
+
+**Node (CI-aligned, no Docker required):**
+
+```bash
+npm install
+npm test
+```
+
+This runs Member 1 in-memory service tests, analytics unit tests, and the submission API contract script.
+
+**Python integration tests** (require services on ports 8001–8007; they skip when a service is down):
+
+```bash
+pip3.11 install pytest pytest-cov requests
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest tests/ -q -o addopts=
+```

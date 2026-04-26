@@ -22,14 +22,14 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ripgrep
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Run API documentation contract checks
         run: |
           bash tests/submission_contract_check.sh
 
-      - name: Run backend service tests
-        run: npm run test:backend-services
+      - name: Run Node test suite (Member 1 + analytics + contract-aligned checks)
+        run: npm test
 
       - name: Validate Postman collection JSON
         run: |

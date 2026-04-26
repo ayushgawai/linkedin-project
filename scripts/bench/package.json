@@ -1,0 +1,8 @@
+{
+  "name": "@linkedinclone/bench-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Benchmark utilities (seed loader, JMeter runners) used by Member 5's Phase 5 suite.",
+  "main": "seed.js"
+}
