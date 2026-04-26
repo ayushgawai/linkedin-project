@@ -193,6 +193,29 @@ export function createApplicationApp({ repository }) {
     res.json({ status: db === 'connected' ? 'ok' : 'degraded', service: 'application', db, kafka: kafkaOk ? 'connected' : 'disconnected' });
   });
 
+  // Dev-only: allow registering jobs/members in memory-mode so the application service
+  // can validate existence without MySQL.
+  app.post('/__dev/registerJob', async (req, res) => {
+    try {
+      const job_id = requireString(req.body.job_id, 'job_id');
+      const status = req.body.status === 'closed' ? 'closed' : 'open';
+      repository.addJob?.({ job_id, status });
+      return sendSuccess(res, { registered: true });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
+  app.post('/__dev/registerMember', async (req, res) => {
+    try {
+      const member_id = requireString(req.body.member_id, 'member_id');
+      repository.addMember?.({ member_id });
+      return sendSuccess(res, { registered: true });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
   app.post('/applications/submit', async (req, res) => {
     try {
       const created = await repository.submit(validateSubmitPayload(req.body));
@@ -253,7 +276,7 @@ export function createApplicationApp({ repository }) {
     try {
       const applicationId = requireString(req.body.application_id, 'application_id');
       const status = requireString(req.body.status, 'status');
-      const note = optionalString(req.body.note);
+      const note = optionalString(req.body.note) || optionalString(req.body.rejection_reason);
       if (!VALID_APPLICATION_STATUSES.has(status)) {
         return sendError(res, 400, 'VALIDATION_ERROR', 'status must be a valid application status', {
           field: 'status',
@@ -280,7 +303,7 @@ export function createApplicationApp({ repository }) {
         payload: { application_id: applicationId, from: current.status, to: status }
       })).catch(() => {});
 
-      return sendSuccess(res, result);
+      return sendSuccess(res, { success: true, ...result });
     } catch (error) {
       return handleError(res, error);
     }
@@ -289,13 +312,14 @@ export function createApplicationApp({ repository }) {
   app.post('/applications/addNote', async (req, res) => {
     try {
       const applicationId = requireString(req.body.application_id, 'application_id');
-      const recruiterId = requireString(req.body.recruiter_id, 'recruiter_id');
-      const noteText = requireString(req.body.note_text, 'note_text');
+      // Frontend currently sends { application_id, note } while professor spec uses recruiter_id + note_text.
+      const recruiterId = optionalString(req.body.recruiter_id) || 'unknown';
+      const noteText = req.body.note_text ? requireString(req.body.note_text, 'note_text') : requireString(req.body.note, 'note');
       const note = await repository.addNote(applicationId, recruiterId, noteText);
       if (!note) {
         throw new NotFoundError('APPLICATION_NOT_FOUND', 'application was not found');
       }
-      return sendSuccess(res, { note_id: note.note_id });
+      return sendSuccess(res, { success: true, note_id: note.note_id });
     } catch (error) {
       return handleError(res, error);
     }

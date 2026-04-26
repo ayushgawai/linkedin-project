@@ -15,7 +15,7 @@ import { config } from '../config.js';
 
 export const membersRouter = Router();
 
-const CreateSchema = z.object({
+const CreateProfessorSchema = z.object({
   first_name: z.string().min(1).max(100),
   last_name: z.string().min(1).max(100),
   email: z.string().email().max(255),
@@ -27,9 +27,92 @@ const CreateSchema = z.object({
   skills: z.array(z.string()).optional().default([]),
 });
 
+const CreateSignupSchema = z.object({
+  email: z.string().email().max(255),
+  password: z.string().min(1).max(255),
+  full_name: z.string().min(1).max(200),
+  location: z.string().max(255),
+  headline: z.string().max(500).optional().nullable(),
+  role: z.enum(['member', 'recruiter']).optional().default('member'),
+});
+
+const CreateSchema = z.union([CreateProfessorSchema, CreateSignupSchema]);
+
 membersRouter.post('/members/create', async (req, res, next) => {
   try {
-    const body = validate(CreateSchema, req.body);
+    const raw = validate(CreateSchema, req.body);
+    if ('full_name' in raw) {
+      // Frontend signup shape -> create member and return { token, user }
+      if (raw.role === 'recruiter') {
+        throw new ApiError(400, 'INVALID_ROLE', 'Use /recruiters/create for recruiter signup');
+      }
+      const parts = raw.full_name.trim().split(/\s+/).filter(Boolean);
+      const first_name = parts[0] || 'Member';
+      const last_name = parts.slice(1).join(' ') || 'User';
+      const body = {
+        first_name,
+        last_name,
+        email: raw.email,
+        phone: null,
+        location: raw.location,
+        headline: raw.headline ?? null,
+        about: null,
+        profile_photo_url: null,
+        skills: [],
+      };
+      const pool = getPool();
+      const memberId = uuidv4();
+
+      const conn = await pool.getConnection();
+      try {
+        await conn.beginTransaction();
+        await conn.query(
+          `INSERT INTO members
+             (member_id, first_name, last_name, email, phone, location, headline, about, profile_photo_url)
+           VALUES
+             (:member_id, :first_name, :last_name, :email, :phone, :location, :headline, :about, :profile_photo_url)`,
+          {
+            member_id: memberId,
+            ...body,
+            phone: null,
+            about: null,
+            profile_photo_url: null,
+          },
+        );
+        await conn.commit();
+      } catch (err) {
+        await conn.rollback();
+        if (err.code === 'ER_DUP_ENTRY') {
+          throw new ApiError(409, 'DUPLICATE_EMAIL', 'A member with that email already exists');
+        }
+        throw err;
+      } finally {
+        conn.release();
+      }
+
+      await invalidatePrefix('member:search:');
+      const token = `dev-token-${uuidv4()}`;
+      const user = {
+        member_id: memberId,
+        first_name,
+        last_name,
+        full_name: `${first_name} ${last_name}`.trim(),
+        email: raw.email,
+        phone: null,
+        location: raw.location,
+        headline: raw.headline ?? null,
+        about: null,
+        profile_photo_url: null,
+        skills: [],
+        experience: [],
+        education: [],
+        connections_count: 0,
+        role: 'member',
+      };
+      return res.status(201).json(ok({ token, user }, req.traceId));
+    }
+
+    const body = raw;
     const pool = getPool();
     const memberId = uuidv4();
 

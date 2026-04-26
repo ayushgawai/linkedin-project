@@ -8,6 +8,13 @@ import { ConflictError, NotFoundError, ValidationError, optionalString, requireE
 
 const BASE_FIELDS = ['first_name', 'last_name', 'email', 'phone', 'location', 'headline', 'about', 'profile_photo_url'];
 
+function splitFullName(fullName) {
+  const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+  const first = parts[0] || '';
+  const last = parts.slice(1).join(' ') || '';
+  return { first_name: first, last_name: last };
+}
+
 function validateExperience(items = []) {
   if (!Array.isArray(items)) {
     throw new ValidationError('experience must be an array', { field: 'experience' });
@@ -50,6 +57,29 @@ function validateCreatePayload(body) {
     skills: normalizeStringArray(body.skills),
     experience: validateExperience(body.experience || []),
     education: validateEducation(body.education || [])
+  };
+}
+
+function validateSignupPayload(body) {
+  return {
+    email: requireEmail(body.email),
+    password: requireString(body.password, 'password'),
+    full_name: requireString(body.full_name, 'full_name'),
+    location: requireString(body.location, 'location'),
+    headline: optionalString(body.headline),
+    role: body.role === 'recruiter' ? 'recruiter' : 'member'
+  };
+}
+
+function validateRecruiterCreatePayload(body) {
+  // Keep this permissive: frontend signup only sends basic identity.
+  return {
+    email: requireEmail(body.email),
+    password: requireString(body.password, 'password'),
+    full_name: requireString(body.full_name, 'full_name'),
+    location: optionalString(body.location),
+    headline: optionalString(body.headline),
+    role: 'recruiter'
   };
 }
 
@@ -191,6 +221,102 @@ export function createProfileMySqlRepository() {
 
         throw error;
       }
+    },
+
+    async createRecruiter(input) {
+      const { first_name, last_name } = splitFullName(input.full_name);
+      const companyId = randomUUID();
+      const recruiterId = randomUUID();
+      const companyName = (input.company_name || `${first_name || 'Recruiter'}'s Company`).slice(0, 300);
+      const name = `${first_name} ${last_name}`.trim() || 'Recruiter';
+      try {
+        await query(
+          `INSERT INTO recruiters
+            (recruiter_id, company_id, name, email, phone, company_name, company_industry, company_size, role, access_level)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'recruiter', 'recruiter')`,
+          [
+            recruiterId,
+            companyId,
+            name,
+            input.email,
+            optionalString(input.phone),
+            companyName,
+            optionalString(input.company_industry),
+            optionalString(input.company_size),
+          ]
+        );
+      } catch (error) {
+        if (error.code === 'ER_DUP_ENTRY') {
+          throw new ConflictError('DUPLICATE_EMAIL', 'recruiter email already exists');
+        }
+        throw error;
+      }
+
+      const [rows] = await query(
+        `SELECT recruiter_id, company_id, name, email, phone, company_name, company_industry, company_size, role, access_level, created_at
+           FROM recruiters
+          WHERE recruiter_id = ?`,
+        [recruiterId]
+      );
+      return rows[0];
+    },
+
+    async findUserByEmail(email) {
+      const [memberRows] = await query(
+        `SELECT member_id, first_name, last_name, email, phone, location, headline, about,
+                profile_photo_url, connections_count, created_at, updated_at
+           FROM members
+          WHERE LOWER(email) = LOWER(?)
+          LIMIT 1`,
+        [email]
+      );
+      if (memberRows.length) {
+        const memberId = memberRows[0].member_id;
+        const user = await hydrateMember(memberId);
+        return { role: 'member', user };
+      }
+
+      const [recruiterRows] = await query(
+        `SELECT recruiter_id, company_id, name, email, phone, company_name, company_industry, company_size, role, access_level, created_at
+           FROM recruiters
+          WHERE LOWER(email) = LOWER(?)
+          LIMIT 1`,
+        [email]
+      );
+      if (recruiterRows.length) {
+        const r = recruiterRows[0];
+        // Map recruiter shape to frontend's "Member" supertype-ish fields.
+        return {
+          role: 'recruiter',
+          user: {
+            member_id: r.recruiter_id,
+            first_name: r.name.split(' ')[0] || r.name,
+            last_name: r.name.split(' ').slice(1).join(' ') || '',
+            full_name: r.name,
+            email: r.email,
+            phone: r.phone,
+            location: null,
+            headline: null,
+            about: null,
+            profile_photo_url: null,
+            skills: [],
+            experience: [],
+            education: [],
+            connections_count: 0,
+            created_at: r.created_at,
+            updated_at: r.created_at,
+            role: 'recruiter',
+            company: {
+              company_id: r.company_id,
+              company_name: r.company_name,
+              company_industry: r.company_industry,
+              company_size: r.company_size
+            }
+          }
+        };
+      }
+
+      return null;
     },
 
     async getMember(memberId) {
@@ -359,8 +485,63 @@ export function createProfileApp({ repository }) {
 
   app.post('/members/create', async (req, res) => {
     try {
+      // Dual-shape support:
+      // 1) Professor-style member create: first_name/last_name/email/... -> returns Member
+      // 2) Frontend signup: full_name/password/location/headline/role -> returns { token, user }
+      if ('full_name' in req.body || 'password' in req.body || req.body.role) {
+        const signup = validateSignupPayload(req.body);
+        if (signup.role === 'recruiter') {
+          const recruiter = await repository.createRecruiter(signup);
+          const token = `dev-token-${randomUUID()}`;
+          return sendSuccess(res, { token, user: { ...recruiter, role: 'recruiter' } }, 201);
+        }
+
+        const { first_name, last_name } = splitFullName(signup.full_name);
+        const member = await repository.createMember(validateCreatePayload({
+          first_name,
+          last_name,
+          email: signup.email,
+          phone: null,
+          location: signup.location,
+          headline: signup.headline,
+          about: null,
+          profile_photo_url: null,
+          skills: [],
+          experience: [],
+          education: []
+        }));
+        const token = `dev-token-${randomUUID()}`;
+        return sendSuccess(res, { token, user: { ...member, role: 'member', full_name: `${member.first_name} ${member.last_name}`.trim() } }, 201);
+      }
+
       const member = await repository.createMember(validateCreatePayload(req.body));
       return sendSuccess(res, member, 201);
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
+  app.post('/recruiters/create', async (req, res) => {
+    try {
+      const input = validateRecruiterCreatePayload(req.body);
+      const recruiter = await repository.createRecruiter(input);
+      const token = `dev-token-${randomUUID()}`;
+      return sendSuccess(res, { token, user: { ...recruiter, role: 'recruiter' } }, 201);
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
+  app.post('/auth/login', async (req, res) => {
+    try {
+      const email = requireEmail(req.body.email);
+      requireString(req.body.password, 'password');
+      const found = await repository.findUserByEmail(email);
+      if (!found) {
+        return sendError(res, 401, 'INVALID_CREDENTIALS', 'invalid email or password');
+      }
+      const token = `dev-token-${randomUUID()}`;
+      return sendSuccess(res, { token, user: found.user }, 200);
     } catch (error) {
       return handleError(res, error);
     }
