@@ -21,18 +21,48 @@ function validateEnum(value, fieldName, values) {
 }
 
 function validateCreatePayload(body) {
+  // Supports two payload shapes:
+  // - Professor/contract shape (explicit enums + company_id)
+  // - Frontend "Hiring Pro" shape (minimal required fields + work_mode / industry etc.)
+  const recruiter_id = requireString(body.recruiter_id, 'recruiter_id');
+  const title = requireString(body.title, 'title');
+  const description = requireString(body.description, 'description');
+  const professorMode = 'seniority_level' in body || 'company_id' in body;
+  const location = professorMode ? optionalString(body.location) : requireString(body.location ?? '', 'location');
+
+  const remote_type = body.work_mode
+    ? validateEnum(requireString(body.work_mode, 'work_mode'), 'work_mode', REMOTE)
+    : validateEnum(requireString(body.remote_type || 'onsite', 'remote_type'), 'remote_type', REMOTE);
+
+  const employment_type = body.type
+    ? validateEnum(requireString(body.type, 'type'), 'type', EMPLOYMENT)
+    : validateEnum(requireString(body.employment_type || 'full_time', 'employment_type'), 'employment_type', EMPLOYMENT);
+
+  const seniority_level = body.seniority_level
+    ? validateEnum(requireString(body.seniority_level, 'seniority_level'), 'seniority_level', SENIORITY)
+    : 'mid';
+
   return {
-    company_id: requireString(body.company_id, 'company_id'),
-    recruiter_id: requireString(body.recruiter_id, 'recruiter_id'),
-    title: requireString(body.title, 'title'),
-    description: requireString(body.description, 'description'),
-    seniority_level: validateEnum(requireString(body.seniority_level, 'seniority_level'), 'seniority_level', SENIORITY),
-    employment_type: validateEnum(requireString(body.employment_type, 'employment_type'), 'employment_type', EMPLOYMENT),
-    location: optionalString(body.location),
-    remote_type: validateEnum(requireString(body.remote_type || 'onsite', 'remote_type'), 'remote_type', REMOTE),
-    skills_required: normalizeStringArray(body.skills_required),
+    company_id: optionalString(body.company_id),
+    recruiter_id,
+    title,
+    description,
+    seniority_level,
+    employment_type,
+    location,
+    remote_type,
+    skills_required: normalizeStringArray(body.skills_required ?? body.skills),
     salary_range: optionalString(body.salary_range),
-    status: validateEnum(requireString(body.status || 'open', 'status'), 'status', STATUS)
+    status: validateEnum(requireString(body.status || 'open', 'status'), 'status', STATUS),
+    // extra frontend-friendly fields (best-effort)
+    company_name: optionalString(body.company_name),
+    company_logo_url: optionalString(body.company_logo_url),
+    industry: optionalString(body.industry),
+    easy_apply: body.easy_apply !== false,
+    promoted: body.promoted !== false,
+    company_about: optionalString(body.company_about),
+    followers_count: Number.isFinite(Number(body.followers_count)) ? Number(body.followers_count) : null,
+    company_size: optionalString(body.company_size)
   };
 }
 
@@ -73,7 +103,8 @@ async function hydrateJob(jobId, executor = query) {
   const [jobRows] = await executor(
     `SELECT j.job_id, j.company_id, j.recruiter_id, j.title, j.description, j.seniority_level,
             j.employment_type, j.location, j.remote_type, j.salary_range, j.status,
-            j.posted_datetime, j.views_count, j.applicants_count, r.company_industry
+            j.posted_datetime, j.views_count, j.applicants_count,
+            r.company_industry, r.company_name
        FROM jobs j
   LEFT JOIN recruiters r ON r.recruiter_id = j.recruiter_id
       WHERE j.job_id = ?`,
@@ -85,7 +116,35 @@ async function hydrateJob(jobId, executor = query) {
   }
 
   const [skillRows] = await executor('SELECT skill FROM job_skills WHERE job_id = ? ORDER BY skill', [jobId]);
-  return { ...jobRows[0], skills_required: skillRows.map((row) => row.skill) };
+  const row = jobRows[0];
+  // Adapt to frontend `JobRecord` fields (best-effort defaults).
+  const posted = row.posted_datetime ? new Date(row.posted_datetime) : new Date();
+  const minutes = Math.max(0, Math.round((Date.now() - posted.getTime()) / 60000));
+  const posted_time_ago = minutes < 60 ? `${minutes}m ago` : `${Math.round(minutes / 60)}h ago`;
+
+  return {
+    job_id: row.job_id,
+    recruiter_id: row.recruiter_id,
+    company_id: row.company_id,
+    title: row.title,
+    description: row.description,
+    location: row.location || '',
+    work_mode: row.remote_type,
+    employment_type: row.employment_type || 'full_time',
+    industry: row.company_industry || '',
+    company_name: row.company_name || '',
+    company_logo_url: null,
+    easy_apply: true,
+    promoted: true,
+    posted_time_ago,
+    applicants_count: row.applicants_count ?? 0,
+    views_count: row.views_count ?? 0,
+    skills_required: skillRows.map((r) => r.skill),
+    connections_count: 0,
+    followers_count: 0,
+    company_size: '',
+    company_about: ''
+  };
 }
 
 export function createJobMySqlRepository() {
@@ -97,13 +156,16 @@ export function createJobMySqlRepository() {
     async createJob(input) {
       return withTransaction(async (connection) => {
         const [recruiterRows] = await connection.execute(
-          'SELECT recruiter_id, company_industry FROM recruiters WHERE recruiter_id = ?',
+          'SELECT recruiter_id, company_id, company_name, company_industry, company_size FROM recruiters WHERE recruiter_id = ?',
           [input.recruiter_id]
         );
 
         if (!recruiterRows.length) {
           return { recruiterMissing: true };
         }
+
+        const recruiter = recruiterRows[0];
+        const companyId = input.company_id || recruiter.company_id;
 
         const jobId = randomUUID();
         await connection.execute(
@@ -112,7 +174,7 @@ export function createJobMySqlRepository() {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             jobId,
-            input.company_id,
+            companyId,
             input.recruiter_id,
             input.title,
             input.description,
@@ -139,6 +201,20 @@ export function createJobMySqlRepository() {
 
     async incrementViews(jobId) {
       await query('UPDATE jobs SET views_count = views_count + 1 WHERE job_id = ?', [jobId]);
+    },
+
+    async incrementApplicants(jobId) {
+      // Make this idempotent by recomputing from truth (applications table).
+      // This avoids double-counting when both /applications/submit and frontend-side
+      // tracking call the increment endpoint.
+      await query(
+        `UPDATE jobs
+            SET applicants_count = (
+              SELECT COUNT(*) FROM applications WHERE job_id = ?
+            )
+          WHERE job_id = ?`,
+        [jobId, jobId]
+      );
     },
 
     async updateJob(jobId, changes) {
@@ -301,6 +377,19 @@ export function createJobApp({ repository }) {
     res.json({ status: db === 'connected' ? 'ok' : 'degraded', service: 'job', db, kafka: kafkaOk ? 'connected' : 'disconnected' });
   });
 
+  // Dev-only: allow other services to register recruiters in memory-mode.
+  app.post('/__dev/registerRecruiter', async (req, res) => {
+    try {
+      const recruiter_id = requireString(req.body.recruiter_id, 'recruiter_id');
+      const company_id = requireString(req.body.company_id, 'company_id');
+      const company_industry = optionalString(req.body.company_industry) || '';
+      repository.addRecruiter?.({ recruiter_id, company_id, company_industry });
+      return sendSuccess(res, { registered: true });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
   app.post('/jobs/create', async (req, res) => {
     try {
       const created = await repository.createJob(validateCreatePayload(req.body));
@@ -321,17 +410,58 @@ export function createJobApp({ repository }) {
         throw new NotFoundError('JOB_NOT_FOUND', 'job was not found');
       }
 
-      await repository.incrementViews(jobId);
+      return sendSuccess(res, job);
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
 
+  app.post('/jobs/incrementViews', async (req, res) => {
+    try {
+      const jobId = requireString(req.body.job_id, 'job_id');
+      const viewerId = optionalString(req.body.viewer_id) || 'anonymous';
+      const job = await repository.getJob(jobId);
+      if (!job) {
+        throw new NotFoundError('JOB_NOT_FOUND', 'job was not found');
+      }
+
+      await repository.incrementViews(jobId);
       publishOrOutbox('job.viewed', buildEnvelope({
         eventType: 'job.viewed',
-        actorId: req.body.viewer_id || 'anonymous',
+        actorId: viewerId,
         entityType: 'job',
         entityId: jobId,
         payload: { job_id: jobId, title: job.title }
       })).catch(() => {});
 
-      return sendSuccess(res, job);
+      return sendSuccess(res, { success: true });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
+  app.post('/jobs/incrementApplicants', async (req, res) => {
+    try {
+      const jobId = requireString(req.body.job_id, 'job_id');
+      const job = await repository.getJob(jobId);
+      if (!job) {
+        throw new NotFoundError('JOB_NOT_FOUND', 'job was not found');
+      }
+      if (repository.incrementApplicants) {
+        await repository.incrementApplicants(jobId);
+      }
+      return sendSuccess(res, { success: true });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
+  app.post('/companies/incrementViews', async (req, res) => {
+    // Frontend calls this for demo company pages. Backend does not persist company view counters yet.
+    // Keep as a successful no-op so live mode doesn't break.
+    try {
+      requireString(req.body.company_name, 'company_name');
+      return sendSuccess(res, { success: true });
     } catch (error) {
       return handleError(res, error);
     }
@@ -359,9 +489,9 @@ export function createJobApp({ repository }) {
       const result = await repository.searchJobs({
         keyword: optionalString(req.body.keyword),
         location: optionalString(req.body.location),
-        employment_type: optionalString(req.body.employment_type),
+        employment_type: optionalString(req.body.employment_type) || optionalString(req.body.type),
         industry: optionalString(req.body.industry),
-        remote_type: optionalString(req.body.remote_type),
+        remote_type: optionalString(req.body.remote_type) || (req.body.remote === true ? 'remote' : null),
         page,
         pageSize
       });

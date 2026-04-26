@@ -41,6 +41,11 @@ class MutualConnectionsBody(BaseModel):
     user_id: str
     other_id: str
 
+class PendingInvitationsBody(BaseModel):
+    user_id: str
+    page: int = 1
+    page_size: int = 20
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -152,7 +157,8 @@ def accept_connection(body: ActionRequestBody, db: Session = Depends(get_db)):
     kafka_producer.produce("connection.accepted", envelope)
 
     log.info(f"Connection {body.request_id} accepted.")
-    return success({"connected": True, "connection_id": conn.connection_id})
+    # Frontend contract expects `{ success: boolean }` payload.
+    return success({"success": True, "connection_id": conn.connection_id})
 
 
 @router.post("/reject")
@@ -168,7 +174,8 @@ def reject_connection(body: ActionRequestBody, db: Session = Depends(get_db)):
     db.commit()
 
     log.info(f"Connection {body.request_id} rejected.")
-    return success({"rejected": True})
+    # Frontend contract expects `{ success: boolean }` payload.
+    return success({"success": True})
 
 
 @router.post("/list")
@@ -232,6 +239,44 @@ def mutual_connections(body: MutualConnectionsBody, db: Session = Depends(get_db
         "mutual_connections": list(mutual_ids),
         "count": len(mutual_ids),
     })
+
+
+@router.post("/pending")
+def list_pending(body: PendingInvitationsBody, db: Session = Depends(get_db)):
+    """
+    List pending invitations for a user.
+    Frontend expects an array of invitation cards with requester/addressee IDs.
+    """
+    offset = (body.page - 1) * body.page_size
+
+    pending = db.execute(
+        select(Connection).where(
+            Connection.status == "pending",
+            (Connection.user_a == body.user_id) | (Connection.user_b == body.user_id),
+        )
+        .order_by(Connection.created_at.desc())
+        .offset(offset)
+        .limit(body.page_size)
+    ).scalars().all()
+
+    items = []
+    for c in pending:
+        other_id = c.user_b if c.user_a == body.user_id else c.user_a
+        # Approximate UI contract: requester is who initiated.
+        requester_id = c.requested_by
+        addressee_id = other_id if requester_id == body.user_id else body.user_id
+
+        items.append({
+            "request_id": c.connection_id,
+            "requester_member_id": requester_id,
+            "addressee_member_id": addressee_id,
+            "name": f"Member {requester_id[:6]}",
+            "headline": "Professional",
+            "mutual": 0,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+        })
+
+    return success(items)
 
 
 # ── Internal helper ────────────────────────────────────────────────────────────

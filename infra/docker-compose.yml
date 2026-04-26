@@ -218,6 +218,40 @@ services:
     networks: [backend]
     restart: unless-stopped
 
+  api-gateway:
+    build:
+      context: ..
+      dockerfile: services/api-gateway/Dockerfile
+    container_name: linkedinclone-api-gateway
+    environment:
+      PORT: 8000
+      PROFILE_URL: http://profile:8001
+      JOB_URL: http://job:8002
+      APPLICATION_URL: http://application:8003
+      MESSAGING_URL: http://messaging:8004
+      CONNECTION_URL: http://connection:8005
+      ANALYTICS_URL: http://analytics:8006
+      AI_URL: http://ai-agent:8007
+    depends_on:
+      profile:
+        condition: service_started
+      job:
+        condition: service_started
+      application:
+        condition: service_started
+      messaging:
+        condition: service_started
+      connection:
+        condition: service_started
+      analytics:
+        condition: service_started
+      ai-agent:
+        condition: service_started
+    ports:
+      - '8011:8000'
+    networks: [backend]
+    restart: unless-stopped
+
   messaging:
     build:
       context: ..

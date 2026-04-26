@@ -101,8 +101,12 @@ export async function listMemberApplications(member_id: string): Promise<MemberA
     await mockDelay(200)
     return sortApps(getMockList(member_id))
   }
-  const response = await apiClient.post<MemberApplication[]>('/applications/byMember', { member_id })
-  return response.data
+  const response = await apiClient.post<unknown>('/applications/byMember', { member_id })
+  const data: any = response.data as any
+  if (Array.isArray(data)) return data as MemberApplication[]
+  if (data && Array.isArray(data.results)) return data.results as MemberApplication[]
+  if (data && Array.isArray(data.applications)) return data.applications as MemberApplication[]
+  return []
 }
 
 export function appendApplicationToMemberTracker(
@@ -179,8 +183,12 @@ export async function listApplicationsByJob(job_id: string): Promise<JobApplican
     out.sort((a, b) => new Date(b.applied_at).getTime() - new Date(a.applied_at).getTime())
     return out
   }
-  const response = await apiClient.post<JobApplicantRow[]>('/applications/byJob', { job_id })
-  return response.data
+  const response = await apiClient.post<unknown>('/applications/byJob', { job_id })
+  const data: any = response.data as any
+  if (Array.isArray(data)) return data as JobApplicantRow[]
+  if (data && Array.isArray(data.results)) return data.results as JobApplicantRow[]
+  if (data && Array.isArray(data.applications)) return data.applications as JobApplicantRow[]
+  return []
 }
 
 export async function updateApplicationStatus(application_id: string, status: Application['status']): Promise<{ success: boolean }> {

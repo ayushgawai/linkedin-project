@@ -18,7 +18,7 @@ const SENIORITY = ['internship', 'entry', 'associate', 'mid', 'senior', 'directo
 const EMPLOYMENT = ['full_time', 'part_time', 'contract', 'temporary', 'volunteer', 'internship'];
 const REMOTE = ['onsite', 'remote', 'hybrid'];
 
-const CreateSchema = z.object({
+const CreateProfessorSchema = z.object({
   company_id: z.string().min(1),
   recruiter_id: z.string().min(1),
   title: z.string().min(1).max(300),
@@ -32,6 +32,28 @@ const CreateSchema = z.object({
   status: z.enum(['open', 'closed']).default('open'),
 });
 
+const CreateFrontendSchema = z.object({
+  recruiter_id: z.string().min(1),
+  title: z.string().min(1).max(300),
+  description: z.string().min(1),
+  location: z.string().min(1).max(255),
+  work_mode: z.enum(REMOTE).optional(),
+  employment_type: z.enum(EMPLOYMENT).optional(),
+  industry: z.string().max(200).optional().nullable(),
+  company_id: z.string().optional().nullable(),
+  company_name: z.string().max(300).optional().nullable(),
+  company_logo_url: z.string().url().max(500).optional().nullable(),
+  company_about: z.string().optional().nullable(),
+  company_size: z.string().max(100).optional().nullable(),
+  followers_count: z.number().int().nonnegative().optional().nullable(),
+  skills_required: z.array(z.string()).optional(),
+  skills: z.array(z.string()).optional(),
+  promoted: z.boolean().optional(),
+  easy_apply: z.boolean().optional(),
+});
+
+const CreateSchema = z.union([CreateProfessorSchema, CreateFrontendSchema]);
+
 jobsRouter.post('/jobs/create', async (req, res, next) => {
   try {
     const body = validate(CreateSchema, req.body);
@@ -43,13 +65,19 @@ jobsRouter.post('/jobs/create', async (req, res, next) => {
       await conn.beginTransaction();
 
       const [recRows] = await conn.query(
-        'SELECT recruiter_id FROM recruiters WHERE recruiter_id = :recruiter_id LIMIT 1',
+        'SELECT recruiter_id, company_id FROM recruiters WHERE recruiter_id = :recruiter_id LIMIT 1',
         { recruiter_id: body.recruiter_id },
       );
-      if (recRows.length === 0) {
-        await conn.rollback();
-        throw new ApiError(404, 'RECRUITER_NOT_FOUND', `Recruiter ${body.recruiter_id} not found`);
-      }
+      if (recRows.length === 0) throw new ApiError(404, 'RECRUITER_NOT_FOUND', `Recruiter ${body.recruiter_id} not found`);
+      const recruiterCompanyId = recRows[0].company_id;
+
+      const company_id = 'company_id' in body && body.company_id ? body.company_id : recruiterCompanyId;
+      const remote_type = 'work_mode' in body && body.work_mode ? body.work_mode : body.remote_type;
+      const skills_required = Array.isArray(body.skills_required)
+        ? body.skills_required
+        : Array.isArray(body.skills)
+          ? body.skills
+          : [];
 
       await conn.query(
         `INSERT INTO jobs
@@ -60,21 +88,21 @@ jobsRouter.post('/jobs/create', async (req, res, next) => {
             :seniority_level, :employment_type, :location, :remote_type, :salary_range, :status)`,
         {
           job_id: jobId,
-          company_id: body.company_id,
+          company_id,
           recruiter_id: body.recruiter_id,
           title: body.title,
           description: body.description,
-          seniority_level: body.seniority_level || null,
+          seniority_level: ('seniority_level' in body ? body.seniority_level : null) || null,
           employment_type: body.employment_type || null,
           location: body.location || null,
-          remote_type: body.remote_type,
-          salary_range: body.salary_range || null,
-          status: body.status,
+          remote_type,
+          salary_range: ('salary_range' in body ? body.salary_range : null) || null,
+          status: ('status' in body ? body.status : 'open') || 'open',
         },
       );
 
-      if (body.skills_required.length) {
-        const values = body.skills_required.map((s) => [jobId, s]);
+      if (skills_required.length) {
+        const values = skills_required.map((s) => [jobId, s]);
         await conn.query('INSERT IGNORE INTO job_skills (job_id, skill) VALUES ?', [values]);
       }
       await conn.commit();
@@ -121,9 +149,55 @@ jobsRouter.post('/jobs/get', async (req, res, next) => {
     if (!data) throw new ApiError(404, 'JOB_NOT_FOUND', `Job ${job_id} not found`);
 
     // views_count bump is a write path that would normally go through the
-    // real Job Service + Kafka job.viewed event. We keep the stub read-only
-    // for now — Ayush's implementation owns that increment.
+    // real Job Service + Kafka job.viewed event. We expose an explicit endpoint
+    // used by the frontend to avoid double counting.
     return res.json(ok(data, req.traceId));
+  } catch (err) {
+    next(err);
+  }
+});
+
+jobsRouter.post('/jobs/incrementViews', async (req, res, next) => {
+  try {
+    const { job_id } = validate(GetSchema, req.body);
+    const [result] = await getPool().query(
+      'UPDATE jobs SET views_count = views_count + 1 WHERE job_id = :job_id',
+      { job_id },
+    );
+    if (result.affectedRows === 0) throw new ApiError(404, 'JOB_NOT_FOUND', `Job ${job_id} not found`);
+    await invalidate(keys.job(job_id));
+    return res.json(ok({ success: true }, req.traceId));
+  } catch (err) {
+    next(err);
+  }
+});
+
+jobsRouter.post('/jobs/incrementApplicants', async (req, res, next) => {
+  try {
+    const { job_id } = validate(GetSchema, req.body);
+    // Idempotent recompute from source-of-truth (applications).
+    const [[{ total }]] = await getPool().query(
+      'SELECT COUNT(*) AS total FROM applications WHERE job_id = :job_id',
+      { job_id },
+    );
+    const [result] = await getPool().query(
+      'UPDATE jobs SET applicants_count = :total WHERE job_id = :job_id',
+      { job_id, total: Number(total) },
+    );
+    if (result.affectedRows === 0) throw new ApiError(404, 'JOB_NOT_FOUND', `Job ${job_id} not found`);
+    await invalidate(keys.job(job_id));
+    return res.json(ok({ success: true }, req.traceId));
+  } catch (err) {
+    next(err);
+  }
+});
+
+jobsRouter.post('/companies/incrementViews', async (req, res, next) => {
+  try {
+    const Body = z.object({ company_name: z.string().min(1).max(300) });
+    validate(Body, req.body);
+    // No-op for now; company view counters are not persisted.
+    return res.json(ok({ success: true }, req.traceId));
   } catch (err) {
     next(err);
   }
@@ -197,22 +271,28 @@ jobsRouter.post('/jobs/close', async (req, res, next) => {
 const SearchSchema = z.object({
   keyword: z.string().optional(),
   location: z.string().optional(),
+  // Frontend uses `type` (string) + `remote` (boolean). Accept both and map.
   employment_type: z.enum(EMPLOYMENT).optional(),
+  type: z.string().optional(),
   remote_type: z.enum(REMOTE).optional(),
+  remote: z.boolean().optional(),
+  industry: z.string().optional(),
   page: z.number().int().positive().default(1),
   page_size: z.number().int().positive().max(100).default(20),
+  pageSize: z.number().int().positive().max(100).optional(),
 });
 
 jobsRouter.post('/jobs/search', async (req, res, next) => {
   try {
     const filters = validate(SearchSchema, req.body);
+    const page_size = filters.pageSize ?? filters.page_size;
     const key = keys.jobSearch(filters);
 
     const data = await getOrSet(key, config.CACHE_TTL_SEARCH_SEC, async () => {
       const pool = getPool();
-      const offset = (filters.page - 1) * filters.page_size;
+      const offset = (filters.page - 1) * page_size;
       const where = ["j.status = 'open'"];
-      const params = { page_size: filters.page_size, offset };
+      const params = { page_size, offset };
 
       if (filters.keyword) {
         where.push('MATCH(title, description, location) AGAINST (:kw IN NATURAL LANGUAGE MODE)');
@@ -222,13 +302,19 @@ jobsRouter.post('/jobs/search', async (req, res, next) => {
         where.push('j.location LIKE :loc');
         params.loc = `%${filters.location}%`;
       }
-      if (filters.employment_type) {
+      const employment = filters.employment_type || (filters.type ? filters.type : undefined);
+      if (employment && EMPLOYMENT.includes(employment)) {
         where.push('j.employment_type = :employment_type');
-        params.employment_type = filters.employment_type;
+        params.employment_type = employment;
       }
-      if (filters.remote_type) {
+      const remoteType = filters.remote_type || (filters.remote ? 'remote' : undefined);
+      if (remoteType && REMOTE.includes(remoteType)) {
         where.push('j.remote_type = :remote_type');
-        params.remote_type = filters.remote_type;
+        params.remote_type = remoteType;
+      }
+      if (filters.industry) {
+        where.push('r.company_industry LIKE :industry');
+        params.industry = `%${filters.industry}%`;
       }
       const whereSql = `WHERE ${where.join(' AND ')}`;
 

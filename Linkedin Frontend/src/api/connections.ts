@@ -161,8 +161,12 @@ export async function listConnections(user_id: string): Promise<Connection[]> {
     await mockDelay(220)
     return ensureConnectionList(user_id)
   }
-  const response = await apiClient.post<Connection[]>('/connections/list', { user_id })
-  return response.data
+  const response = await apiClient.post<unknown>('/connections/list', { user_id })
+  const data = response.data as any
+  // Backend may return { connections, total } or a raw array.
+  if (Array.isArray(data)) return data as Connection[]
+  if (data && Array.isArray(data.connections)) return data.connections as Connection[]
+  return []
 }
 
 export async function listMutualConnections(user_id: string, other_id: string): Promise<Connection[]> {

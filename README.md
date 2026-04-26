@@ -18,17 +18,19 @@ LinkedIn-like distributed system for SJSU Distributed Systems course project.
 | Messaging | Apache Kafka |
 | Cache | Redis |
 | Containers | Docker / Docker Compose |
-| Cloud | AWS ECS or Kubernetes |
+| Cloud | AWS ECS Fargate + CloudFormation |
 
 ## Team Roles
-| Member | Role |
+| Name | Responsibility |
 |---|---|
-| Member 1 | Backend Services (Profile, Job, Application) + Infra Foundation |
-| Member 2 | Frontend (React UI) |
-| Member 3 | Agentic AI Service |
-| Member 4 | Kafka + Messaging + Connections |
-| Member 5 | Analytics + Redis + Performance |
-| Member 6 | Data Engineering + Testing + Documentation |
+| Ayush Sunil Gawai | Backend Services (Profile, Job, Application) + Deployment (AWS/Docker) + Git & CI/CD config |
+| Manav Patel | Frontend developer for the React UI |
+| Bhoomika Lnu | Agentic AI service with FastAPI and LLM orchestration |
+| Khushi Donda | Kafka, Messaging, and Connections services |
+| Naman Vipul Chheda | Analytics, dashboards, Redis caching, and performance |
+| Centhurvelan Ramalingam Sakthivel | Documentation owner; support for Naman and Parth |
+| Sharan Somshekhar Patil | Data engineering, testing, and presentation support |
+| Parth Patel | Integration, merge coordination, unit testing, and integration testing |
 
 ## Architecture diagram
 Submission-ready diagrams live under `docs/submission/`:
