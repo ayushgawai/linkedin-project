@@ -1,6 +1,13 @@
 #!/usr/bin/env node
 // Parse every *.jtl in results/ and emit results/summary.csv with
-// per-scenario+mode aggregates (count, error%, avg/p50/p95/p99 latency, req/s).
+// per-scenario+config aggregates (throughput, avg/p95 latency, error%).
+//
+// Config mapping used for Part 5 presentation:
+//   off -> B          (Base)
+//   on  -> B+S        (Base + SQL/Redis caching)
+//   bsk -> B+S+K      (Base + SQL cache + Kafka)
+//   bsk_other -> B+S+K+Other
+// Any unknown mode is kept as-is in config_label so future runs still appear.
 //
 // Usage: node infra/perf/scripts/summarize.js [results_dir]
 
@@ -26,26 +33,37 @@ async function main() {
     const full = path.join(RESULTS_DIR, f);
     const agg = await aggregateJtl(full);
     const [scenario, mode] = parseTag(f);
-    rows.push({ file: f, scenario, mode, ...agg });
+    const configLabel = mapModeToConfig(mode);
+    rows.push({ file: f, scenario, mode, configLabel, ...agg });
     console.log(`[summarize] ${f}: ${agg.count} samples, p95=${agg.p95.toFixed(0)}ms, rps=${agg.rps.toFixed(1)}`);
   }
 
   rows.sort((a, b) => (a.scenario + a.mode).localeCompare(b.scenario + b.mode));
 
   const csvPath = path.join(RESULTS_DIR, 'summary.csv');
-  const header = ['scenario', 'mode', 'samples', 'error_pct', 'avg_ms', 'p50_ms',
-    'p95_ms', 'p99_ms', 'max_ms', 'rps', 'duration_s', 'file'];
+  const header = ['scenario', 'mode', 'config_label', 'samples', 'throughput_rps',
+    'avg_latency_ms', 'p95_latency_ms', 'error_rate_pct', 'p50_ms', 'p99_ms',
+    'max_ms', 'duration_s', 'file'];
   const lines = [header.join(',')];
   for (const r of rows) {
     lines.push([
-      r.scenario, r.mode, r.count,
-      r.errorPct.toFixed(2), r.avg.toFixed(1), r.p50.toFixed(0),
-      r.p95.toFixed(0), r.p99.toFixed(0), r.max,
-      r.rps.toFixed(2), r.durationSec.toFixed(1), r.file,
+      r.scenario, r.mode, r.configLabel, r.count,
+      r.rps.toFixed(2), r.avg.toFixed(1), r.p95.toFixed(0), r.errorPct.toFixed(2),
+      r.p50.toFixed(0), r.p99.toFixed(0), r.max,
+      r.durationSec.toFixed(1), r.file,
     ].join(','));
   }
   fs.writeFileSync(csvPath, lines.join('\n') + '\n');
   console.log(`[summarize] wrote ${csvPath}`);
+}
+
+function mapModeToConfig(mode) {
+  const m = (mode || '').toLowerCase();
+  if (m === 'off') return 'B';
+  if (m === 'on') return 'B+S';
+  if (m === 'bsk') return 'B+S+K';
+  if (m === 'bsk_other' || m === 'bsk+other' || m === 'bskother') return 'B+S+K+Other';
+  return mode || 'unknown';
 }
 
 function parseTag(filename) {

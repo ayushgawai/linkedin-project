@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Generate cache-on vs cache-off comparison charts from summary.csv.
+"""Generate scenario comparison charts from summary.csv.
 
 Outputs into results/charts/:
-  - <scenario>_latency_comparison.png   (p50 / p95 / p99 bars)
-  - all_throughput.png                  (req/s per scenario, grouped by mode)
-  - all_error_rate.png                  (error% per scenario, grouped by mode)
+  - scenario_A_config_comparison.png
+  - scenario_B_config_comparison.png
+  - scenario_C_config_comparison.png
 
 Usage:   python3 infra/perf/scripts/compare_chart.py [results_dir]
 Requires matplotlib:  pip3 install matplotlib
@@ -34,90 +34,119 @@ if not os.path.isfile(SUMMARY):
     sys.exit(1)
 
 
+CONFIG_ORDER = ["B", "B+S", "B+S+K", "B+S+K+Other"]
+CONFIG_TO_MODE = {
+    "B": "off",
+    "B+S": "on",
+    "B+S+K": "bsk",
+    "B+S+K+Other": "bsk_other",
+}
+
+
 def load_rows():
-    rows = defaultdict(dict)  # {scenario: {mode: row}}
+    rows = defaultdict(dict)  # {scenario: {config_label: row}}
     with open(SUMMARY, newline="") as f:
         for r in csv.DictReader(f):
-            rows[r["scenario"]][r["mode"]] = r
+            cfg = r.get("config_label") or map_mode_to_config(r.get("mode", ""))
+            rows[r["scenario"]][cfg] = r
     return rows
 
 
-def bar_side_by_side(ax, labels, left_values, right_values, left_label, right_label, ylabel, title):
+def map_mode_to_config(mode):
+    m = (mode or "").lower()
+    if m == "off":
+        return "B"
+    if m == "on":
+        return "B+S"
+    if m == "bsk":
+        return "B+S+K"
+    if m in ("bsk_other", "bsk+other", "bskother"):
+        return "B+S+K+Other"
+    return mode
+
+
+def chart_scenario(rows, scenario):
     import numpy as np
-    x = np.arange(len(labels))
-    w = 0.38
-    ax.bar(x - w / 2, left_values, w, label=left_label, color="#2e7d32")
-    ax.bar(x + w / 2, right_values, w, label=right_label, color="#c62828")
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels)
-    ax.set_ylabel(ylabel)
-    ax.set_title(title)
-    ax.legend()
-    ax.grid(axis="y", linestyle="--", alpha=0.4)
-    for i, (lv, rv) in enumerate(zip(left_values, right_values)):
-        ax.text(i - w / 2, lv, f"{lv:.0f}", ha="center", va="bottom", fontsize=8)
-        ax.text(i + w / 2, rv, f"{rv:.0f}", ha="center", va="bottom", fontsize=8)
+    by_cfg = rows.get(scenario, {})
+    x = np.arange(len(CONFIG_ORDER))
+    width = 0.5
 
+    throughput_vals = []
+    p95_vals = []
+    measured = []
+    for cfg in CONFIG_ORDER:
+        r = by_cfg.get(cfg)
+        if r is None:
+            throughput_vals.append(0.0)
+            p95_vals.append(0.0)
+            measured.append(False)
+        else:
+            throughput_vals.append(float(r["throughput_rps"]))
+            p95_vals.append(float(r["p95_latency_ms"]))
+            measured.append(True)
 
-def chart_latency_per_scenario(rows):
-    for scenario, modes in rows.items():
-        on = modes.get("on")
-        off = modes.get("off")
-        if not on or not off:
-            print(f"[compare_chart] skipping {scenario}: need both ON and OFF runs")
-            continue
-        labels = ["p50", "p95", "p99", "avg"]
-        on_vals = [float(on["p50_ms"]), float(on["p95_ms"]), float(on["p99_ms"]), float(on["avg_ms"])]
-        off_vals = [float(off["p50_ms"]), float(off["p95_ms"]), float(off["p99_ms"]), float(off["avg_ms"])]
+    fig, ax1 = plt.subplots(figsize=(10, 5.5))
+    ax2 = ax1.twinx()
 
-        fig, ax = plt.subplots(figsize=(8, 5))
-        bar_side_by_side(ax, labels, on_vals, off_vals,
-                         "Redis ON", "Redis OFF",
-                         "Latency (ms)",
-                         f"Scenario {scenario} — latency: cache ON vs OFF")
-        fig.tight_layout()
-        out = os.path.join(CHARTS_DIR, f"{scenario}_latency_comparison.png")
-        fig.savefig(out, dpi=120)
-        plt.close(fig)
-        print(f"[compare_chart] wrote {out}")
+    # Throughput bars (primary axis)
+    colors = ["#2e7d32" if ok else "#bdbdbd" for ok in measured]
+    bars = ax1.bar(x, throughput_vals, width, color=colors, edgecolor="#424242", label="Throughput (req/s)")
+    ax1.set_ylabel("Throughput (req/s)", color="#1b5e20")
+    ax1.tick_params(axis="y", labelcolor="#1b5e20")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(CONFIG_ORDER)
+    ax1.grid(axis="y", linestyle="--", alpha=0.35)
 
+    # P95 line (secondary axis)
+    plotted_x = [x[i] for i, ok in enumerate(measured) if ok]
+    plotted_p95 = [p95_vals[i] for i, ok in enumerate(measured) if ok]
+    if plotted_x:
+        ax2.plot(plotted_x, plotted_p95, color="#0d47a1", marker="o", linewidth=2, label="P95 latency (ms)")
+    ax2.set_ylabel("P95 latency (ms)", color="#0d47a1")
+    ax2.tick_params(axis="y", labelcolor="#0d47a1")
 
-def chart_throughput(rows):
-    scenarios = sorted(rows.keys())
-    on_vals, off_vals = [], []
-    for s in scenarios:
-        on_vals.append(float(rows[s].get("on", {}).get("rps", 0)))
-        off_vals.append(float(rows[s].get("off", {}).get("rps", 0)))
+    ax1.set_title(f"Scenario {scenario}: B vs B+S vs B+S+K vs B+S+K+Other")
 
-    fig, ax = plt.subplots(figsize=(8, 5))
-    bar_side_by_side(ax, [f"Scenario {s}" for s in scenarios],
-                     on_vals, off_vals,
-                     "Redis ON", "Redis OFF",
-                     "Requests / sec",
-                     "Throughput: cache ON vs OFF")
+    # Annotate bars and missing configs.
+    for i, b in enumerate(bars):
+        if measured[i]:
+            ax1.text(
+                b.get_x() + b.get_width() / 2,
+                b.get_height(),
+                f"{throughput_vals[i]:.2f}",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+            )
+            ax2.text(
+                x[i],
+                p95_vals[i],
+                f"p95={p95_vals[i]:.0f}",
+                color="#0d47a1",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+            )
+        else:
+            ax1.text(
+                x[i],
+                max(throughput_vals + [1]) * 0.06,
+                "not measured",
+                color="#616161",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+                rotation=90,
+            )
+
+    # Combined legend from both axes.
+    h1, l1 = ax1.get_legend_handles_labels()
+    h2, l2 = ax2.get_legend_handles_labels()
+    ax1.legend(h1 + h2, l1 + l2, loc="upper right")
+
     fig.tight_layout()
-    out = os.path.join(CHARTS_DIR, "all_throughput.png")
-    fig.savefig(out, dpi=120)
-    plt.close(fig)
-    print(f"[compare_chart] wrote {out}")
-
-
-def chart_error_rate(rows):
-    scenarios = sorted(rows.keys())
-    on_vals, off_vals = [], []
-    for s in scenarios:
-        on_vals.append(float(rows[s].get("on", {}).get("error_pct", 0)))
-        off_vals.append(float(rows[s].get("off", {}).get("error_pct", 0)))
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-    bar_side_by_side(ax, [f"Scenario {s}" for s in scenarios],
-                     on_vals, off_vals,
-                     "Redis ON", "Redis OFF",
-                     "Error rate (%)",
-                     "Error rate: cache ON vs OFF")
-    fig.tight_layout()
-    out = os.path.join(CHARTS_DIR, "all_error_rate.png")
-    fig.savefig(out, dpi=120)
+    out = os.path.join(CHARTS_DIR, f"scenario_{scenario}_config_comparison.png")
+    fig.savefig(out, dpi=130)
     plt.close(fig)
     print(f"[compare_chart] wrote {out}")
 
@@ -126,9 +155,8 @@ def main():
     rows = load_rows()
     if not rows:
         print("[compare_chart] summary.csv is empty"); sys.exit(1)
-    chart_latency_per_scenario(rows)
-    chart_throughput(rows)
-    chart_error_rate(rows)
+    for scenario in ["A", "B", "C"]:
+        chart_scenario(rows, scenario)
     print(f"[compare_chart] done — charts in {CHARTS_DIR}")
 
 
