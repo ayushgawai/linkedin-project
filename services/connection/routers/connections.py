@@ -41,16 +41,13 @@ class MutualConnectionsBody(BaseModel):
     user_id: str
     other_id: str
 
-class PendingInvitationsBody(BaseModel):
+class PendingConnectionsBody(BaseModel):
     user_id: str
     page: int = 1
     page_size: int = 20
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
-
-def success(data: dict) -> dict:
-    return {"success": True, "data": data, "trace_id": str(uuid.uuid4())}
 
 def error(code: str, message: str, status: int = 400):
     from fastapi import HTTPException
@@ -98,7 +95,7 @@ def request_connection(body: ConnectionRequestBody, db: Session = Depends(get_db
             db.commit()
             db.refresh(existing)
             _produce_connection_event("connection.requested", body.requester_id, existing.connection_id, body)
-            return success({"request_id": existing.connection_id, "status": "pending"})
+            return {"request_id": existing.connection_id}
 
     connection_id = str(uuid.uuid4())
     conn = Connection(
@@ -114,7 +111,7 @@ def request_connection(body: ConnectionRequestBody, db: Session = Depends(get_db
     _produce_connection_event("connection.requested", body.requester_id, connection_id, body)
     log.info(f"Connection request {connection_id} created: {user_a} <-> {user_b}")
 
-    return success({"request_id": connection_id, "status": "pending"})
+    return {"request_id": connection_id}
 
 
 @router.post("/accept")
@@ -157,8 +154,7 @@ def accept_connection(body: ActionRequestBody, db: Session = Depends(get_db)):
     kafka_producer.produce("connection.accepted", envelope)
 
     log.info(f"Connection {body.request_id} accepted.")
-    # Frontend contract expects `{ success: boolean }` payload.
-    return success({"success": True, "connection_id": conn.connection_id})
+    return {"success": True}
 
 
 @router.post("/reject")
@@ -174,8 +170,7 @@ def reject_connection(body: ActionRequestBody, db: Session = Depends(get_db)):
     db.commit()
 
     log.info(f"Connection {body.request_id} rejected.")
-    # Frontend contract expects `{ success: boolean }` payload.
-    return success({"success": True})
+    return {"success": True}
 
 
 @router.post("/list")
@@ -201,15 +196,18 @@ def list_connections(body: ListConnectionsBody, db: Session = Depends(get_db)):
 
     results = []
     for c in connections:
-        # The "other" user in the connection
-        other_id = c.user_b if c.user_a == body.user_id else c.user_a
+        requester = c.requested_by
+        addressee = c.user_b if requester == c.user_a else c.user_a
         results.append({
             "connection_id": c.connection_id,
-            "connected_user_id": other_id,
-            "connected_at": c.created_at.isoformat() if c.created_at else None,
+            "requester_member_id": requester,
+            "addressee_member_id": addressee,
+            "status": c.status,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "updated_at": c.created_at.isoformat() if c.created_at else None,
         })
 
-    return success({"connections": results, "total": total})
+    return results
 
 
 @router.post("/mutual")
@@ -235,17 +233,28 @@ def mutual_connections(body: MutualConnectionsBody, db: Session = Depends(get_db
     other_connections = get_connection_ids(body.other_id)
     mutual_ids = user_connections & other_connections
 
-    return success({
-        "mutual_connections": list(mutual_ids),
-        "count": len(mutual_ids),
-    })
+    return [
+        {
+            "connection_id": f"mutual-{body.user_id}-{body.other_id}-{mid}",
+            "requester_member_id": body.user_id,
+            "addressee_member_id": mid,
+            "status": "accepted",
+            "created_at": None,
+            "updated_at": None,
+        }
+        for mid in mutual_ids
+    ]
 
 
 @router.post("/pending")
-def list_pending(body: PendingInvitationsBody, db: Session = Depends(get_db)):
+def list_pending(body: PendingConnectionsBody, db: Session = Depends(get_db)):
     """
-    List pending invitations for a user.
-    Frontend expects an array of invitation cards with requester/addressee IDs.
+    List pending invitations for *body.user_id*.
+
+    Frontend expects a list of invitation cards with:
+      - request_id
+      - requester_member_id
+      - addressee_member_id
     """
     offset = (body.page - 1) * body.page_size
 
@@ -261,22 +270,21 @@ def list_pending(body: PendingInvitationsBody, db: Session = Depends(get_db)):
 
     items = []
     for c in pending:
-        other_id = c.user_b if c.user_a == body.user_id else c.user_a
-        # Approximate UI contract: requester is who initiated.
         requester_id = c.requested_by
-        addressee_id = other_id if requester_id == body.user_id else body.user_id
-
+        receiver_id = c.user_b if requester_id == c.user_a else c.user_a
+        if receiver_id != body.user_id:
+            continue
         items.append({
             "request_id": c.connection_id,
             "requester_member_id": requester_id,
-            "addressee_member_id": addressee_id,
+            "addressee_member_id": body.user_id,
             "name": f"Member {requester_id[:6]}",
             "headline": "Professional",
             "mutual": 0,
             "created_at": c.created_at.isoformat() if c.created_at else None,
         })
 
-    return success(items)
+    return items
 
 
 # ── Internal helper ────────────────────────────────────────────────────────────
