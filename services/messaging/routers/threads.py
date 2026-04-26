@@ -18,6 +18,8 @@ from models import Thread, ThreadParticipant, Message
 
 log = logging.getLogger(__name__)
 router = APIRouter()
+_starred_threads_by_user: dict[str, set[str]] = {}
+_deleted_threads_by_user: dict[str, set[str]] = {}
 
 
 # ── Request / Response models ──────────────────────────────────────────────────
@@ -34,10 +36,12 @@ class ThreadsByUserRequest(BaseModel):
     page_size: int = 20
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+class ThreadUserActionRequest(BaseModel):
+    thread_id: str
+    user_id: str
 
-def success(data: dict) -> dict:
-    return {"success": True, "data": data, "trace_id": str(uuid.uuid4())}
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
 
 def error(code: str, message: str, status: int = 400) -> dict:
     from fastapi import HTTPException
@@ -82,7 +86,7 @@ def open_thread(body: OpenThreadRequest, db: Session = Depends(get_db)):
 
     if existing_thread_id:
         log.info(f"Thread already exists: {existing_thread_id}")
-        return success({"thread_id": existing_thread_id, "created": False})
+        return {"thread_id": existing_thread_id}
 
     # Create new thread
     thread_id = str(uuid.uuid4())
@@ -92,7 +96,7 @@ def open_thread(body: OpenThreadRequest, db: Session = Depends(get_db)):
     db.commit()
 
     log.info(f"Created thread {thread_id} for participants {sorted_ids}")
-    return success({"thread_id": thread_id, "created": True})
+    return {"thread_id": thread_id}
 
 
 @router.post("/get")
@@ -106,11 +110,21 @@ def get_thread(body: GetThreadRequest, db: Session = Depends(get_db)):
         select(ThreadParticipant.user_id).where(ThreadParticipant.thread_id == body.thread_id)
     ).scalars().all()
 
-    return success({
+    fallback_participant = participants[0] if participants else ""
+    return {
         "thread_id": thread.thread_id,
-        "created_at": thread.created_at.isoformat() if thread.created_at else None,
-        "participants": list(participants),
-    })
+        "participant": {
+            "member_id": fallback_participant,
+            "full_name": f"Member {fallback_participant[:8]}" if fallback_participant else "Unknown",
+            "headline": "",
+            "profile_photo_url": None,
+            "online": False,
+        },
+        "last_message_preview": "",
+        "last_message_time": "",
+        "unread_count": 0,
+        "starred": False,
+    }
 
 
 @router.post("/byUser")
@@ -121,17 +135,22 @@ def threads_by_user(body: ThreadsByUserRequest, db: Session = Depends(get_db)):
     ).scalars().all()
 
     if not thread_ids:
-        return success({"threads": [], "total": 0})
+        return []
 
     offset = (body.page - 1) * body.page_size
     paginated_ids = thread_ids[offset: offset + body.page_size]
 
     results = []
+    deleted_threads = _deleted_threads_by_user.get(body.user_id, set())
+    starred_threads = _starred_threads_by_user.get(body.user_id, set())
     for tid in paginated_ids:
+        if tid in deleted_threads:
+            continue
         # Get participants
         participants = db.execute(
             select(ThreadParticipant.user_id).where(ThreadParticipant.thread_id == tid)
         ).scalars().all()
+        other_user = next((p for p in participants if p != body.user_id), body.user_id)
 
         # Get last message
         last_msg = db.execute(
@@ -143,12 +162,40 @@ def threads_by_user(body: ThreadsByUserRequest, db: Session = Depends(get_db)):
 
         results.append({
             "thread_id": tid,
-            "participants": list(participants),
-            "last_message": {
-                "text": last_msg.message_text[:100] if last_msg else None,
-                "sender_id": last_msg.sender_id if last_msg else None,
-                "sent_at": last_msg.sent_at.isoformat() if last_msg and last_msg.sent_at else None,
+            "participant": {
+                "member_id": other_user,
+                "full_name": f"Member {other_user[:8]}",
+                "headline": "",
+                "profile_photo_url": None,
+                "online": False,
             }
+            ,
+            "last_message_preview": (last_msg.message_text[:100] if last_msg else "No messages yet"),
+            "last_message_time": (last_msg.sent_at.isoformat() if last_msg and last_msg.sent_at else ""),
+            "unread_count": 0,
+            "starred": tid in starred_threads,
         })
 
-    return success({"threads": results, "total": len(thread_ids)})
+    return results
+
+
+@router.post("/deleteForUser")
+def delete_thread_for_user(body: ThreadUserActionRequest, db: Session = Depends(get_db)):
+    thread = db.get(Thread, body.thread_id)
+    if not thread:
+        error("THREAD_NOT_FOUND", f"Thread {body.thread_id} not found.", 404)
+    _deleted_threads_by_user.setdefault(body.user_id, set()).add(body.thread_id)
+    return {"ok": True}
+
+
+@router.post("/star")
+def star_thread(body: ThreadUserActionRequest, db: Session = Depends(get_db)):
+    thread = db.get(Thread, body.thread_id)
+    if not thread:
+        error("THREAD_NOT_FOUND", f"Thread {body.thread_id} not found.", 404)
+    stars = _starred_threads_by_user.setdefault(body.user_id, set())
+    if body.thread_id in stars:
+        stars.remove(body.thread_id)
+        return {"starred": False}
+    stars.add(body.thread_id)
+    return {"starred": True}
