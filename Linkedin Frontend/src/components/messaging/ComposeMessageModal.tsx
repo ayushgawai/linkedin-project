@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { openThread, sendMessage } from '../../api/messaging'
 import { listConnections } from '../../api/connections'
-import { getMember } from '../../api/profile'
+import { getMember, searchMembers } from '../../api/profile'
 import { useActionToast } from '../../hooks/useActionToast'
 import { Button, Input, Modal, Textarea, useToast } from '../ui'
 import type { Member } from '../../types'
@@ -55,6 +55,23 @@ export function ComposeMessageModal({ isOpen, onClose, senderId, onThreadCreated
     )
   }, [connectionsQuery.data, query])
 
+  const globalSearchQuery = useQuery({
+    queryKey: ['members-search', senderId, 'compose', query],
+    queryFn: async () => {
+      const q = query.trim()
+      if (!q) return []
+      const members = await searchMembers({ query: q })
+      return members.filter((m) => m.member_id && m.member_id !== senderId)
+    },
+    enabled: isOpen && Boolean(senderId) && query.trim().length > 0,
+  })
+
+  const displayedRecipients = useMemo(() => {
+    if (filteredRecipients.length > 0) return filteredRecipients
+    // If you have no accepted connections (common in demos), allow messaging any member.
+    return globalSearchQuery.data ?? []
+  }, [filteredRecipients, globalSearchQuery.data])
+
   const sendMutation = useMutation({
     mutationFn: async () => {
       const thread = await openThread([senderId, recipientId])
@@ -79,15 +96,17 @@ export function ComposeMessageModal({ isOpen, onClose, senderId, onThreadCreated
     <Modal isOpen={isOpen} onClose={onClose} title="New message" size="md">
       <Modal.Header>New message</Modal.Header>
       <Modal.Body className="space-y-3">
-        <Input label="Search your connections" value={query} onChange={(event) => setQuery(event.target.value)} />
-        <p className="text-xs text-text-tertiary">Only people you are connected with can be messaged.</p>
+        <Input label="Search people" value={query} onChange={(event) => setQuery(event.target.value)} />
+        <p className="text-xs text-text-tertiary">
+          Start a conversation by searching members. Connections will appear first.
+        </p>
         <div className="max-h-40 overflow-y-auto rounded-md border border-border">
-          {connectionsQuery.isLoading ? (
+          {connectionsQuery.isLoading || globalSearchQuery.isLoading ? (
             <p className="px-3 py-2 text-sm text-text-secondary">Loading connections…</p>
-          ) : filteredRecipients.length === 0 ? (
-            <p className="px-3 py-2 text-sm text-text-secondary">No connections match this search. Connect with someone on My Network first.</p>
+          ) : displayedRecipients.length === 0 ? (
+            <p className="px-3 py-2 text-sm text-text-secondary">No members match this search.</p>
           ) : (
-            filteredRecipients.map((member) => (
+            displayedRecipients.map((member) => (
               <button
                 key={member.member_id}
                 type="button"

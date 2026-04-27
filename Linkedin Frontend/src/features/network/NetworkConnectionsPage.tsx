@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { listConnections } from '../../api/connections'
+import { getMember } from '../../api/profile'
 import { Avatar, Button, Card, Input, Select, Skeleton } from '../../components/ui'
-import { DIRECTORY_MEMBERS } from '../../lib/profileDirectory'
 import { useAuthStore } from '../../store/authStore'
 
 export default function NetworkConnectionsPage(): JSX.Element {
@@ -13,25 +13,45 @@ export default function NetworkConnectionsPage(): JSX.Element {
   const connectionsQuery = useQuery({
     queryKey: ['connections', user?.member_id],
     queryFn: async () => {
-      if (!user) return []
-      return listConnections(user.member_id)
+      if (!user?.member_id) return []
+      const conns = await listConnections(user.member_id)
+      const peerIds = Array.from(
+        new Set(
+          conns
+            .filter((c) => c.status === 'accepted')
+            .map((c) => (c.requester_member_id === user.member_id ? c.addressee_member_id : c.requester_member_id)),
+        ),
+      )
+      const memberMap = new Map<string, { full_name: string; headline: string; profile_photo_url: string | null }>()
+      await Promise.all(
+        peerIds.map(async (id) => {
+          try {
+            const m = await getMember(id)
+            memberMap.set(id, { full_name: m.full_name, headline: m.headline ?? 'Professional', profile_photo_url: m.profile_photo_url ?? null })
+          } catch {
+            memberMap.set(id, { full_name: `Member ${id.slice(0, 6)}`, headline: 'Professional', profile_photo_url: null })
+          }
+        }),
+      )
+      return conns
+        .filter((c) => c.status === 'accepted')
+        .map((c) => {
+          const peerId = c.requester_member_id === user.member_id ? c.addressee_member_id : c.requester_member_id
+          const peer = memberMap.get(peerId) ?? { full_name: `Member ${peerId.slice(0, 6)}`, headline: 'Professional', profile_photo_url: null }
+          return {
+            id: c.connection_id,
+            peerId,
+            name: peer.full_name,
+            headline: peer.headline,
+            avatar: peer.profile_photo_url,
+          }
+        })
     },
-    enabled: Boolean(user),
+    enabled: Boolean(user?.member_id),
   })
 
   const cards = useMemo(() => {
-    const base = (connectionsQuery.data ?? []).map((connection, index) => {
-      const peerId = connection.addressee_member_id
-      const directory = DIRECTORY_MEMBERS.find((m) => m.member_id === peerId)
-      const fallbackName = ['Jordan Miles', 'Priya Nair', 'Ethan Park', 'Isla Roy'][index % 4] ?? 'Connection'
-      return {
-      id: connection.connection_id,
-      name: directory?.full_name ?? fallbackName,
-      headline: directory?.headline ?? 'Professional',
-      addedAt: index,
-      }
-    })
-
+    const base = (connectionsQuery.data ?? []).map((c, index) => ({ ...c, addedAt: index }))
     const filtered = base.filter((item) => item.name.toLowerCase().includes(query.toLowerCase()))
 
     if (sort === 'first_name') return [...filtered].sort((a, b) => a.name.localeCompare(b.name))
@@ -66,7 +86,7 @@ export default function NetworkConnectionsPage(): JSX.Element {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {cards.map((card) => (
               <article key={card.id} className="rounded-lg border border-border p-3">
-                <Avatar size="lg" name={card.name} />
+                <Avatar size="lg" name={card.name} src={card.avatar ?? undefined} />
                 <p className="mt-2 font-semibold text-text-primary">{card.name}</p>
                 <p className="text-sm text-text-secondary">{card.headline}</p>
                 <Button size="sm" variant="secondary" className="mt-3">Message</Button>

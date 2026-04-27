@@ -245,9 +245,32 @@ export async function listThreadsByUser(user_id: string): Promise<ThreadListItem
   const response = await apiClient.post<unknown>('/threads/byUser', { user_id })
   const data = response.data as any
   // Backend may return { threads, total } or a raw array.
-  if (Array.isArray(data)) return data as ThreadListItem[]
-  if (data && Array.isArray(data.threads)) return data.threads as ThreadListItem[]
-  return []
+  const base: ThreadListItem[] = Array.isArray(data) ? (data as ThreadListItem[]) : data && Array.isArray(data.threads) ? (data.threads as ThreadListItem[]) : []
+
+  // Enrich participant display with Profile service so UI shows real names/photos.
+  try {
+    const enriched = await Promise.all(
+      base.map(async (t) => {
+        try {
+          const m = await getMember(t.participant.member_id)
+          return {
+            ...t,
+            participant: {
+              ...t.participant,
+              full_name: m.full_name,
+              headline: m.headline ?? '',
+              profile_photo_url: m.profile_photo_url ?? null,
+            },
+          }
+        } catch {
+          return t
+        }
+      }),
+    )
+    return enriched
+  } catch {
+    return base
+  }
 }
 
 export async function listMessages(thread_id: string, pagination?: { page?: number; pageSize?: number }): Promise<MessagesListResponse> {
@@ -270,7 +293,35 @@ export async function listMessages(thread_id: string, pagination?: { page?: numb
     const pageSize = Number(data.page_size || pagination?.pageSize || 50)
     const page = Number(data.page || pagination?.page || 1)
     const total = Number(data.total || data.messages.length)
-    return { messages: data.messages, has_more: page * pageSize < total }
+    const raw = data.messages as MessageRecord[]
+    // Enrich sender display + avatar from Profile service.
+    try {
+      const uniqueSenderIds = Array.from(new Set(raw.map((m) => m.sender_id).filter(Boolean)))
+      const senderMap = new Map<string, { full_name: string; profile_photo_url: string | null }>()
+      await Promise.all(
+        uniqueSenderIds.map(async (sid) => {
+          try {
+            const member = await getMember(sid)
+            senderMap.set(sid, { full_name: member.full_name, profile_photo_url: member.profile_photo_url ?? null })
+          } catch {
+            // ignore
+          }
+        }),
+      )
+      const enriched = raw.map((m) => {
+        const s = senderMap.get(m.sender_id)
+        return s
+          ? {
+              ...m,
+              sender_name: s.full_name || m.sender_name,
+              sender_profile_photo_url: s.profile_photo_url ?? null,
+            }
+          : m
+      })
+      return { messages: enriched, has_more: page * pageSize < total }
+    } catch {
+      return { messages: raw, has_more: page * pageSize < total }
+    }
   }
   return data as MessagesListResponse
 }

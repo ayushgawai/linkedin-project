@@ -23,7 +23,8 @@ const CreateProfessorSchema = z.object({
   location: z.string().max(255).optional().nullable(),
   headline: z.string().max(500).optional().nullable(),
   about: z.string().optional().nullable(),
-  profile_photo_url: z.string().url().max(500).optional().nullable(),
+  // Frontend uses base64 data URLs for local uploads; accept any string.
+  profile_photo_url: z.string().max(2000).optional().nullable(),
   skills: z.array(z.string()).optional().default([]),
 });
 
@@ -211,7 +212,8 @@ const UpdateSchema = z.object({
   location: z.string().max(255).nullable().optional(),
   headline: z.string().max(500).nullable().optional(),
   about: z.string().nullable().optional(),
-  profile_photo_url: z.string().url().max(500).nullable().optional(),
+  // Frontend uses base64 data URLs for local uploads; accept any string.
+  profile_photo_url: z.string().max(2000).nullable().optional(),
 });
 
 async function handleUpdateMember(req, res, next) {
@@ -326,8 +328,10 @@ async function handleSearchMembers(req, res, next) {
       const params = { page_size: filters.page_size, offset };
 
       if (filters.keyword) {
-        where.push('MATCH(first_name, last_name, headline, about) AGAINST (:kw IN NATURAL LANGUAGE MODE)');
-        params.kw = filters.keyword;
+        // Full-text search can silently return 0 rows (missing FULLTEXT indexes, stopwords, short tokens).
+        // Use LIKE for reliability in demos + small datasets.
+        where.push('(first_name LIKE :kw_like OR last_name LIKE :kw_like OR headline LIKE :kw_like OR about LIKE :kw_like)');
+        params.kw_like = `%${filters.keyword}%`;
       }
       if (filters.location) {
         where.push('location LIKE :loc');

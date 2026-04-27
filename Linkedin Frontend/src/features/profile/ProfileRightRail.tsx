@@ -2,10 +2,11 @@ import { Pencil } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { listConnections, requestConnection } from '../../api/connections'
+import { searchMembers } from '../../api/profile'
+import { USE_MOCKS } from '../../api/client'
 import { Button, Card } from '../../components/ui'
 import { BrandMark } from '../../components/layout/BrandMark'
 import { RailFooter } from '../../components/layout/RailFooter'
-import { seedDemoData } from '../../lib/mockData'
 import { useAuthStore } from '../../store/authStore'
 import { useProfileStore } from '../../store/profileStore'
 const fictionalCompanies = [
@@ -24,6 +25,16 @@ export function ProfileRightRail(): JSX.Element {
     queryFn: () => (user ? listConnections(user.member_id) : Promise.resolve([])),
     enabled: Boolean(user),
   })
+  const suggestionsQuery = useQuery({
+    queryKey: ['member-suggestions', user?.member_id],
+    queryFn: async () => {
+      if (!user?.member_id) return []
+      // Profile service search with empty keyword behaves like "list some members" (LIKE '%%').
+      const members = await searchMembers({ query: '' })
+      return members
+    },
+    enabled: Boolean(user?.member_id) && !USE_MOCKS,
+  })
   const connectMutation = useMutation({
     mutationFn: async (targetId: string) => {
       if (!user) return
@@ -31,8 +42,13 @@ export function ProfileRightRail(): JSX.Element {
     },
   })
 
-  const suggestions = seedDemoData()
-    .members.filter((m) => m.member_id !== (user?.member_id ?? '') && !connectionsQuery.data?.some((c) => c.addressee_member_id === m.member_id))
+  const connectedPeerIds = new Set(
+    (connectionsQuery.data ?? [])
+      .filter((c) => c.status === 'accepted')
+      .map((c) => (c.requester_member_id === user?.member_id ? c.addressee_member_id : c.requester_member_id)),
+  )
+  const suggestions = (USE_MOCKS ? [] : suggestionsQuery.data ?? [])
+    .filter((m) => m.member_id && m.member_id !== (user?.member_id ?? '') && !connectedPeerIds.has(m.member_id))
     .slice(0, 3)
 
   return (
@@ -84,6 +100,9 @@ export function ProfileRightRail(): JSX.Element {
               </Button>
             </div>
           ))}
+          {!USE_MOCKS && suggestions.length === 0 ? (
+            <p className="text-xs text-text-tertiary">No suggestions yet. Create a couple accounts and they’ll appear here.</p>
+          ) : null}
         </Card.Body>
       </Card>
 

@@ -1,6 +1,7 @@
 import { Globe2, MessageCircle, Send, ThumbsUp, Repeat2, X } from 'lucide-react'
 import { memo, useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import type { Post } from '../../types/feed'
 import { ingestEvent } from '../../api/analytics'
 import { PostOptionsMenu } from './PostOptionsMenu'
@@ -115,7 +116,19 @@ function PostCardComponent({ post }: PostCardProps): JSX.Element {
   function submitComment(): void {
     if (!commentText.trim()) return
     const nextText = commentText.trim()
-    setLocalPost((prev) => ({ ...prev, comments_count: prev.comments_count + 1 }))
+    const newComment: Post['comments'][number] = {
+      comment_id: `c-${Date.now()}`,
+      author_name: profileName || authUser?.full_name || 'You',
+      author_headline: headline || 'Add your headline',
+      author_avatar_url: avatarUrl || null,
+      text: nextText,
+      time_ago: 'now',
+    }
+    setLocalPost((prev) => ({
+      ...prev,
+      comments_count: prev.comments_count + 1,
+      comments: [newComment, ...prev.comments].slice(0, 2),
+    }))
     if (isOwnPost) {
       const state = useProfileStore.getState()
       state.patchProfile({
@@ -299,9 +312,21 @@ function PostCardComponent({ post }: PostCardProps): JSX.Element {
             {localPost.comments.slice(0, 2).map((comment) => (
               <div key={comment.comment_id} className="space-y-2">
                 <div className="flex items-start gap-2">
-                  <Avatar size="sm" name={comment.author_name} src={comment.author_avatar_url ?? undefined} />
+                  {comment.author_member_id ? (
+                    <Link to={`/in/${comment.author_member_id}`} className="shrink-0">
+                      <Avatar size="sm" name={comment.author_name} src={comment.author_avatar_url ?? undefined} />
+                    </Link>
+                  ) : (
+                    <Avatar size="sm" name={comment.author_name} src={comment.author_avatar_url ?? undefined} />
+                  )}
                   <div className="rounded-lg bg-surface p-2">
-                    <p className="text-xs font-semibold text-text-primary">{comment.author_name}</p>
+                    {comment.author_member_id ? (
+                      <Link to={`/in/${comment.author_member_id}`} className="text-xs font-semibold text-text-primary hover:underline">
+                        {comment.author_name}
+                      </Link>
+                    ) : (
+                      <p className="text-xs font-semibold text-text-primary">{comment.author_name}</p>
+                    )}
                     <p className="text-xs text-text-tertiary">{comment.author_headline}</p>
                     <p className="mt-1 text-sm text-text-primary">{comment.text}</p>
                   </div>

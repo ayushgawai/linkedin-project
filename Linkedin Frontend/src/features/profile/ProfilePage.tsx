@@ -1,4 +1,4 @@
-import { Suspense, lazy, memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Suspense, lazy, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   BarChart3,
@@ -21,10 +21,12 @@ import {
   Users,
   X,
 } from 'lucide-react'
-import { Link, Navigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { createPost } from '../../api/posts'
 import { ingestEvent } from '../../api/analytics'
 import { getMember } from '../../api/profile'
+import { listConnections, requestConnection } from '../../api/connections'
+import { openThread } from '../../api/messaging'
 import { BrandMark } from '../../components/layout/BrandMark'
 import { FEED_QUERY_KEY } from '../../components/feed/PostFeed'
 import { PostOptionsMenu } from '../../components/feed/PostOptionsMenu'
@@ -101,6 +103,7 @@ const ProfileSkeleton = memo(function ProfileSkeleton(): JSX.Element {
 export default function ProfilePage(): JSX.Element {
   const { memberId = '' } = useParams<{ memberId: string }>()
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const authUser = useAuthStore((s) => s.user)
   const profile = useProfileStore((s) => s.profile)
   const completionPct = useProfileStore((s) => s.completionPercentage())
@@ -159,6 +162,42 @@ export default function ProfilePage(): JSX.Element {
     queryFn: () => getMember(memberId),
     enabled: Boolean(memberId) && !isOwnProfile,
   })
+
+  const connectionsQuery = useQuery({
+    queryKey: ['connections', authUser?.member_id],
+    queryFn: () => (authUser?.member_id ? listConnections(authUser.member_id) : Promise.resolve([])),
+    enabled: Boolean(authUser?.member_id) && !isOwnProfile,
+  })
+
+  const [requestSent, setRequestSent] = useState(false)
+  const connectMutation = useMutation({
+    mutationFn: async () => {
+      if (!authUser?.member_id) throw new Error('Not authenticated')
+      await requestConnection(authUser.member_id, memberId)
+    },
+    onSuccess: () => {
+      setRequestSent(true)
+    },
+    onError: () => {
+      // If backend returns 409 for pending/connected, still show a stable state via connectionsQuery
+      setRequestSent(true)
+    },
+  })
+
+  // Reset "request sent" when navigating between profiles.
+  useEffect(() => {
+    setRequestSent(false)
+  }, [memberId])
+
+  const viewerId = authUser?.member_id || profile.member_id || ''
+  const isConnected = useMemo(() => {
+    if (!viewerId || !memberId) return false
+    return (connectionsQuery.data ?? []).some((c) => {
+      if (c.status !== 'accepted') return false
+      const peerId = c.requester_member_id === viewerId ? c.addressee_member_id : c.requester_member_id
+      return peerId === memberId
+    })
+  }, [connectionsQuery.data, memberId, viewerId])
 
   useEffect(() => {
     if (completionPct >= 100 && !completionDismissed) {
@@ -476,8 +515,24 @@ export default function ProfilePage(): JSX.Element {
                 </div>
               ) : (
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Button>Connect</Button>
-                  <Button variant="secondary">Message</Button>
+                  <Button
+                    disabled={isConnected || connectMutation.isPending || requestSent}
+                    loading={connectMutation.isPending}
+                    onClick={() => connectMutation.mutate()}
+                  >
+                    {isConnected ? 'Connected' : requestSent ? 'Request sent' : 'Connect'}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      if (!viewerId || !memberId) return
+                      void openThread([viewerId, memberId])
+                        .then((r) => navigate(`/messaging/${r.thread_id}`))
+                        .catch(() => undefined)
+                    }}
+                  >
+                    Message
+                  </Button>
                 </div>
               )}
               {display.is_open_to_work && (display.open_to_work_details ?? '').trim() ? (

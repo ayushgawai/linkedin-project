@@ -630,18 +630,20 @@ export default function MessagingPage(): JSX.Element {
                       Back
                     </Link>
                   ) : null}
-                  <Avatar
-                    size="md"
-                    name={activeThread.participant.full_name}
-                    src={activeThread.participant.profile_photo_url ?? undefined}
-                    online={activeParticipantPresenceOnline}
-                  />
-                  <div>
-                    <p className="text-sm font-semibold text-text-primary">{activeThread.participant.full_name}</p>
-                    <p className="text-xs text-text-secondary">
-                      {activeThread.participant.headline} • {activeParticipantPresenceOnline ? 'Online' : 'Offline'}
-                    </p>
-                  </div>
+                  <Link to={`/in/${activeThread.participant.member_id}`} className="flex items-center gap-2 rounded-md hover:bg-black/5 px-1 py-1">
+                    <Avatar
+                      size="md"
+                      name={activeThread.participant.full_name}
+                      src={activeThread.participant.profile_photo_url ?? undefined}
+                      online={activeParticipantPresenceOnline}
+                    />
+                    <div>
+                      <p className="text-sm font-semibold text-text-primary">{activeThread.participant.full_name}</p>
+                      <p className="text-xs text-text-secondary">
+                        {activeThread.participant.headline} • {activeParticipantPresenceOnline ? 'Online' : 'Offline'}
+                      </p>
+                    </div>
+                  </Link>
                 </div>
                 <div className="flex items-center gap-1">
                   <button type="button" className="rounded-full p-2 hover:bg-black/5" aria-label="Video">
@@ -767,7 +769,13 @@ export default function MessagingPage(): JSX.Element {
 
                           return (
                             <div key={message.message_id} className="group flex justify-start items-end gap-2">
-                              {showAvatar ? <Avatar size="xs" name={message.sender_name} /> : <span className="h-6 w-6 shrink-0" aria-hidden />}
+                              {showAvatar ? (
+                                <Link to={`/in/${message.sender_id}`} className="shrink-0">
+                                  <Avatar size="xs" name={message.sender_name} src={message.sender_profile_photo_url ?? undefined} />
+                                </Link>
+                              ) : (
+                                <span className="h-6 w-6 shrink-0" aria-hidden />
+                              )}
                               <div className="flex min-w-0 max-w-[78%] flex-col gap-0.5">
                                 <MessageBubble message={message} mine={false} />
                                 <span className="invisible pl-1 text-[10px] text-text-tertiary group-hover:visible">
