@@ -185,7 +185,42 @@ async function handleGetMember(req, res, next) {
         'SELECT * FROM members WHERE member_id = :member_id LIMIT 1',
         { member_id },
       );
-      if (rows.length === 0) return null;
+      if (rows.length === 0) {
+        // Allow viewing recruiter profiles via the same `/members/get` route.
+        // Frontend uses `/in/:memberId` everywhere (messaging, network, etc.) and recruiters
+        // authenticate with member_id=recruiter_id, so treat recruiter ids as profile ids.
+        const [recRows] = await pool.query(
+          'SELECT recruiter_id, company_id, name, email, phone, company_name, company_industry, company_size, created_at FROM recruiters WHERE recruiter_id = :member_id LIMIT 1',
+          { member_id },
+        );
+        if (recRows.length === 0) return null;
+        const r = recRows[0];
+        const full = String(r.name || 'Recruiter').trim();
+        const [first, ...rest] = full.split(/\s+/);
+        return {
+          member_id: r.recruiter_id,
+          first_name: first || full,
+          last_name: rest.join(' ') || '',
+          full_name: full,
+          email: r.email,
+          phone: r.phone ?? null,
+          location: null,
+          headline: `Recruiter at ${r.company_name || 'Company'}`,
+          about: null,
+          profile_photo_url: null,
+          connections_count: 0,
+          created_at: r.created_at,
+          updated_at: r.created_at,
+          skills: [],
+          role: 'recruiter',
+          company: {
+            company_id: r.company_id,
+            company_name: r.company_name,
+            company_industry: r.company_industry ?? null,
+            company_size: r.company_size ?? null,
+          },
+        };
+      }
       const [skills] = await pool.query(
         'SELECT skill FROM member_skills WHERE member_id = :member_id',
         { member_id },

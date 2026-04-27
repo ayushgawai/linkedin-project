@@ -52,7 +52,8 @@ export default function NetworkConnectionsPage(): JSX.Element {
 
   const cards = useMemo(() => {
     const base = (connectionsQuery.data ?? []).map((c, index) => ({ ...c, addedAt: index }))
-    const filtered = base.filter((item) => item.name.toLowerCase().includes(query.toLowerCase()))
+    const q = query.toLowerCase()
+    const filtered = base.filter((item) => (item.name ?? '').toLowerCase().includes(q))
 
     if (sort === 'first_name') return [...filtered].sort((a, b) => a.name.localeCompare(b.name))
     if (sort === 'last_name') return [...filtered].sort((a, b) => a.name.split(' ')[1]?.localeCompare(b.name.split(' ')[1] ?? '') ?? 0)

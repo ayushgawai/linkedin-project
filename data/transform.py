@@ -593,23 +593,95 @@ print(f"  Generated {len(events):,} events")
 # ══════════════════════════════════════════════════════════════════════════════
 print("\n[6/7] Building connections, threads, messages...")
 
-connections  = []
-conn_pairs: set = set()
-while len(connections) < 10_000:
-    a, b = random.sample(member_ids, 2)
-    pair = (min(a, b), max(a, b))
-    if pair in conn_pairs:
-        continue
-    conn_pairs.add(pair)
-    connections.append({
-        "connection_id": new_uuid(),
-        "user_a":        pair[0],
-        "user_b":        pair[1],
-        "status":        random.choices(["pending", "accepted", "rejected"],
-                                        weights=[20, 70, 10])[0],
-        "requested_by":  random.choice([pair[0], pair[1]]),
-        "created_at":    fmt_dt(rand_dt(START_3Y, NOW)),
-    })
+TARGET_CONNECTIONS = 10_000
+
+def iter_edge_pairs_from_file(path: Path, max_pairs: int = 200_000, sample_mod: int = 200):
+    """
+    Stream an edge list file (SNAP-style: 'u v' per line, '#' comments).
+    The LiveJournal file is huge (~1GB), so we deterministically sample edges.
+    """
+    seen = 0
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            if not line or line.startswith("#"):
+                continue
+            parts = line.strip().split()
+            if len(parts) < 2:
+                continue
+            try:
+                u = int(parts[0])
+                v = int(parts[1])
+            except Exception:
+                continue
+            if u == v:
+                continue
+            # Deterministic sampling (reproducible)
+            if ((u * 1315423911) ^ (v * 2654435761)) % sample_mod != 0:
+                continue
+            yield (min(u, v), max(u, v))
+            seen += 1
+            if seen >= max_pairs:
+                return
+
+
+def build_connections_from_graph(member_ids_list: list[str], graph_path: Path) -> list[dict]:
+    # Deterministic mapping of graph nodes → existing member UUIDs.
+    # This avoids running out of member ids and yields a dense-enough subgraph
+    # for stable demo data.
+    n_members = len(member_ids_list)
+    def map_node(n: int) -> str:
+        return member_ids_list[int(n) % n_members]
+
+    conns: list[dict] = []
+    pairs: set[tuple[str, str]] = set()
+
+    # Tune sampling: smaller mod => more edges kept.
+    sample_mod = 80
+    for (u, v) in iter_edge_pairs_from_file(graph_path, max_pairs=400_000, sample_mod=sample_mod):
+        a = map_node(u)
+        b = map_node(v)
+        if a == b:
+            continue
+        pair = (min(a, b), max(a, b))
+        if pair in pairs:
+            continue
+        pairs.add(pair)
+        conns.append({
+            "connection_id": new_uuid(),
+            "user_a":        pair[0],
+            "user_b":        pair[1],
+            # For seeded graphs, accepted edges are most useful for demos.
+            "status":        random.choices(["accepted", "pending"], weights=[85, 15])[0],
+            "requested_by":  random.choice([pair[0], pair[1]]),
+            "created_at":    fmt_dt(rand_dt(START_3Y, NOW)),
+        })
+        if len(conns) >= TARGET_CONNECTIONS:
+            break
+    return conns
+
+
+graph_edges_path = RAW / "graphs-social" / "soc-LiveJournal1.txt"
+if graph_edges_path.exists():
+    print(f"  Using graph edge list: {graph_edges_path}")
+    connections = build_connections_from_graph(member_ids, graph_edges_path)
+else:
+    connections = []
+    conn_pairs: set = set()
+    while len(connections) < TARGET_CONNECTIONS:
+        a, b = random.sample(member_ids, 2)
+        pair = (min(a, b), max(a, b))
+        if pair in conn_pairs:
+            continue
+        conn_pairs.add(pair)
+        connections.append({
+            "connection_id": new_uuid(),
+            "user_a":        pair[0],
+            "user_b":        pair[1],
+            "status":        random.choices(["pending", "accepted", "rejected"],
+                                            weights=[20, 70, 10])[0],
+            "requested_by":  random.choice([pair[0], pair[1]]),
+            "created_at":    fmt_dt(rand_dt(START_3Y, NOW)),
+        })
 
 threads              = []
 thread_participants  = []

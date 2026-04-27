@@ -17,6 +17,7 @@ type JobListItemProps = {
 }
 
 function JobListItemComponent({ job, selected = false, onClick, saved = false, onSaveToggle, onDismiss, trailingMenu }: JobListItemProps): JSX.Element {
+  const companyName = (job.company_name ?? '').trim() || 'Company'
   return (
     <article
       className={cn(
@@ -27,11 +28,11 @@ function JobListItemComponent({ job, selected = false, onClick, saved = false, o
     >
       <div className="flex items-start gap-4">
         <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-[#ebe9e6] bg-[#f3f2ef] text-lg font-semibold text-[#0a66c2]">
-          {job.company_name.slice(0, 1).toUpperCase()}
+          {companyName.slice(0, 1).toUpperCase()}
         </div>
         <div className="min-w-0 flex-1 pr-1">
           <h3 className="line-clamp-2 text-[15px] font-semibold leading-snug text-[#1f1f1f]">{job.title}</h3>
-          <p className="mt-0.5 text-sm text-[#666]">{job.company_name}</p>
+          <p className="mt-0.5 text-sm text-[#666]">{companyName}</p>
           <p className="mt-0.5 text-xs text-[#666]/90">
             {job.location} · {job.posted_time_ago}
           </p>

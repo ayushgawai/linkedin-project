@@ -19,6 +19,7 @@ import type { Connection } from '../types'
 import { PENDING_CONNECTION_INVITATIONS } from '../lib/networkInvitationsData'
 import { useAuthStore } from '../store/authStore'
 import { useProfileStore } from '../store/profileStore'
+import { getMember } from './profile'
 
 export type ConnectionInvitation = {
   request_id: string
@@ -192,5 +193,22 @@ export async function listPendingInvitations(user_id: string): Promise<Connectio
     return mockInvitations.filter((inv) => inv.addressee_member_id === user_id)
   }
   const response = await apiClient.post<ConnectionInvitation[]>('/connections/pending', { user_id })
-  return response.data
+  const invitations = response.data ?? []
+  // Enrich requester display info (works for both members + recruiters).
+  const uniqueRequesterIds = Array.from(new Set(invitations.map((i) => i.requester_member_id).filter(Boolean)))
+  const requesterMap = new Map<string, { name: string; headline: string }>()
+  await Promise.all(
+    uniqueRequesterIds.map(async (rid) => {
+      try {
+        const m = await getMember(rid)
+        requesterMap.set(rid, { name: m.full_name, headline: m.headline ?? 'Professional' })
+      } catch {
+        requesterMap.set(rid, { name: `Member ${rid.slice(0, 6)}`, headline: 'Professional' })
+      }
+    }),
+  )
+  return invitations.map((inv) => {
+    const r = requesterMap.get(inv.requester_member_id)
+    return r ? { ...inv, name: r.name, headline: r.headline } : inv
+  })
 }

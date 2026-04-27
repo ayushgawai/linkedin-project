@@ -8,6 +8,38 @@ import type { CreateJobPayload, JobRecord, JobSearchFilters, JobSearchResponse, 
 
 let mockJobs: JobRecord[] = [...MOCK_JOBS]
 
+function normalizeJobRecord(raw: any): JobRecord {
+  const companyName = typeof raw?.company_name === 'string' && raw.company_name.trim() ? raw.company_name : 'Company'
+  return {
+    ...raw,
+    company_name: companyName,
+    title: typeof raw?.title === 'string' && raw.title.trim() ? raw.title : 'Job',
+    location: typeof raw?.location === 'string' && raw.location.trim() ? raw.location : '',
+    description: typeof raw?.description === 'string' ? raw.description : '',
+    posted_time_ago: raw?.posted_time_ago ?? raw?.posted_at ?? raw?.posted_datetime ?? 'Recently',
+    company_logo_url: raw?.company_logo_url ?? null,
+    applicants_count: Number(raw?.applicants_count ?? 0),
+    views_count: Number(raw?.views_count ?? 0),
+    easy_apply: Boolean(raw?.easy_apply ?? true),
+    promoted: Boolean(raw?.promoted ?? false),
+    skills_required: Array.isArray(raw?.skills_required) ? raw.skills_required : [],
+    connections_count: Number(raw?.connections_count ?? 0),
+    followers_count: Number(raw?.followers_count ?? 0),
+    work_mode: raw?.work_mode === 'remote' || raw?.work_mode === 'hybrid' || raw?.work_mode === 'onsite' ? raw.work_mode : 'onsite',
+    employment_type:
+      raw?.employment_type === 'full_time' ||
+      raw?.employment_type === 'part_time' ||
+      raw?.employment_type === 'contract' ||
+      raw?.employment_type === 'internship' ||
+      raw?.employment_type === 'temporary'
+        ? raw.employment_type
+        : 'full_time',
+    industry: typeof raw?.industry === 'string' ? raw.industry : 'Software',
+    company_size: typeof raw?.company_size === 'string' ? raw.company_size : '51-200 employees',
+    company_about: typeof raw?.company_about === 'string' ? raw.company_about : '',
+  } as JobRecord
+}
+
 function getMockJobs(): JobRecord[] {
   return mockJobs
 }
@@ -54,7 +86,7 @@ export async function listJobs(filters: JobSearchFilters): Promise<JobSearchResp
     const pageSize = Number(data.page_size || filters.pageSize || 20)
     const total = Number(data.total || 0)
     return {
-      jobs: data.results,
+      jobs: (data.results as any[]).map(normalizeJobRecord),
       page,
       has_more: page * pageSize < total,
       total,
@@ -70,7 +102,7 @@ export async function getJob(job_id: string): Promise<JobRecord> {
     return jobs.find((job) => job.job_id === job_id) ?? jobs[0]
   }
   const response = await apiClient.post<JobRecord>('/jobs/get', { job_id })
-  return response.data
+  return normalizeJobRecord(response.data as any)
 }
 
 export async function closeJob(job_id: string): Promise<{ success: boolean }> {
@@ -149,9 +181,9 @@ export async function listJobsByRecruiter(recruiter_id: string): Promise<JobReco
   }
   const response = await apiClient.post<unknown>('/jobs/byRecruiter', { recruiter_id })
   const data: any = response.data as any
-  if (Array.isArray(data)) return data as JobRecord[]
-  if (data && Array.isArray(data.results)) return data.results as JobRecord[]
-  if (data && Array.isArray(data.jobs)) return data.jobs as JobRecord[]
+  if (Array.isArray(data)) return (data as any[]).map(normalizeJobRecord)
+  if (data && Array.isArray(data.results)) return (data.results as any[]).map(normalizeJobRecord)
+  if (data && Array.isArray(data.jobs)) return (data.jobs as any[]).map(normalizeJobRecord)
   return []
 }
 

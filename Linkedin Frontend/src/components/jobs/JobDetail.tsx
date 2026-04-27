@@ -22,6 +22,7 @@ export function JobDetail({ job, emitViewed = false }: JobDetailProps): JSX.Elem
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const isOwner = Boolean(user?.member_id && job.recruiter_id === user.member_id)
+  const companyName = (job.company_name ?? '').trim() || 'Company'
 
   const isSaved = useSavedJobsStore((s) => s.isSaved(job.job_id))
   const saveJob = useSavedJobsStore((s) => s.save)
@@ -89,11 +90,11 @@ export function JobDetail({ job, emitViewed = false }: JobDetailProps): JSX.Elem
         <Card.Body className="space-y-3 p-4">
           <div className="flex items-start gap-3">
             <div className="flex h-16 w-16 items-center justify-center rounded-md border border-[#ebe9e6] bg-[#f3f2ef] text-xl font-semibold text-[#0a66c2]">
-              {job.company_name.slice(0, 1).toUpperCase()}
+              {companyName.slice(0, 1).toUpperCase()}
             </div>
             <div className="flex-1">
               <h1 className="text-2xl font-semibold text-text-primary">{job.title}</h1>
-              <p className="text-sm text-text-secondary">{job.company_name}</p>
+              <p className="text-sm text-text-secondary">{companyName}</p>
               <p className="text-xs text-text-tertiary">
                 {job.location} · {job.work_mode} · {postedLabel} · {job.applicants_count} applicants
               </p>

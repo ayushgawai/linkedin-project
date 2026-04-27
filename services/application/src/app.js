@@ -9,10 +9,11 @@ import { publishOrOutbox } from '../../shared/src/outbox.js';
 import { buildEnvelope, isKafkaConnected } from '../../shared/src/kafka.js';
 
 const VALID_TRANSITIONS = {
-  submitted: new Set(['reviewing', 'rejected']),
+  // Allow direct move to interview from submitted for demo UX.
+  submitted: new Set(['reviewing', 'interview', 'rejected']),
   reviewing: new Set(['interview', 'rejected']),
   interview: new Set(['offer', 'rejected']),
-  offer: new Set(),
+  offer: new Set(['rejected']),
   rejected: new Set()
 };
 const VALID_APPLICATION_STATUSES = new Set(Object.keys(VALID_TRANSITIONS));

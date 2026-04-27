@@ -18,6 +18,7 @@ export function JobMiniCard({ job, saved, onSaveToggle, onOpen }: JobMiniCardPro
   const extToggle = useSavedExternalJobsStore((s) => s.toggle)
   const isExternal = job.is_external === true
   const savedState = isExternal ? extSaved : saved
+  const companyName = (job.company_name ?? '').trim() || 'Company'
 
   function handleOpen(): void {
     if (isExternal && job.external_url) {
@@ -52,7 +53,7 @@ export function JobMiniCard({ job, saved, onSaveToggle, onOpen }: JobMiniCardPro
           />
         ) : (
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-surface text-brand-primary">
-            {job.company_name.slice(0, 1)}
+            {companyName.slice(0, 1)}
           </div>
         )}
         <button type="button" onClick={handleSave} className="rounded-full p-1.5 hover:bg-black/5" aria-label="Save job">
@@ -62,7 +63,7 @@ export function JobMiniCard({ job, saved, onSaveToggle, onOpen }: JobMiniCardPro
       <button type="button" onClick={handleOpen} className="mt-2 text-left">
         <h3 className="line-clamp-2 text-sm font-semibold text-text-primary">{job.title}</h3>
       </button>
-      <p className="text-sm text-text-secondary">{job.company_name}</p>
+      <p className="text-sm text-text-secondary">{companyName}</p>
       <p className="text-xs text-text-tertiary">
         {job.location} • {job.work_mode}
       </p>
