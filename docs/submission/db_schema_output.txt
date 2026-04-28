@@ -1,0 +1,57 @@
+Tables_in_linkedinclone
+application_notes
+applications
+connections
+job_skills
+jobs
+member_education
+member_experience
+member_skills
+members
+messages
+outbox_events
+processed_events
+processed_events_connection
+processed_events_messaging
+recruiters
+thread_participants
+threads
+Field	Type	Null	Key	Default	Extra
+member_id	varchar(36)	NO	PRI	uuid()	DEFAULT_GENERATED
+first_name	varchar(100)	NO	MUL	NULL	
+last_name	varchar(100)	NO		NULL	
+email	varchar(255)	NO	UNI	NULL	
+phone	varchar(20)	YES		NULL	
+location	varchar(255)	YES		NULL	
+headline	varchar(500)	YES		NULL	
+about	text	YES		NULL	
+profile_photo_url	varchar(500)	YES		NULL	
+connections_count	int	YES		0	
+created_at	datetime	YES		CURRENT_TIMESTAMP	DEFAULT_GENERATED
+updated_at	datetime	YES		CURRENT_TIMESTAMP	DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+Field	Type	Null	Key	Default	Extra
+job_id	varchar(36)	NO	PRI	uuid()	DEFAULT_GENERATED
+company_id	varchar(36)	NO		NULL	
+recruiter_id	varchar(36)	NO	MUL	NULL	
+title	varchar(300)	NO	MUL	NULL	
+description	text	NO		NULL	
+seniority_level	enum('internship','entry','associate','mid','senior','director','executive')	YES		NULL	
+employment_type	enum('full_time','part_time','contract','temporary','volunteer','internship')	YES		NULL	
+location	varchar(255)	YES		NULL	
+remote_type	enum('onsite','remote','hybrid')	YES		onsite	
+salary_range	varchar(100)	YES		NULL	
+status	enum('open','closed')	YES	MUL	open	
+posted_datetime	datetime	YES		CURRENT_TIMESTAMP	DEFAULT_GENERATED
+views_count	int	YES		0	
+applicants_count	int	YES		0	
+Field	Type	Null	Key	Default	Extra
+application_id	varchar(36)	NO	PRI	uuid()	DEFAULT_GENERATED
+job_id	varchar(36)	NO	MUL	NULL	
+member_id	varchar(36)	NO	MUL	NULL	
+resume_url	varchar(500)	YES		NULL	
+resume_text	text	YES		NULL	
+cover_letter	text	YES		NULL	
+answers	json	YES		NULL	
+application_datetime	datetime	YES		CURRENT_TIMESTAMP	DEFAULT_GENERATED
+status	enum('submitted','reviewing','interview','offer','rejected')	YES		submitted	
+status_note	text	YES		NULL	

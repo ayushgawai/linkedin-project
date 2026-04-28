@@ -1,0 +1,55 @@
+
+Connecting to MongoDB: mongodb://localhost:27017 / linkedinclone
+Total ai_traces documents: 19
+
+============================================================
+  1. Matching Quality — Precision@5
+============================================================
+  Backend Python Job             n=6   mean P@5 = 0.1667  
+  Frontend React Job             n=0   mean P@5 = N/A  No tasks matched this label
+  ML Engineer Job                n=0   mean P@5 = N/A  No tasks matched this label
+  Java Backend Job               n=0   mean P@5 = N/A  No tasks matched this label
+  DevOps Job                     n=0   mean P@5 = N/A  No tasks matched this label
+
+  Per-task detail (most recent first):
+    [Backend Python Job    ] task_id=171ffd7b-c6e2-45a9-b104-ba8c92e042d9 P@5=0.3333
+        Predicted: ['mock-member-003', 'mock-member-001', 'mock-member-005']
+        Expected:  ['mock-member-001', 'mock-member-008']
+    [Backend Python Job    ] task_id=5db30f56-119e-45aa-a0b8-3270e864c185 P@5=0.3333
+        Predicted: ['mock-member-003', 'mock-member-001', 'mock-member-005']
+        Expected:  ['mock-member-001', 'mock-member-008']
+    [Backend Python Job    ] task_id=db71368b-f354-4d43-bcd9-0fb9779af991 P@5=0.3333
+        Predicted: ['mock-member-003', 'mock-member-001', 'mock-member-005']
+        Expected:  ['mock-member-001', 'mock-member-008']
+    [Backend Python Job    ] task_id=e3c67b18-f9bb-48ad-95d7-078f5670513c P@5=0.0
+        Predicted: ['9789d62c-b9a3-4c78-996d-8fd06ea616d2']
+        Expected:  ['mock-member-001', 'mock-member-008']
+    [Backend Python Job    ] task_id=2c8d05a2-c44b-41c0-8f3a-ecf7a1a80e09 P@5=0.0
+        Predicted: ['9789d62c-b9a3-4c78-996d-8fd06ea616d2']
+        Expected:  ['mock-member-001', 'mock-member-008']
+    [Backend Python Job    ] task_id=e31aa22a-2b5f-4278-a18a-ad296a3c7f33 P@5=0.0
+        Predicted: ['9789d62c-b9a3-4c78-996d-8fd06ea616d2']
+        Expected:  ['mock-member-001', 'mock-member-008']
+
+  Overall Mean Precision@5: 0.1667
+
+============================================================
+  2. Human-in-the-Loop Approval Rate
+============================================================
+  Total decisions: 6
+  reject         2 (33.3%)
+  approve        4 (66.7%)
+
+============================================================
+  3. End-to-End Latency (first step → complete)
+============================================================
+  Completed tasks: 7  (source: pipeline_steps)
+  p50:  0.16s
+  p95:  1.07s
+  avg:  0.45s
+  max:  1.09s
+
+============================================================
+  Evaluation complete.
+============================================================
+
