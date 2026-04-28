@@ -39,7 +39,7 @@ Submission-ready diagrams live under `docs/submission/`:
 - `LinkedInClone_Architecture_Diagram.png`
 
 ## Monorepo structure
-- `frontend/` *(Member 2 — React UI. Not in this repository yet; backend and Docker are integrated without a UI until that code is added.)*
+- `Linkedin Frontend/` *(React UI for member, recruiter, AI copilot, and analytics flows.)*
 - `services/profile/`
 - `services/job/`
 - `services/application/`
@@ -55,15 +55,22 @@ Submission-ready diagrams live under `docs/submission/`:
 
 ## Local setup
 1. Copy `.env.example` to `.env` in the **repository root** and set host port overrides if needed (for example `DB_PORT_HOST=3307` if port 3306 is already in use).
-2. From the repo root, start the stack: `docker compose -f infra/docker-compose.yml up -d --build`  
-   (MySQL, MongoDB, Redis, Zookeeper, Kafka, **profile:8001**, **job:8002**, **application:8003**, **messaging:8004**, **connection:8005**, **analytics:8006**, **ai-agent:8007**).  
-   The first start builds images; the **ai-agent** image can take several minutes. Ensure Docker has enough memory/disk.
-3. MySQL runs `data/schema.sql` on first MySQL data volume; use the data pipeline below for large CSV-driven seeds.
-4. Use Docker for full integration; run Node services on the host only when you need hot reload (point each service at `localhost` DB/Redis/Kafka per `.env.example`).
+2. From the repo root, start the stack:
+
+```bash
+docker compose -f infra/docker-compose.yml up -d --build
+```
+
+This starts MySQL, MongoDB, Redis, Zookeeper, Kafka, Profile, Job, Application, Messaging, Connection, Analytics, AI Agent, and the API Gateway.
+
+3. The API Gateway is exposed on `http://127.0.0.1:8011` and should be used as the frontend/backend entrypoint.
+4. MySQL runs `data/schema.sql` on first MySQL data volume; use the data pipeline below for large CSV-driven seeds.
+5. Use Docker for full integration; run Node services on the host only when you specifically need hot reload.
 
 ### Host ports (default)
 | Service | Port |
 |--------|------|
+| API Gateway | 8011 |
 | Profile | 8001 |
 | Job | 8002 |
 | Application | 8003 |
@@ -85,11 +92,28 @@ After `docker compose` is healthy, hit every service (equivalent to what pytest 
 
 Narrower smoke (Member 1 services + sample API calls only): `bash scripts/member1_smoke_test.sh`.
 
+### Run the frontend after pulling `main`
+Use the gateway-backed frontend config by default:
+
+```bash
+cd "Linkedin Frontend"
+cp .env.example .env.local
+npm install
+npm run dev
+```
+
+The checked-in frontend example config points to:
+- `http://127.0.0.1:8011` for HTTP
+- `ws://127.0.0.1:8011` for WebSockets
+- `VITE_USE_MOCKS=false` for full-stack integration mode
+
+Open the Vite URL shown in the terminal and use the app through the gateway instead of individual service ports.
+
 ## Branching
 **`main`** is the integration branch: open feature work in short-lived branches and merge through pull requests. The historical integration branch is merged; do not point new work at obsolete `integration/*` names unless a maintainer reopens a dedicated integration line.
 
-### Backend without the React app
-The API surface is complete in Docker. There is no `frontend/` package yet, so you validate with contract tests, `pytest`, the scripts above, or API clients (for example the Postman collection under `docs/submission/`).
+### Backend-only validation
+If you are not running the React UI, validate the integrated stack with contract tests, `pytest`, the smoke scripts above, or API clients (for example the Postman collection under `docs/submission/`).
 
 ## Data Pipeline (Member 6)
 
