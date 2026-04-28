@@ -32,9 +32,10 @@ jobs:
         run: npm test
 
       - name: Validate Postman collection JSON
-        run: python3 - << 'PY'
-import json
-with open('docs/submission/LinkedInClone_API_Collection.postman_collection.json', 'r', encoding='utf-8') as f:
-    json.load(f)
-print('Postman collection JSON is valid')
-PY
+        run: |
+          python3 - << 'PY'
+          import json
+          with open('docs/submission/LinkedInClone_API_Collection.postman_collection.json', 'r', encoding='utf-8') as f:
+              json.load(f)
+          print('Postman collection JSON is valid')
+          PY

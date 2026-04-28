@@ -25,6 +25,22 @@ import { getMember } from './profile'
 
 const mockListByMember = new Map<string, MemberApplication[]>()
 
+function normalizeTrackerStatus(status: string | null | undefined): string {
+  if (status === 'reviewing') return 'under_review'
+  return status || 'submitted'
+}
+
+function normalizeRecruiterStatus(status: string | null | undefined): string {
+  return status || 'submitted'
+}
+
+function toBackendStatus(status: string): string {
+  if (status === 'under_review') return 'reviewing'
+  if (status === 'shortlisted') return 'interview'
+  if (status === 'accepted') return 'offer'
+  return status
+}
+
 /** Recruiter “applicants” list (mock): Easy Apply rows keyed by job_id, merged with seeded rows for catalog MOCK_JOBS only. */
 export type JobApplicantRow = Application & {
   member_name: string
@@ -101,8 +117,13 @@ export async function listMemberApplications(member_id: string): Promise<MemberA
     await mockDelay(200)
     return sortApps(getMockList(member_id))
   }
-  const response = await apiClient.post<MemberApplication[]>('/applications/byMember', { member_id })
-  return response.data
+  const response = await apiClient.post<unknown>('/applications/byMember', { member_id })
+  const data: any = response.data as any
+  const rows = Array.isArray(data) ? data : data && Array.isArray(data.results) ? data.results : data && Array.isArray(data.applications) ? data.applications : []
+  if (Array.isArray(rows)) {
+    return rows.map((row: any) => ({ ...row, status: normalizeTrackerStatus(row.status) })) as MemberApplication[]
+  }
+  return []
 }
 
 export function appendApplicationToMemberTracker(
@@ -151,7 +172,8 @@ export async function submitApplication(payload: SubmitApplicationPayload): Prom
       application_id: `app-${payload.member_id}-${payload.job_id}-${Date.now()}`,
       job_id: payload.job_id,
       member_id: payload.member_id,
-      resume_url: payload.resume_url,
+      resume_url: payload.resume_url ?? null,
+      resume_text: payload.resume_text ?? null,
       cover_letter: payload.answers ? JSON.stringify(payload.answers) : null,
       status: 'submitted',
       applied_at: now,
@@ -179,8 +201,33 @@ export async function listApplicationsByJob(job_id: string): Promise<JobApplican
     out.sort((a, b) => new Date(b.applied_at).getTime() - new Date(a.applied_at).getTime())
     return out
   }
-  const response = await apiClient.post<JobApplicantRow[]>('/applications/byJob', { job_id })
-  return response.data
+  const response = await apiClient.post<unknown>('/applications/byJob', { job_id })
+  const data: any = response.data as any
+  const raw =
+    Array.isArray(data) ? data : data && Array.isArray(data.results) ? data.results : data && Array.isArray(data.applications) ? data.applications : []
+  if (!Array.isArray(raw) || raw.length === 0) return []
+
+  const enriched = await Promise.all(
+    raw.map(async (row: any) => {
+      try {
+        const member = await getMember(String(row.member_id))
+        return {
+          ...row,
+          status: normalizeRecruiterStatus(row.status),
+          member_name: member.full_name || `Member ${String(row.member_id).slice(0, 6)}`,
+          headline: member.headline ?? '',
+        } as JobApplicantRow
+      } catch {
+        return {
+          ...row,
+          status: normalizeRecruiterStatus(row.status),
+          member_name: row.member_name || `Member ${String(row.member_id).slice(0, 6)}`,
+          headline: row.headline || '',
+        } as JobApplicantRow
+      }
+    }),
+  )
+  return enriched
 }
 
 export async function updateApplicationStatus(application_id: string, status: Application['status']): Promise<{ success: boolean }> {
@@ -196,7 +243,10 @@ export async function updateApplicationStatus(application_id: string, status: Ap
     }
     return { success: true }
   }
-  const response = await apiClient.post<{ success: boolean }>('/applications/updateStatus', { application_id, status })
+  const response = await apiClient.post<{ success: boolean }>('/applications/updateStatus', {
+    application_id,
+    status: toBackendStatus(status),
+  })
   return response.data
 }
 
@@ -237,12 +287,28 @@ export async function updateMemberApplicationStatus(
     list[i] = next
     return next
   }
-  const response = await apiClient.post<MemberApplication>('/applications/updateStatus', {
-    application_id,
-    status,
-    rejection_reason: rejectionReason,
-  })
-  return response.data
+  const backendStatus = toBackendStatus(status)
+  try {
+    const response = await apiClient.post<MemberApplication>('/applications/updateStatus', {
+      application_id,
+      status: backendStatus,
+      rejection_reason: rejectionReason,
+    })
+    return response.data
+  } catch (error: any) {
+    // Real backend enforces submitted -> reviewing -> interview.
+    // The tracker UI conceptually jumps straight to Interview, so bridge that here.
+    if (backendStatus === 'interview') {
+      await apiClient.post('/applications/updateStatus', { application_id, status: 'reviewing' })
+      const response = await apiClient.post<MemberApplication>('/applications/updateStatus', {
+        application_id,
+        status: 'interview',
+        rejection_reason: rejectionReason,
+      })
+      return response.data
+    }
+    throw error
+  }
 }
 
 export async function addApplicationNote(application_id: string, note: string): Promise<{ success: boolean }> {

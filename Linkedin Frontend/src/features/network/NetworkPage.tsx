@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { ingestEvent } from '../../api/analytics'
 import { acceptConnection, listConnections, listPendingInvitations, rejectConnection, requestConnection } from '../../api/connections'
+import { searchMembers } from '../../api/profile'
+import { USE_MOCKS } from '../../api/client'
 import { Avatar, Button, Card, Skeleton } from '../../components/ui'
 import { useActionToast } from '../../hooks/useActionToast'
 import { useAuthStore } from '../../store/authStore'
@@ -11,7 +13,6 @@ import { useProfileStore } from '../../store/profileStore'
 import { useGroupsStore } from '../../store/groupsStore'
 import { useEventsStore } from '../../store/eventsStore'
 import { useNewslettersStore } from '../../store/newslettersStore'
-import { seedDemoData } from '../../lib/mockData'
 
 type DiscoverPerson = {
   id: string
@@ -106,12 +107,27 @@ export default function NetworkPage(): JSX.Element {
     return ['SJSU Alumni Engineers', 'Frontend Guild', 'System Design Circle']
   }, [groups])
 
+  const suggestionsQuery = useQuery({
+    queryKey: ['discover-people', user?.member_id],
+    queryFn: async () => {
+      if (!user?.member_id) return []
+      const members = await searchMembers({ query: '' })
+      return members
+    },
+    enabled: Boolean(user?.member_id) && !USE_MOCKS,
+  })
+
   const discoverPeople = useMemo<DiscoverPerson[]>(() => {
-    const connectedIds = new Set((connectionsQuery.data ?? []).map((c) => c.addressee_member_id))
+    const connectedIds = new Set(
+      (connectionsQuery.data ?? [])
+        .filter((c) => c.status === 'accepted')
+        .map((c) => (c.requester_member_id === user?.member_id ? c.addressee_member_id : c.requester_member_id)),
+    )
     const selfId = user?.member_id ?? ''
     const dedup = new Set<string>()
-    return seedDemoData()
-      .members.filter((m) => {
+    const source = USE_MOCKS ? [] : suggestionsQuery.data ?? []
+    return source
+      .filter((m) => {
         if (!m.member_id || m.member_id === selfId) return false
         if (connectedIds.has(m.member_id)) return false
         if (dismissedPeople.includes(m.member_id)) return false
@@ -127,7 +143,7 @@ export default function NetworkPage(): JSX.Element {
         headline: m.headline ?? 'Professional',
         mutual: 2 + (index % 4),
       }))
-  }, [connectionsQuery.data, dismissedPeople, pending, user?.member_id])
+  }, [USE_MOCKS, connectionsQuery.data, dismissedPeople, pending, suggestionsQuery.data, user?.member_id])
 
   function handleConnect(person: { id: string; name: string }): void {
     setPending((prev) => [...prev, person.id])

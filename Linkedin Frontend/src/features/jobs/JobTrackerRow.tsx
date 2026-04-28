@@ -282,7 +282,11 @@ export function JobTrackerRow({ app, tab, onOpenNote, onOpenApplication, layout 
 
   const moreMenuRejected = (
     <Dropdown.Root>
-      <Dropdown.Trigger showEndChevron={false} className="!rounded-full !p-1.5 text-text-tertiary" aria-label="More">
+      <Dropdown.Trigger
+        showEndChevron={false}
+        className="!flex !h-8 !w-8 !items-center !justify-center !rounded-full !p-0 text-text-secondary hover:bg-black/5"
+        aria-label="More"
+      >
         <MoreHorizontal className="h-4 w-4" />
       </Dropdown.Trigger>
       <Dropdown.Content>
@@ -301,7 +305,11 @@ export function JobTrackerRow({ app, tab, onOpenNote, onOpenApplication, layout 
 
   const moreMenuFull = (
     <Dropdown.Root>
-      <Dropdown.Trigger showEndChevron={false} className="!rounded-full !p-1.5 text-text-tertiary" aria-label="More">
+      <Dropdown.Trigger
+        showEndChevron={false}
+        className="!flex !h-8 !w-8 !items-center !justify-center !rounded-full !p-0 text-text-secondary hover:bg-black/5"
+        aria-label="More"
+      >
         <MoreHorizontal className="h-4 w-4" />
       </Dropdown.Trigger>
       <Dropdown.Content>

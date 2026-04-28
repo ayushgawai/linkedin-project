@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Copy, Sparkles, Search, Loader2, CheckCircle2, XCircle, Circle, FileText, SlidersHorizontal, Play } from 'lucide-react'
+import { Copy, Sparkles, Search, Loader2, CheckCircle2, XCircle, Circle, FileText, SlidersHorizontal, Play, MessageSquareText, Users, Bot, Workflow, ChevronRight } from 'lucide-react'
 import { listJobsByRecruiter } from '../../api/jobs'
 import { approveOutput, getTaskStatus, listTasks, rejectOutput, startShortlistTask, type AiTask, type AiTaskStep } from '../../api/ai'
 import { useActionToast } from '../../hooks/useActionToast'
@@ -28,6 +28,29 @@ function durationLabel(startIso: string): string {
 
 function copyText(text: string): void {
   void navigator.clipboard.writeText(text)
+}
+
+function stepStatusLabel(status: AiTaskStep['status']): string {
+  return status.replace('_', ' ')
+}
+
+function agentPurpose(agentName: string): string {
+  if (agentName.includes('Resume Parser')) return 'Reads resumes and extracts structured candidate details.'
+  if (agentName.includes('Matching')) return 'Scores candidate-job fit using skills and profile context.'
+  if (agentName.includes('Outreach')) return 'Drafts recruiter outreach for strong matches.'
+  if (agentName.includes('Supervisor')) return 'Coordinates the workflow and decides what is ready to review.'
+  return 'Contributes to the shortlist workflow.'
+}
+
+function summarizeStep(step: AiTaskStep | undefined): string {
+  if (!step) return 'No output yet.'
+  if (step.draft_content?.trim()) return step.draft_content.trim()
+  if (typeof step.output === 'string' && step.output.trim()) return step.output.trim()
+  if (step.status === 'waiting_approval') return 'Waiting for recruiter approval.'
+  if (step.status === 'running') return `In progress${step.progress_pct ? ` (${step.progress_pct}%)` : ''}.`
+  if (step.status === 'completed' || step.status === 'approved') return 'Completed successfully.'
+  if (step.status === 'rejected') return 'Output was rejected.'
+  return 'Not started yet.'
 }
 
 export default function RecruiterAiPage(): JSX.Element {
@@ -58,10 +81,11 @@ export default function RecruiterAiPage(): JSX.Element {
   const [tone, setTone] = useState<'professional' | 'casual' | 'enthusiastic'>('professional')
   const [modalStep, setModalStep] = useState(1)
 
+  const recruiterId = user?.recruiter_id || user?.member_id
   const jobsQuery = useQuery({
-    queryKey: ['recruiter-jobs-ai', user?.member_id],
-    queryFn: () => listJobsByRecruiter(user?.member_id ?? ''),
-    enabled: Boolean(user),
+    queryKey: ['recruiter-jobs-ai', recruiterId],
+    queryFn: () => listJobsByRecruiter(recruiterId ?? ''),
+    enabled: Boolean(recruiterId),
   })
 
   const tasksQuery = useQuery({
@@ -85,7 +109,8 @@ export default function RecruiterAiPage(): JSX.Element {
       return
     }
 
-    const wsUrl = `${import.meta.env.VITE_WS_BASE_URL.replace(/\/$/, '')}/ai/tasks/${activeTask.task_id}?token=${encodeURIComponent(token)}`
+    const wsBase = (import.meta.env.VITE_AI_WS_BASE_URL || import.meta.env.VITE_WS_BASE_URL).replace(/\/$/, '')
+    const wsUrl = `${wsBase}/ai/tasks/${activeTask.task_id}?token=${encodeURIComponent(token)}`
 
     try {
       const ws = new WebSocket(wsUrl)
@@ -277,12 +302,28 @@ export default function RecruiterAiPage(): JSX.Element {
     return { asIs, withEdits, rejected }
   }, [activeTask?.steps, draftEdits])
 
+  const parsedTask = useMemo(() => {
+    const steps = activeTask?.steps ?? []
+    const resumeStep = steps.find((step) => step.agent_name.includes('Resume Parser'))
+    const matchStep = steps.find((step) => step.agent_name.includes('Matching'))
+    const outreachStep = steps.find((step) => step.agent_name.includes('Outreach'))
+    const supervisorStep = steps.find((step) => step.agent_name.includes('Supervisor'))
+    const waitingApprovals = steps.filter((step) => step.status === 'waiting_approval').length
+    const completedSteps = steps.filter((step) => ['completed', 'approved'].includes(step.status)).length
+    return { resumeStep, matchStep, outreachStep, supervisorStep, waitingApprovals, completedSteps }
+  }, [activeTask])
+
   return (
     <div className="grid grid-cols-12 gap-3 pb-6">
       <div className="col-span-12 lg:col-span-3">
         <Card>
           <Card.Header className="space-y-2">
-            <h2 className="text-lg font-semibold">Task history</h2>
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-lg font-semibold">Task history</h2>
+              <Button size="sm" onClick={() => setStartModalOpen(true)} leftIcon={<Play className="h-4 w-4" />}>
+                New task
+              </Button>
+            </div>
             <Input placeholder="Search tasks" value={search} onChange={(event) => setSearch(event.target.value)} leftIcon={<Search className="h-4 w-4" />} />
           </Card.Header>
           <Card.Body className="max-h-[calc(100vh-220px)] space-y-2 overflow-y-auto">
@@ -311,17 +352,27 @@ export default function RecruiterAiPage(): JSX.Element {
             <Card.Body className="space-y-4 p-6">
               <div className="rounded-xl bg-gradient-to-r from-brand-primary to-purple-600 p-5 text-white">
                 <div className="flex items-center gap-2"><Sparkles className="h-5 w-5" /><h1 className="text-2xl font-semibold">Recruiter Copilot</h1></div>
-                <p className="mt-1 text-sm text-white/90">Your AI hiring assistant</p>
+                <p className="mt-1 text-sm text-white/90">Use AI to shortlist candidates, understand fit, and prepare recruiter outreach.</p>
               </div>
 
               <div className="grid gap-3 md:grid-cols-3">
                 <button type="button" onClick={() => setStartModalOpen(true)} className="rounded-lg border border-border p-3 text-left hover:bg-black/5">
                   <p className="font-semibold">Shortlist candidates for a job</p>
-                  <p className="text-xs text-text-secondary">Start supervised multi-agent shortlist workflow</p>
+                  <p className="text-xs text-text-secondary">Runs parsing, matching, outreach drafting, and supervisor review.</p>
                 </button>
-                <div className="rounded-lg border border-border p-3"><p className="font-semibold">Draft outreach messages</p><p className="text-xs text-text-secondary">Auto-generate personalized outreach drafts</p></div>
-                <div className="rounded-lg border border-border p-3"><p className="font-semibold">Explain match score for an applicant</p><p className="text-xs text-text-secondary">Break down scoring rationale step-by-step</p></div>
+                <div className="rounded-lg border border-border p-3"><p className="font-semibold">Read match reasoning</p><p className="text-xs text-text-secondary">See what the matching agent concluded and why.</p></div>
+                <div className="rounded-lg border border-border p-3"><p className="font-semibold">Review outreach drafts</p><p className="text-xs text-text-secondary">Approve or edit recruiter messages before sending.</p></div>
               </div>
+
+              <Card className="border-dashed">
+                <Card.Body className="space-y-2 p-4 text-sm text-text-secondary">
+                  <p className="font-semibold text-text-primary">How to read this page</p>
+                  <p><strong>Resume Parser:</strong> extracts candidate facts from applications.</p>
+                  <p><strong>Matching Skill:</strong> explains why a candidate fits the job.</p>
+                  <p><strong>Outreach Draft:</strong> recruiter-ready message you can approve or edit.</p>
+                  <p><strong>Supervisor:</strong> coordinates the workflow and tells you what is ready.</p>
+                </Card.Body>
+              </Card>
 
               <div>
                 <h3 className="mb-2 text-sm font-semibold text-text-primary">Recent tasks</h3>
@@ -340,69 +391,158 @@ export default function RecruiterAiPage(): JSX.Element {
                       <span className="font-mono">trace_id: {activeTask.trace_id}</span>
                       <button type="button" onClick={() => copyText(activeTask.trace_id)} className="rounded p-1 hover:bg-black/5" aria-label="Copy trace id"><Copy className="h-3.5 w-3.5" /></button>
                     </div>
+                    <p className="mt-2 max-w-2xl text-sm text-text-secondary">
+                      This task combines four AI skills: parse applicant information, score fit against the job, draft recruiter outreach, and let the supervisor decide what needs approval.
+                    </p>
                   </div>
                   <div className="flex items-center gap-2">
                     {statusBadge(activeTask.status)}
                     {activeTask.status === 'running' ? <span className="text-xs text-text-secondary">{durationLabel(activeTask.created_at)}</span> : null}
                   </div>
                 </div>
+                <div className="grid gap-3 md:grid-cols-4">
+                  <div className="rounded-lg border border-border bg-surface p-3">
+                    <div className="flex items-center gap-2 text-text-secondary"><Workflow className="h-4 w-4" /><span className="text-xs font-semibold uppercase tracking-wide">Workflow</span></div>
+                    <p className="mt-2 text-2xl font-semibold text-text-primary">{parsedTask.completedSteps}/{activeTask.steps.length}</p>
+                    <p className="text-xs text-text-secondary">steps completed</p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-surface p-3">
+                    <div className="flex items-center gap-2 text-text-secondary"><Users className="h-4 w-4" /><span className="text-xs font-semibold uppercase tracking-wide">Candidates</span></div>
+                    <p className="mt-2 text-2xl font-semibold text-text-primary">{activeTask.final_output ? 1 : 0}</p>
+                    <p className="text-xs text-text-secondary">result bundle ready</p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-surface p-3">
+                    <div className="flex items-center gap-2 text-text-secondary"><MessageSquareText className="h-4 w-4" /><span className="text-xs font-semibold uppercase tracking-wide">Approvals</span></div>
+                    <p className="mt-2 text-2xl font-semibold text-text-primary">{parsedTask.waitingApprovals}</p>
+                    <p className="text-xs text-text-secondary">steps waiting on recruiter</p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-surface p-3">
+                    <div className="flex items-center gap-2 text-text-secondary"><Bot className="h-4 w-4" /><span className="text-xs font-semibold uppercase tracking-wide">Outcome</span></div>
+                    <p className="mt-2 text-sm font-semibold text-text-primary">{activeTask.final_output ?? 'Still processing'}</p>
+                    <p className="text-xs text-text-secondary">latest task result</p>
+                  </div>
+                </div>
               </Card.Body>
             </Card>
 
-            <div className="grid gap-3 md:grid-cols-[1fr_1fr]">
+            <div className="grid gap-3 md:grid-cols-[1.2fr_0.8fr]">
               <Card>
-                <Card.Body className="space-y-2 p-3">
-                  {activeTask.steps.map((step) => {
-                    const showApproval = step.status === 'waiting_approval'
-                    const draft = draftEdits[step.step_id] ?? step.draft_content ?? ''
-                    const changed = draft.trim() !== (step.draft_content ?? '').trim()
+                <Card.Header><h2 className="text-sm font-semibold">AI outputs</h2></Card.Header>
+                <Card.Body className="space-y-3 p-3">
+                  {[
+                    parsedTask.resumeStep,
+                    parsedTask.matchStep,
+                    parsedTask.outreachStep,
+                    parsedTask.supervisorStep,
+                  ].filter(Boolean).map((step) => {
+                    const item = step as AiTaskStep
+                    const showApproval = item.status === 'waiting_approval'
+                    const draft = draftEdits[item.step_id] ?? item.draft_content ?? ''
+                    const changed = draft.trim() !== (item.draft_content ?? '').trim()
                     return (
-                      <div key={step.step_id} className="overflow-hidden rounded-md border border-border transition-all duration-200">
-                        <div className="flex items-center justify-between gap-2 bg-surface px-3 py-2">
+                      <div key={item.step_id} className="overflow-hidden rounded-xl border border-border transition-all duration-200">
+                        <div className="flex items-start justify-between gap-3 bg-surface px-4 py-3">
                           <div>
-                            <p className="text-sm font-semibold text-text-primary">{step.step_index + 1}. {step.step_name}</p>
-                            <p className="text-xs text-text-secondary">{step.agent_name}</p>
+                            <p className="text-sm font-semibold text-text-primary">{item.step_name}</p>
+                            <p className="text-xs text-text-secondary">{item.agent_name}</p>
+                            <p className="mt-1 text-xs text-text-tertiary">{agentPurpose(item.agent_name)}</p>
                           </div>
-                          <div className="flex items-center gap-1 text-xs">
-                            {step.status === 'running' ? <Loader2 className="h-3.5 w-3.5 animate-spin text-brand-primary" /> : null}
-                            {step.status === 'completed' ? <CheckCircle2 className="h-3.5 w-3.5 text-success" /> : null}
-                            {step.status === 'rejected' ? <XCircle className="h-3.5 w-3.5 text-danger" /> : null}
-                            {step.status === 'pending' ? <Circle className="h-3.5 w-3.5 text-text-tertiary" /> : null}
-                            <span>{step.status}</span>
+                          <div className="flex items-center gap-1 text-xs text-text-secondary">
+                            {item.status === 'running' ? <Loader2 className="h-3.5 w-3.5 animate-spin text-brand-primary" /> : null}
+                            {item.status === 'completed' || item.status === 'approved' ? <CheckCircle2 className="h-3.5 w-3.5 text-success" /> : null}
+                            {item.status === 'rejected' ? <XCircle className="h-3.5 w-3.5 text-danger" /> : null}
+                            {item.status === 'pending' ? <Circle className="h-3.5 w-3.5 text-text-tertiary" /> : null}
+                            <span>{stepStatusLabel(item.status)}</span>
                           </div>
                         </div>
-                        {(step.output || showApproval || step.progress_pct) ? (
-                          <div className="space-y-2 px-3 py-2 text-sm">
-                            {step.progress_pct && step.status === 'running' ? (
-                              <div>
-                                <div className="h-1.5 rounded-full bg-black/10"><div className="h-full rounded-full bg-brand-primary transition-all" style={{ width: `${step.progress_pct}%` }} /></div>
-                              </div>
-                            ) : null}
-                            {step.output ? <p className="text-text-secondary">{step.output}</p> : null}
-                            {showApproval ? (
-                              <div className="space-y-2">
-                                <Textarea autoResize value={draft} onChange={(event) => setDraftEdits((prev) => ({ ...prev, [step.step_id]: event.target.value }))} />
-                                <div className="flex flex-wrap gap-2">
-                                  <Button size="sm" onClick={() => approveMutation.mutate({ step })}>Approve as-is</Button>
-                                  <Button size="sm" variant="secondary" disabled={!changed} onClick={() => approveMutation.mutate({ step, edited: draft })}>Approve with edits</Button>
-                                  <Button size="sm" variant="destructive" onClick={() => setRejectingStepId(step.step_id)}>Reject</Button>
-                                </div>
-                              </div>
-                            ) : null}
+                        <div className="space-y-3 px-4 py-3 text-sm">
+                          {item.progress_pct && item.status === 'running' ? (
+                            <div>
+                              <div className="h-1.5 rounded-full bg-black/10"><div className="h-full rounded-full bg-brand-primary transition-all" style={{ width: `${item.progress_pct}%` }} /></div>
+                            </div>
+                          ) : null}
+                          <div className="rounded-lg border border-border bg-white p-3">
+                            <p className="whitespace-pre-wrap text-text-secondary">{summarizeStep(item)}</p>
                           </div>
-                        ) : null}
+                          {showApproval ? (
+                            <div className="space-y-2">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Review draft</p>
+                              <Textarea autoResize value={draft} onChange={(event) => setDraftEdits((prev) => ({ ...prev, [item.step_id]: event.target.value }))} />
+                              <div className="flex flex-wrap gap-2">
+                                <Button size="sm" onClick={() => approveMutation.mutate({ step: item })}>Approve as-is</Button>
+                                <Button size="sm" variant="secondary" disabled={!changed} onClick={() => approveMutation.mutate({ step: item, edited: draft })}>Approve with edits</Button>
+                                <Button size="sm" variant="destructive" onClick={() => setRejectingStepId(item.step_id)}>Reject</Button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
                     )
                   })}
+                  {activeTask.steps.length === 0 ? <div className="rounded-lg border border-dashed border-border p-4 text-sm text-text-secondary">No step output is available yet.</div> : null}
                 </Card.Body>
               </Card>
 
-              <Card>
-                <Card.Header><h2 className="text-sm font-semibold">Live stream log</h2></Card.Header>
-                <Card.Body>
-                  <pre className="h-[420px] overflow-y-auto rounded-md bg-[#0B1220] p-3 font-mono text-xs text-[#D1E3FF]">{streamLog || 'Waiting for step updates...\n'}</pre>
-                </Card.Body>
-              </Card>
+              <div className="space-y-3">
+                <Card>
+                  <Card.Header><h2 className="text-sm font-semibold">How to read this task</h2></Card.Header>
+                  <Card.Body className="space-y-3 text-sm text-text-secondary">
+                    <div>
+                      <p className="font-semibold text-text-primary">Resume Parser Skill</p>
+                      <p>Look here for extracted candidate facts and resume-derived details.</p>
+                    </div>
+                    <div>
+                      <p className="font-semibold text-text-primary">Job-Candidate Matching Skill</p>
+                      <p>This explains why the AI thinks a candidate is a strong or weak fit.</p>
+                    </div>
+                    <div>
+                      <p className="font-semibold text-text-primary">Outreach Draft Generator</p>
+                      <p>This is recruiter-ready copy you can approve, edit, or reject.</p>
+                    </div>
+                    <div>
+                      <p className="font-semibold text-text-primary">Hiring Assistant Agent</p>
+                      <p>This is the workflow orchestrator and the final “ready for action” layer.</p>
+                    </div>
+                  </Card.Body>
+                </Card>
+
+                <Card>
+                  <Card.Header><h2 className="text-sm font-semibold">System details</h2></Card.Header>
+                  <Card.Body className="space-y-3">
+                    <div className="space-y-2">
+                      {agents.map((agent) => {
+                        const working = activeTask?.steps.some((step) => step.agent_name === agent && step.status === 'running')
+                        const done = activeTask?.steps.some((step) => step.agent_name === agent && ['completed', 'approved'].includes(step.status))
+                        return (
+                          <div key={agent} className="flex items-center gap-2 text-sm">
+                            <span className={`h-2.5 w-2.5 rounded-full ${working ? 'bg-brand-primary' : done ? 'bg-success' : 'bg-text-tertiary'}`} />
+                            <span>{agent}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    <div className="rounded-md bg-surface p-2 font-mono text-xs">ai.requests → supervisor → skills → ai.results</div>
+                    <Button size="sm" variant="secondary" onClick={() => setShowEvents((prev) => !prev)} rightIcon={<ChevronRight className={`h-4 w-4 transition-transform ${showEvents ? 'rotate-90' : ''}`} />}>
+                      {showEvents ? 'Hide debug details' : 'Show debug details'}
+                    </Button>
+                    {showEvents ? (
+                      <>
+                        <pre className="max-h-56 overflow-y-auto rounded-md bg-[#0B1220] p-2 font-mono text-[11px] text-[#D1E3FF]">{events.map((event) => `${new Date(event.ts).toLocaleTimeString()}  ${event.topic}  ${event.event}`).join('\n') || 'No events yet'}</pre>
+                        <pre className="h-[220px] overflow-y-auto rounded-md bg-[#0B1220] p-3 font-mono text-xs text-[#D1E3FF]">{streamLog || 'Waiting for step updates...\n'}</pre>
+                      </>
+                    ) : null}
+                  </Card.Body>
+                </Card>
+
+                <Card>
+                  <Card.Header><h2 className="text-sm font-semibold">Evaluation</h2></Card.Header>
+                  <Card.Body className="space-y-2 text-sm">
+                    <p>Matching quality score: <strong>{activeTask ? Math.min(100, 74 + activeTask.steps.filter((s) => s.status === 'completed').length * 6) : 0}</strong></p>
+                    <p>Approval rate:</p>
+                    <p className="text-xs text-text-secondary">{approvals.asIs} approved as-is / {approvals.withEdits} approved with edits / {approvals.rejected} rejected</p>
+                  </Card.Body>
+                </Card>
+              </div>
             </div>
 
             {confetti ? (
@@ -417,40 +557,17 @@ export default function RecruiterAiPage(): JSX.Element {
       </div>
 
       <div className="col-span-12 lg:col-span-3">
-        <div className="space-y-3">
+        {!activeTask ? (
           <Card>
-            <Card.Header><h2 className="text-sm font-semibold">Agents involved</h2></Card.Header>
-            <Card.Body className="space-y-2">
-              {agents.map((agent) => {
-                const working = activeTask?.steps.some((step) => step.agent_name === agent && step.status === 'running')
-                const done = activeTask?.steps.some((step) => step.agent_name === agent && ['completed', 'approved'].includes(step.status))
-                return (
-                  <div key={agent} className="flex items-center gap-2 text-sm">
-                    <span className={`h-2.5 w-2.5 rounded-full ${working ? 'bg-brand-primary' : done ? 'bg-success' : 'bg-text-tertiary'}`} />
-                    <span>{agent}</span>
-                  </div>
-                )
-              })}
+            <Card.Header><h2 className="text-sm font-semibold">What this page is for</h2></Card.Header>
+            <Card.Body className="space-y-3 text-sm text-text-secondary">
+              <p><strong className="text-text-primary">Hiring Assistant Agent</strong> orchestrates the workflow.</p>
+              <p><strong className="text-text-primary">Resume Parser Skill</strong> extracts structured candidate details.</p>
+              <p><strong className="text-text-primary">Job-Candidate Matching Skill</strong> checks fit.</p>
+              <p><strong className="text-text-primary">Outreach Draft Generator</strong> prepares recruiter messaging.</p>
             </Card.Body>
           </Card>
-
-          <Card>
-            <Card.Header className="flex items-center justify-between"><h2 className="text-sm font-semibold">Kafka topic flow</h2><button type="button" onClick={() => setShowEvents((prev) => !prev)} className="text-xs font-semibold text-brand-primary">{showEvents ? 'Hide events' : 'Show events'}</button></Card.Header>
-            <Card.Body className="space-y-2 text-xs">
-              <div className="rounded-md bg-surface p-2 font-mono">ai.requests → Supervisor → Skill topics → ai.results</div>
-              {showEvents ? <pre className="max-h-56 overflow-y-auto rounded-md bg-[#0B1220] p-2 font-mono text-[11px] text-[#D1E3FF]">{events.map((event) => `${new Date(event.ts).toLocaleTimeString()}  ${event.topic}  ${event.event}`).join('\n') || 'No events yet'}</pre> : null}
-            </Card.Body>
-          </Card>
-
-          <Card>
-            <Card.Header><h2 className="text-sm font-semibold">Evaluation</h2></Card.Header>
-            <Card.Body className="space-y-2 text-sm">
-              <p>Matching quality score: <strong>{activeTask ? Math.min(100, 74 + activeTask.steps.filter((s) => s.status === 'completed').length * 6) : 0}</strong></p>
-              <p>Approval rate:</p>
-              <p className="text-xs text-text-secondary">{approvals.asIs} approved as-is / {approvals.withEdits} approved with edits / {approvals.rejected} rejected</p>
-            </Card.Body>
-          </Card>
-        </div>
+        ) : null}
       </div>
 
       <Modal isOpen={startModalOpen} onClose={() => { setStartModalOpen(false); setModalStep(1) }} title="Start shortlist task" size="lg">

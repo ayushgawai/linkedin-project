@@ -3,6 +3,8 @@
 interface ImportMetaEnv {
   readonly VITE_API_BASE_URL: string
   readonly VITE_WS_BASE_URL: string
+  /** Optional: AI WebSocket origin for /ai/tasks/* streaming (defaults to VITE_WS_BASE_URL). */
+  readonly VITE_AI_WS_BASE_URL?: string
   readonly VITE_AI_BASE_URL: string
   readonly VITE_USE_MOCKS: string
   /** Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Web client ID */

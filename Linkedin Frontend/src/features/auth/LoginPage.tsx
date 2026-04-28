@@ -9,6 +9,7 @@ import { login } from '../../api/profile'
 import { Button, useToast } from '../../components/ui'
 import { useGoogleSignIn } from '../../hooks/useGoogleSignIn'
 import { useAuthStore } from '../../store/authStore'
+import { useProfileStore } from '../../store/profileStore'
 import { loginSchema, type LoginFormValues } from './schemas'
 import linkedInLogo from '../../assets/linkedin-logo.png'
 import googleLogo from '../../assets/google-logo.png'
@@ -18,6 +19,8 @@ export default function LoginPage(): JSX.Element {
   const { toast } = useToast()
   const setAuth = useAuthStore((state) => state.setAuth)
   const user = useAuthStore((state) => state.user)
+  const patchProfile = useProfileStore((state) => state.patchProfile)
+  const updateBasicInfo = useProfileStore((state) => state.updateBasicInfo)
   const [showPassword, setShowPassword] = useState(false)
 
   const {
@@ -35,6 +38,14 @@ export default function LoginPage(): JSX.Element {
     mutationFn: (values: LoginFormValues) => login(values.email, values.password),
     onSuccess: ({ token, user: authUser }) => {
       setAuth(token, authUser)
+      // Keep profile store aligned with the backend-authenticated id.
+      // Without this, profile edits (skills) can be written under a stale/random member_id,
+      // which makes Career Coach read "old" (empty) skills from the backend.
+      patchProfile({ member_id: authUser.member_id, email: authUser.email })
+      const parts = (authUser.full_name || '').trim().split(/\s+/).filter(Boolean)
+      if (parts.length) {
+        updateBasicInfo({ first_name: parts[0] ?? '', last_name: parts.slice(1).join(' ') })
+      }
       navigate(authUser.role === 'recruiter' ? '/recruiter' : '/feed')
     },
     onError: (error: { status?: number; message?: string }) => {

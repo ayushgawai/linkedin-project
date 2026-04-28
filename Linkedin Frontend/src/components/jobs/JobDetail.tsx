@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { Share2, MoreHorizontal } from 'lucide-react'
+import { Share2, MoreHorizontal, Sparkles } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { ingestEvent } from '../../api/analytics'
 import { closeJob, incrementJobViews } from '../../api/jobs'
@@ -22,6 +22,7 @@ export function JobDetail({ job, emitViewed = false }: JobDetailProps): JSX.Elem
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const isOwner = Boolean(user?.member_id && job.recruiter_id === user.member_id)
+  const companyName = (job.company_name ?? '').trim() || 'Company'
 
   const isSaved = useSavedJobsStore((s) => s.isSaved(job.job_id))
   const saveJob = useSavedJobsStore((s) => s.save)
@@ -89,11 +90,11 @@ export function JobDetail({ job, emitViewed = false }: JobDetailProps): JSX.Elem
         <Card.Body className="space-y-3 p-4">
           <div className="flex items-start gap-3">
             <div className="flex h-16 w-16 items-center justify-center rounded-md border border-[#ebe9e6] bg-[#f3f2ef] text-xl font-semibold text-[#0a66c2]">
-              {job.company_name.slice(0, 1).toUpperCase()}
+              {companyName.slice(0, 1).toUpperCase()}
             </div>
             <div className="flex-1">
               <h1 className="text-2xl font-semibold text-text-primary">{job.title}</h1>
-              <p className="text-sm text-text-secondary">{job.company_name}</p>
+              <p className="text-sm text-text-secondary">{companyName}</p>
               <p className="text-xs text-text-tertiary">
                 {job.location} · {job.work_mode} · {postedLabel} · {job.applicants_count} applicants
               </p>
@@ -106,7 +107,16 @@ export function JobDetail({ job, emitViewed = false }: JobDetailProps): JSX.Elem
                 View applicants
               </Button>
             ) : (
-              <Button onClick={() => setApplyOpen(true)}>Easy Apply</Button>
+              <>
+                <Button onClick={() => setApplyOpen(true)}>Easy Apply</Button>
+                <Button
+                  variant="secondary"
+                  leftIcon={<Sparkles className="h-4 w-4" />}
+                  onClick={() => navigate(`/coach?target_job_id=${encodeURIComponent(job.job_id)}`)}
+                >
+                  Career Coach
+                </Button>
+              </>
             )}
             <Button
               variant="secondary"
@@ -168,7 +178,12 @@ export function JobDetail({ job, emitViewed = false }: JobDetailProps): JSX.Elem
               </span>
             ))}
           </div>
-          <Button variant="secondary">See how your profile matches</Button>
+          <Button
+            variant="secondary"
+            onClick={() => navigate(`/coach?target_job_id=${encodeURIComponent(job.job_id)}`)}
+          >
+            See how your profile matches
+          </Button>
         </Card.Body>
       </Card>
 

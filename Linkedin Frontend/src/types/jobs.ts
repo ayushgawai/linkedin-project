@@ -56,7 +56,13 @@ export type UpdateJobPayload = Partial<JobRecord> & {
 export type SubmitApplicationPayload = {
   job_id: string
   member_id: string
-  resume_url: string
+  /** Optional public URL (rare in local dev). */
+  resume_url?: string | null
+  /**
+   * Resume content for local/dev: may be a data URL (base64) such as
+   * `data:application/pdf;base64,...` stored in application service `resume_text`.
+   */
+  resume_text?: string | null
   answers?: Record<string, string>
   contact_email: string
   contact_phone: string

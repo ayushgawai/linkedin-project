@@ -162,8 +162,13 @@ async def generate_coaching(
             "focuses on presentation quality rather than skill gaps."
         )
 
+    match_score = round(len(overlap) / len(job_skills), 4) if job_skills else 0.0
+
     return CoachResponse(
         member_id=member_id,
+        match_score=match_score,
+        matching_skills=overlap,
+        missing_skills=skills_to_add,
         resume_improvements=resume_improvements,
         headline_suggestion=headline_suggestion,
         skills_to_add=skills_to_add,

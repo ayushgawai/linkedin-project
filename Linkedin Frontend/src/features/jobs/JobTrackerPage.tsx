@@ -166,7 +166,7 @@ export default function JobTrackerPage(): JSX.Element {
         />
       </div>
 
-      <Card className="mb-0 overflow-hidden rounded-xl border border-border bg-white shadow-sm ring-1 ring-black/[0.04]">
+      <Card className="mb-0 overflow-visible rounded-xl border border-border bg-white shadow-sm ring-1 ring-black/[0.04]">
         <Card.Body className="p-0">
           <div className="hidden grid-cols-12 gap-2 border-b border-border px-4 pb-2 pt-4 lg:grid">
             <div className="col-span-5 text-sm font-semibold text-text-secondary">Jobs</div>

@@ -6,9 +6,13 @@ function clone(value) {
 
 export function createProfileMemoryRepository(seed = {}) {
   const members = new Map();
+  const recruiters = new Map();
 
   for (const member of seed.members || []) {
     members.set(member.member_id, clone(member));
+  }
+  for (const recruiter of seed.recruiters || []) {
+    recruiters.set(recruiter.recruiter_id, clone(recruiter));
   }
 
   return {
@@ -34,6 +38,66 @@ export function createProfileMemoryRepository(seed = {}) {
       };
       members.set(member.member_id, member);
       return clone(member);
+    },
+
+    async createRecruiter(input) {
+      for (const existing of recruiters.values()) {
+        if (existing.email.toLowerCase() === input.email.toLowerCase()) {
+          const error = new Error('duplicate');
+          error.code = 'DUPLICATE_EMAIL';
+          throw error;
+        }
+      }
+      const recruiter = {
+        recruiter_id: randomUUID(),
+        company_id: randomUUID(),
+        name: input.full_name || 'Recruiter',
+        email: input.email,
+        phone: null,
+        company_name: input.company_name || 'Demo Company',
+        company_industry: input.company_industry || null,
+        company_size: input.company_size || null,
+        role: 'recruiter',
+        access_level: 'recruiter',
+        created_at: new Date().toISOString()
+      };
+      recruiters.set(recruiter.recruiter_id, recruiter);
+      return clone(recruiter);
+    },
+
+    async findUserByEmail(email) {
+      for (const member of members.values()) {
+        if (member.email.toLowerCase() === String(email).toLowerCase()) {
+          return { role: 'member', user: clone(member) };
+        }
+      }
+      for (const recruiter of recruiters.values()) {
+        if (recruiter.email.toLowerCase() === String(email).toLowerCase()) {
+          return {
+            role: 'recruiter',
+            user: {
+              member_id: recruiter.recruiter_id,
+              first_name: recruiter.name.split(' ')[0] || recruiter.name,
+              last_name: recruiter.name.split(' ').slice(1).join(' ') || '',
+              full_name: recruiter.name,
+              email: recruiter.email,
+              phone: recruiter.phone,
+              location: null,
+              headline: null,
+              about: null,
+              profile_photo_url: null,
+              skills: [],
+              experience: [],
+              education: [],
+              connections_count: 0,
+              created_at: recruiter.created_at,
+              updated_at: recruiter.created_at,
+              role: 'recruiter'
+            }
+          };
+        }
+      }
+      return null;
     },
 
     async getMember(memberId) {
@@ -112,6 +176,13 @@ export function createJobMemoryRepository(seed = {}) {
       return 'connected';
     },
 
+    // Dev helper: allow registering recruiters at runtime in the in-memory stack.
+    // This is used by the dev gateway to keep profile/job consistent without MySQL.
+    addRecruiter(recruiter) {
+      if (!recruiter?.recruiter_id) return;
+      recruiters.set(recruiter.recruiter_id, clone(recruiter));
+    },
+
     async createJob(input) {
       if (!recruiters.has(input.recruiter_id)) {
         return { recruiterMissing: true };
@@ -130,6 +201,20 @@ export function createJobMemoryRepository(seed = {}) {
 
     async getJob(jobId) {
       return jobs.has(jobId) ? clone(jobs.get(jobId)) : null;
+    },
+
+    async incrementViews(jobId) {
+      const job = jobs.get(jobId);
+      if (!job) return;
+      job.views_count = (job.views_count || 0) + 1;
+      jobs.set(jobId, job);
+    },
+
+    async incrementApplicants(jobId) {
+      const job = jobs.get(jobId);
+      if (!job) return;
+      job.applicants_count = (job.applicants_count || 0) + 1;
+      jobs.set(jobId, job);
     },
 
     async updateJob(jobId, changes) {
@@ -239,6 +324,16 @@ export function createApplicationMemoryRepository(seed = {}) {
   return {
     async health() {
       return 'connected';
+    },
+
+    addJob(job) {
+      if (!job?.job_id) return;
+      jobs.set(job.job_id, clone(job));
+    },
+
+    addMember(member) {
+      if (!member?.member_id) return;
+      members.set(member.member_id, clone(member));
     },
 
     async submit(input) {

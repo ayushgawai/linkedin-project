@@ -19,6 +19,7 @@ export type MessageRecord = {
   thread_id: string
   sender_id: string
   sender_name: string
+  sender_profile_photo_url?: string | null
   text: string
   sent_at: string
   status: 'sending' | 'sent' | 'delivered' | 'read' | 'failed'

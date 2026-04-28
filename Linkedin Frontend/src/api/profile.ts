@@ -37,6 +37,48 @@ type SearchMembersFilters = {
   skills?: string[]
 }
 
+function normalizeMember(raw: any): Member {
+  const now = new Date().toISOString()
+  const first = typeof raw?.first_name === 'string' ? raw.first_name : ''
+  const last = typeof raw?.last_name === 'string' ? raw.last_name : ''
+  const full =
+    (typeof raw?.full_name === 'string' && raw.full_name.trim()) ||
+    `${first} ${last}`.trim() ||
+    'Member'
+  return {
+    member_id: String(raw?.member_id ?? ''),
+    email: String(raw?.email ?? ''),
+    full_name: full,
+    role: raw?.role,
+    headline: raw?.headline ?? null,
+    bio: raw?.bio ?? raw?.about ?? null,
+    location: raw?.location ?? null,
+    skills: Array.isArray(raw?.skills) ? raw.skills : [],
+    profile_photo_url: raw?.profile_photo_url ?? null,
+    cover_photo_url: raw?.cover_photo_url ?? null,
+    is_premium: raw?.is_premium,
+    connections_count: raw?.connections_count ?? 0,
+    followers_count: raw?.followers_count ?? 0,
+    profile_views: raw?.profile_views ?? 0,
+    post_impressions: raw?.post_impressions ?? 0,
+    search_appearances: raw?.search_appearances ?? 0,
+    is_open_to_work: raw?.is_open_to_work ?? false,
+    open_to_work_details: raw?.open_to_work_details,
+    phone: raw?.phone ?? null,
+    public_profile_url: raw?.public_profile_url ?? null,
+    experiences: Array.isArray(raw?.experiences) ? raw.experiences : [],
+    educations: Array.isArray(raw?.educations) ? raw.educations : [],
+    licenses: Array.isArray(raw?.licenses) ? raw.licenses : [],
+    projects: Array.isArray(raw?.projects) ? raw.projects : [],
+    courses: Array.isArray(raw?.courses) ? raw.courses : [],
+    featured: Array.isArray(raw?.featured) ? raw.featured : [],
+    activity_posts: Array.isArray(raw?.activity_posts) ? raw.activity_posts : [],
+    interests: raw?.interests,
+    created_at: String(raw?.created_at ?? now),
+    updated_at: String(raw?.updated_at ?? now),
+  }
+}
+
 function memberSkillsToStoreSkills(skills: string[] | undefined): Skill[] {
   return (skills ?? []).filter(Boolean).map((name) => ({ id: makeId('skill'), name }))
 }
@@ -141,6 +183,9 @@ export async function signup(payload: SignupPayload): Promise<AuthResponse> {
       } as Member,
     }
   }
+  // Recruiter signup lives in Profile service at /recruiters/create (returns token+user),
+  // while recruiter CRUD lives in Job service at /recruiters.
+  // Members support both POST /members and /members/create; keep legacy endpoint.
   const endpoint = payload.role === 'recruiter' ? '/recruiters/create' : '/members/create'
   const response = await apiClient.post<AuthResponse>(endpoint, payload)
   return response.data
@@ -160,7 +205,7 @@ export async function getMember(member_id: string): Promise<Member> {
     return Promise.reject({ status: 404, message: 'Profile not found' })
   }
   const response = await apiClient.post<Member>('/members/get', { member_id })
-  return response.data
+  return normalizeMember(response.data as any)
 }
 
 export async function updateMember(member_id: string, fields: Partial<Member>): Promise<Member> {
@@ -170,7 +215,7 @@ export async function updateMember(member_id: string, fields: Partial<Member>): 
     return toMemberProfile(useProfileStore.getState().profile)
   }
   const response = await apiClient.post<Member>('/members/update', { member_id, ...fields })
-  return response.data
+  return normalizeMember(response.data as any)
 }
 
 export async function searchMembers(filters: SearchMembersFilters): Promise<Member[]> {
@@ -195,8 +240,17 @@ export async function searchMembers(filters: SearchMembersFilters): Promise<Memb
       return queryMatch && locationMatch && skillsMatch
     })
   }
-  const response = await apiClient.post<Member[]>('/members/search', filters)
-  return response.data
+  // Backend expects { keyword, location, skill } (not { query, skills[] }).
+  const payload: Record<string, unknown> = {
+    keyword: filters.query,
+    location: filters.location,
+    skill: Array.isArray(filters.skills) && filters.skills.length > 0 ? filters.skills[0] : undefined,
+  }
+  const response = await apiClient.post<unknown>('/members/search', payload)
+  const data: any = response.data as any
+  if (Array.isArray(data)) return (data as any[]).map(normalizeMember)
+  if (data && Array.isArray(data.results)) return (data.results as any[]).map(normalizeMember)
+  return []
 }
 
 export async function getCurrentMember(member_id: string): Promise<Member> {

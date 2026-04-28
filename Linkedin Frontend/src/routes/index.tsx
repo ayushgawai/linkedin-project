@@ -39,6 +39,7 @@ const RecruiterJobsPage = lazy(() => import('../features/recruiter/RecruiterJobs
 const RecruiterJobFormPage = lazy(() => import('../features/recruiter/RecruiterJobFormPage'))
 const RecruiterApplicantsPage = lazy(() => import('../features/recruiter/RecruiterApplicantsPage'))
 const RecruiterAiPage = lazy(() => import('../features/recruiter/RecruiterAiPage'))
+const CareerCoachPage = lazy(() => import('../features/ai/CareerCoachPage'))
 const SettingsPage = lazy(() => import('./RoutePlaceholders').then((m) => ({ default: m.SettingsPage })))
 const SavedPage = lazy(() => import('../features/saved/SavedPage'))
 const GroupsPage = lazy(() => import('../features/groups/GroupsPage'))
@@ -142,6 +143,7 @@ export const router = createBrowserRouter([
           { path: 'analytics', element: <LazyPage component={AnalyticsPage} /> },
           { path: 'help', element: <LazyPage component={HelpCenterPage} /> },
           { path: 'learning', element: <LazyPage component={HelpCenterPage} /> },
+          { path: 'coach', element: <LazyPage component={CareerCoachPage} /> },
           { path: 'mynetwork/invitations', element: <LazyPage component={NetworkInvitationsPage} /> },
           { path: 'companies/:companyId', element: <LazyPage component={CompanyProfilePage} /> },
           { path: 'settings', element: <LazyPage component={SettingsPage} /> },

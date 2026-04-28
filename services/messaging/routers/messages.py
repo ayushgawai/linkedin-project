@@ -10,7 +10,8 @@ import logging
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Optional
 
 from database import get_db
 from models import Message, ThreadParticipant, OutboxEvent
@@ -25,18 +26,38 @@ router = APIRouter()
 class SendMessageRequest(BaseModel):
     thread_id: str
     sender_id: str
-    message_text: str
+    text: Optional[str] = None
+    message_text: Optional[str] = None
+    idempotency_key: Optional[str] = None
+    image_url: Optional[str] = None
+    attachment_url: Optional[str] = None
+    attachment_filename: Optional[str] = None
 
 class ListMessagesRequest(BaseModel):
     thread_id: str
     page: int = 1
-    page_size: int = 50
+    page_size: int = Field(default=50, alias="pageSize")
+
+
+class MarkReadRequest(BaseModel):
+    thread_id: str
+    reader_id: str
+
+
+class EditMessageRequest(BaseModel):
+    thread_id: str
+    message_id: str
+    editor_id: str
+    text: str
+
+
+class DeleteMessageRequest(BaseModel):
+    thread_id: str
+    message_id: str
+    user_id: str
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
-
-def success(data: dict) -> dict:
-    return {"success": True, "data": data, "trace_id": str(uuid.uuid4())}
 
 def error(code: str, message: str, status: int = 400):
     from fastapi import HTTPException
@@ -76,8 +97,8 @@ def send_message(body: SendMessageRequest, db: Session = Depends(get_db)):
         else:
             error("FORBIDDEN", "Sender is not a participant in this thread.", 403)
 
-    # Validate message content
-    if not body.message_text or not body.message_text.strip():
+    message_text = (body.text or body.message_text or "").strip()
+    if not message_text:
         error("VALIDATION_ERROR", "message_text cannot be empty.")
 
     # Write message to DB
@@ -86,7 +107,7 @@ def send_message(body: SendMessageRequest, db: Session = Depends(get_db)):
         message_id=message_id,
         thread_id=body.thread_id,
         sender_id=body.sender_id,
-        message_text=body.message_text.strip(),
+        message_text=message_text,
     )
     db.add(msg)
     db.commit()
@@ -104,7 +125,11 @@ def send_message(body: SendMessageRequest, db: Session = Depends(get_db)):
             "message_id": message_id,
             "thread_id": body.thread_id,
             "sender_id": body.sender_id,
-            "message_text": body.message_text.strip(),
+            "message_text": message_text,
+            "idempotency_key": body.idempotency_key or message_id,
+            "image_url": body.image_url,
+            "attachment_url": body.attachment_url,
+            "attachment_filename": body.attachment_filename,
         },
     )
 
@@ -121,9 +146,33 @@ def send_message(body: SendMessageRequest, db: Session = Depends(get_db)):
         db.add(outbox_entry)
         db.commit()
         # Still return 201 — message is in DB, will be delivered via outbox poller
-        return success({"message_id": message_id, "kafka_status": "queued_in_outbox"})
+        return {
+            "message_id": message_id,
+            "thread_id": body.thread_id,
+            "sender_id": body.sender_id,
+            "sender_name": f"Member {body.sender_id[:8]}",
+            "text": message_text,
+            "sent_at": msg.sent_at.isoformat() if msg.sent_at else None,
+            "status": "sent",
+            "idempotency_key": body.idempotency_key or message_id,
+            "image_url": body.image_url,
+            "attachment_url": body.attachment_url,
+            "attachment_filename": body.attachment_filename,
+        }
 
-    return success({"message_id": message_id, "kafka_status": "delivered"})
+    return {
+        "message_id": message_id,
+        "thread_id": body.thread_id,
+        "sender_id": body.sender_id,
+        "sender_name": f"Member {body.sender_id[:8]}",
+        "text": message_text,
+        "sent_at": msg.sent_at.isoformat() if msg.sent_at else None,
+        "status": "delivered",
+        "idempotency_key": body.idempotency_key or message_id,
+        "image_url": body.image_url,
+        "attachment_url": body.attachment_url,
+        "attachment_filename": body.attachment_filename,
+    }
 
 
 @router.post("/list")
@@ -146,28 +195,84 @@ def list_messages(body: ListMessagesRequest, db: Session = Depends(get_db)):
         .limit(body.page_size)
     ).scalars().all()
 
-    total = db.execute(
-        select(Message).where(Message.thread_id == body.thread_id)
-    ).scalars().__class__
-
-    # Count total
     from sqlalchemy import func
     total_count = db.execute(
         select(func.count()).select_from(Message).where(Message.thread_id == body.thread_id)
     ).scalar()
 
-    return success({
-        "messages": [
-            {
-                "message_id": m.message_id,
-                "thread_id": m.thread_id,
-                "sender_id": m.sender_id,
-                "message_text": m.message_text,
-                "sent_at": m.sent_at.isoformat() if m.sent_at else None,
-            }
-            for m in messages
-        ],
-        "total": total_count,
-        "page": body.page,
-        "page_size": body.page_size,
-    })
+    returned = [
+        {
+            "message_id": m.message_id,
+            "thread_id": m.thread_id,
+            "sender_id": m.sender_id,
+            "sender_name": f"Member {m.sender_id[:8]}",
+            "text": m.message_text,
+            "sent_at": m.sent_at.isoformat() if m.sent_at else None,
+            "status": "delivered",
+        }
+        for m in messages
+    ]
+
+    return {
+        "messages": returned,
+        "has_more": (offset + len(returned)) < (total_count or 0),
+    }
+
+
+@router.post("/markRead")
+def mark_read(body: MarkReadRequest, db: Session = Depends(get_db)):
+    # Compatibility endpoint for frontend; no-op until unread tracking is persisted.
+    thread_exists = db.execute(
+        select(ThreadParticipant).where(ThreadParticipant.thread_id == body.thread_id)
+    ).first()
+    if not thread_exists:
+        error("THREAD_NOT_FOUND", f"Thread {body.thread_id} not found.", 404)
+    return {"ok": True}
+
+
+@router.post("/edit")
+def edit_message(body: EditMessageRequest, db: Session = Depends(get_db)):
+    message = db.execute(
+        select(Message).where(
+            Message.message_id == body.message_id,
+            Message.thread_id == body.thread_id,
+        )
+    ).scalar_one_or_none()
+    if not message:
+        error("MESSAGE_NOT_FOUND", f"Message {body.message_id} not found.", 404)
+    if message.sender_id != body.editor_id:
+        error("FORBIDDEN", "Only sender can edit this message.", 403)
+    if not body.text.strip():
+        error("VALIDATION_ERROR", "text cannot be empty.")
+
+    message.message_text = body.text.strip()
+    db.commit()
+    db.refresh(message)
+    return {
+        "message_id": message.message_id,
+        "thread_id": message.thread_id,
+        "sender_id": message.sender_id,
+        "sender_name": f"Member {message.sender_id[:8]}",
+        "text": message.message_text,
+        "sent_at": message.sent_at.isoformat() if message.sent_at else None,
+        "edited_at": message.sent_at.isoformat() if message.sent_at else None,
+        "status": "delivered",
+    }
+
+
+@router.post("/delete")
+def delete_message(body: DeleteMessageRequest, db: Session = Depends(get_db)):
+    message = db.execute(
+        select(Message).where(
+            Message.message_id == body.message_id,
+            Message.thread_id == body.thread_id,
+        )
+    ).scalar_one_or_none()
+    if not message:
+        error("MESSAGE_NOT_FOUND", f"Message {body.message_id} not found.", 404)
+    if message.sender_id != body.user_id:
+        error("FORBIDDEN", "Only sender can delete this message.", 403)
+
+    db.delete(message)
+    db.commit()
+    return {"ok": True}

@@ -9,6 +9,9 @@ import { publishOrOutbox } from '../../shared/src/outbox.js';
 import { buildEnvelope, isKafkaConnected } from '../../shared/src/kafka.js';
 
 const VALID_TRANSITIONS = {
+  // Enforce a simple state machine (aligned with pytest + API contract):
+  // submitted -> reviewing -> interview -> offer
+  // Any status can move to rejected *except* offer (terminal for demo).
   submitted: new Set(['reviewing', 'rejected']),
   reviewing: new Set(['interview', 'rejected']),
   interview: new Set(['offer', 'rejected']),
@@ -193,6 +196,150 @@ export function createApplicationApp({ repository }) {
     res.json({ status: db === 'connected' ? 'ok' : 'degraded', service: 'application', db, kafka: kafkaOk ? 'connected' : 'disconnected' });
   });
 
+  // ── REST compatibility (pytest) ──────────────────────────────────────────────
+  // The professor contract uses POST-only RPC endpoints under /applications/*.
+  // The test suite calls REST endpoints. Support both by delegating to the same repository.
+
+  app.post('/applications', async (req, res) => {
+    try {
+      const created = await repository.submit(validateSubmitPayload(req.body));
+      if (created.missing) {
+        return sendError(res, 404, created.missing, created.missing === 'JOB_NOT_FOUND' ? 'job was not found' : 'member was not found');
+      }
+      if (created.conflict) {
+        return sendError(res, 409, created.conflict, created.conflict === 'JOB_CLOSED' ? 'job is closed' : 'member has already applied');
+      }
+
+      publishOrOutbox('application.submitted', buildEnvelope({
+        eventType: 'application.submitted',
+        actorId: req.body.member_id,
+        entityType: 'application',
+        entityId: created.application_id,
+        payload: { application_id: created.application_id, job_id: req.body.job_id, member_id: req.body.member_id }
+      })).catch(() => {});
+
+      return sendSuccess(res, created, 201);
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
+  app.get('/applications/:application_id', async (req, res) => {
+    try {
+      const application = await repository.getApplication(requireString(req.params.application_id, 'application_id'));
+      if (!application) {
+        return sendError(res, 404, 'NOT_FOUND', 'application was not found');
+      }
+      return sendSuccess(res, application);
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
+  app.get('/applications', async (req, res) => {
+    try {
+      const job_id = typeof req.query?.job_id === 'string' ? req.query.job_id : null;
+      const member_id = typeof req.query?.member_id === 'string' ? req.query.member_id : null;
+
+      const page = req.query?.page ? Number(req.query.page) : 1;
+      const limit = req.query?.limit ? Number(req.query.limit) : 20;
+      const safePage = Number.isFinite(page) && page > 0 ? page : 1;
+      const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(limit, 100) : 20;
+
+      if (!job_id && !member_id) {
+        return sendError(res, 400, 'VALIDATION_ERROR', 'job_id or member_id query param is required');
+      }
+
+      const result = job_id
+        ? await repository.listByJob(job_id, safePage, safeLimit)
+        : await repository.listByMember(member_id, safePage, safeLimit);
+
+      return sendSuccess(res, { items: result.results || [], total: result.total ?? 0, page: result.page ?? safePage, limit: safeLimit });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
+  app.patch('/applications/:application_id/status', async (req, res) => {
+    try {
+      const applicationId = requireString(req.params.application_id, 'application_id');
+      const status = requireString(req.body.status, 'status');
+      const note = optionalString(req.body.note) || optionalString(req.body.rejection_reason);
+
+      if (!VALID_APPLICATION_STATUSES.has(status)) {
+        return sendError(res, 400, 'VALIDATION_ERROR', 'status must be a valid application status', {
+          field: 'status',
+          allowed: [...VALID_APPLICATION_STATUSES]
+        });
+      }
+
+      const current = await repository.getApplication(applicationId);
+      if (!current) {
+        return sendError(res, 404, 'NOT_FOUND', 'application was not found');
+      }
+
+      if (!VALID_TRANSITIONS[current.status]?.has(status)) {
+        return sendError(res, 400, 'INVALID_STATUS_TRANSITION', 'invalid application status transition', {
+          from: current.status,
+          to: status
+        });
+      }
+
+      await repository.updateStatus(applicationId, status, note);
+
+      publishOrOutbox('application.status.updated', buildEnvelope({
+        eventType: 'application.status.updated',
+        actorId: 'system',
+        entityType: 'application',
+        entityId: applicationId,
+        payload: { application_id: applicationId, from: current.status, to: status }
+      })).catch(() => {});
+
+      const updated = await repository.getApplication(applicationId);
+      return sendSuccess(res, updated);
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
+  app.post('/applications/:application_id/notes', async (req, res) => {
+    try {
+      const applicationId = requireString(req.params.application_id, 'application_id');
+      const recruiterId = requireString(req.body.recruiter_id, 'recruiter_id');
+      const noteText = requireString(req.body.note_text, 'note_text');
+      const note = await repository.addNote(applicationId, recruiterId, noteText);
+      if (!note) {
+        return sendError(res, 404, 'NOT_FOUND', 'application was not found');
+      }
+      return sendSuccess(res, note, 201);
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
+  // Dev-only: allow registering jobs/members in memory-mode so the application service
+  // can validate existence without MySQL.
+  app.post('/__dev/registerJob', async (req, res) => {
+    try {
+      const job_id = requireString(req.body.job_id, 'job_id');
+      const status = req.body.status === 'closed' ? 'closed' : 'open';
+      repository.addJob?.({ job_id, status });
+      return sendSuccess(res, { registered: true });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
+  app.post('/__dev/registerMember', async (req, res) => {
+    try {
+      const member_id = requireString(req.body.member_id, 'member_id');
+      repository.addMember?.({ member_id });
+      return sendSuccess(res, { registered: true });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
   app.post('/applications/submit', async (req, res) => {
     try {
       const created = await repository.submit(validateSubmitPayload(req.body));
@@ -253,7 +400,7 @@ export function createApplicationApp({ repository }) {
     try {
       const applicationId = requireString(req.body.application_id, 'application_id');
       const status = requireString(req.body.status, 'status');
-      const note = optionalString(req.body.note);
+      const note = optionalString(req.body.note) || optionalString(req.body.rejection_reason);
       if (!VALID_APPLICATION_STATUSES.has(status)) {
         return sendError(res, 400, 'VALIDATION_ERROR', 'status must be a valid application status', {
           field: 'status',
@@ -280,7 +427,7 @@ export function createApplicationApp({ repository }) {
         payload: { application_id: applicationId, from: current.status, to: status }
       })).catch(() => {});
 
-      return sendSuccess(res, result);
+      return sendSuccess(res, { success: true, ...result });
     } catch (error) {
       return handleError(res, error);
     }
@@ -289,13 +436,14 @@ export function createApplicationApp({ repository }) {
   app.post('/applications/addNote', async (req, res) => {
     try {
       const applicationId = requireString(req.body.application_id, 'application_id');
-      const recruiterId = requireString(req.body.recruiter_id, 'recruiter_id');
-      const noteText = requireString(req.body.note_text, 'note_text');
+      // Frontend currently sends { application_id, note } while professor spec uses recruiter_id + note_text.
+      const recruiterId = optionalString(req.body.recruiter_id) || 'unknown';
+      const noteText = req.body.note_text ? requireString(req.body.note_text, 'note_text') : requireString(req.body.note, 'note');
       const note = await repository.addNote(applicationId, recruiterId, noteText);
       if (!note) {
         throw new NotFoundError('APPLICATION_NOT_FOUND', 'application was not found');
       }
-      return sendSuccess(res, { note_id: note.note_id });
+      return sendSuccess(res, { success: true, note_id: note.note_id });
     } catch (error) {
       return handleError(res, error);
     }

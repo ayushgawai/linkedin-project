@@ -10,34 +10,34 @@ function RouteMeta(): JSX.Element {
 
   const title =
     path.startsWith('/feed')
-      ? 'Feed • LinkedIn Clone'
+      ? 'Feed • LinkedIn'
       : path.startsWith('/in/')
-        ? 'Profile • LinkedIn Clone'
+        ? 'Profile • LinkedIn'
         : path.startsWith('/jobs/')
-          ? 'Job • LinkedIn Clone'
+          ? 'Job • LinkedIn'
           : path.startsWith('/jobs')
-            ? 'Jobs • LinkedIn Clone'
+            ? 'Jobs • LinkedIn'
             : path.startsWith('/messaging')
-              ? 'Messaging • LinkedIn Clone'
+              ? 'Messaging • LinkedIn'
               : path.startsWith('/mynetwork')
-                ? 'My Network • LinkedIn Clone'
+                ? 'My Network • LinkedIn'
                 : path.startsWith('/notifications')
-                  ? 'Notifications • LinkedIn Clone'
+                  ? 'Notifications • LinkedIn'
                     : path.startsWith('/analytics')
-                    ? 'Analytics • LinkedIn Clone'
+                    ? 'Analytics • LinkedIn'
                     : path.startsWith('/help') || path.startsWith('/learning')
-                      ? 'Help Center • LinkedIn Clone'
+                      ? 'Help Center • LinkedIn'
                     : path.startsWith('/job-posting-activity')
-            ? 'Job posting • LinkedIn Clone'
+            ? 'Job posting • LinkedIn'
             : path.startsWith('/recruiter/ai')
-                      ? 'AI Copilot • LinkedIn Clone'
+                      ? 'AI Copilot • LinkedIn'
                       : path.startsWith('/recruiter')
-                        ? 'Recruiter • LinkedIn Clone'
+                        ? 'Recruiter • LinkedIn'
                         : path.startsWith('/login')
-                          ? 'Sign in • LinkedIn Clone'
+                          ? 'Sign in • LinkedIn'
                           : path.startsWith('/signup')
-                            ? 'Join • LinkedIn Clone'
-                            : 'LinkedIn Clone'
+                            ? 'Join • LinkedIn'
+                            : 'LinkedIn'
 
   const description = 'LinkedIn Clone frontend for a distributed systems class project.'
 
