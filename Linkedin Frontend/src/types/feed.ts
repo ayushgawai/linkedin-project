@@ -5,6 +5,8 @@ export type PostMediaType = 'text' | 'image' | 'article' | 'poll'
 
 export type PostComment = {
   comment_id: string
+  /** When set, comment author links to profile. */
+  author_member_id?: string | null
   author_name: string
   author_headline: string
   author_avatar_url: string | null

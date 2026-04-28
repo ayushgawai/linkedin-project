@@ -249,6 +249,7 @@ const UpdateSchema = z.object({
   about: z.string().nullable().optional(),
   // Frontend uses base64 data URLs for local uploads; accept any string.
   profile_photo_url: z.string().max(2000).nullable().optional(),
+  skills: z.array(z.string().min(1).max(100)).optional(),
 });
 
 async function handleUpdateMember(req, res, next) {
@@ -259,29 +260,64 @@ async function handleUpdateMember(req, res, next) {
     if (entries.length === 0) {
       throw new ApiError(400, 'VALIDATION_ERROR', 'No updatable fields provided');
     }
-    const setClause = entries.map(([k]) => `${k} = :${k}`).join(', ');
-    const params = { member_id, ...Object.fromEntries(entries) };
+    const pool = getPool();
+    const skills = Object.prototype.hasOwnProperty.call(fields, 'skills') ? fields.skills : undefined;
+    const scalarEntries = entries.filter(([k]) => k !== 'skills');
 
-    const [result] = await getPool().query(
-      `UPDATE members SET ${setClause} WHERE member_id = :member_id`,
-      params,
-    );
-    if (result.affectedRows === 0) {
-      throw new ApiError(404, 'MEMBER_NOT_FOUND', `Member ${member_id} not found`);
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      if (scalarEntries.length) {
+        const setClause = scalarEntries.map(([k]) => `${k} = :${k}`).join(', ');
+        const params = { member_id, ...Object.fromEntries(scalarEntries) };
+        const [result] = await conn.query(
+          `UPDATE members SET ${setClause} WHERE member_id = :member_id`,
+          params,
+        );
+        if (result.affectedRows === 0) {
+          throw new ApiError(404, 'MEMBER_NOT_FOUND', `Member ${member_id} not found`);
+        }
+      } else {
+        // If only skills are being updated, still validate the member exists.
+        const [exists] = await conn.query('SELECT member_id FROM members WHERE member_id = :member_id LIMIT 1', { member_id });
+        if (!exists.length) {
+          throw new ApiError(404, 'MEMBER_NOT_FOUND', `Member ${member_id} not found`);
+        }
+      }
+
+      if (skills !== undefined) {
+        await conn.query('DELETE FROM member_skills WHERE member_id = :member_id', { member_id });
+        if (Array.isArray(skills) && skills.length) {
+          const values = skills.map((s) => [member_id, s]);
+          await conn.query('INSERT IGNORE INTO member_skills (member_id, skill) VALUES ?', [values]);
+        }
+      }
+
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
     }
 
     await invalidate(keys.member(member_id));
     await invalidatePrefix('member:search:');
 
     // Return the updated member shape (pytest expects updated fields like headline/about).
-    const [rows] = await getPool().query(
+    const [rows] = await pool.query(
       'SELECT * FROM members WHERE member_id = :member_id LIMIT 1',
       { member_id },
     );
     if (!rows.length) {
       throw new ApiError(404, 'MEMBER_NOT_FOUND', `Member ${member_id} not found`);
     }
-    return res.json(ok(rows[0], req.traceId));
+    const [skillRows] = await pool.query(
+      'SELECT skill FROM member_skills WHERE member_id = :member_id',
+      { member_id },
+    );
+    return res.json(ok({ ...rows[0], skills: skillRows.map((r) => r.skill) }, req.traceId));
   } catch (err) {
     next(coerceNotFoundCode(err));
   }

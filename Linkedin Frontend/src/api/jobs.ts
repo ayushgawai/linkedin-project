@@ -153,7 +153,8 @@ export async function createJob(payload: CreateJobPayload): Promise<JobRecord> {
     mockJobs = [newJob, ...getMockJobs()]
     return newJob
   }
-  const response = await apiClient.post<JobRecord>('/jobs/create', payload)
+  // Gateway/job-service supports RESTful create at POST /jobs
+  const response = await apiClient.post<JobRecord>('/jobs', payload)
   return response.data
 }
 

@@ -1,11 +1,16 @@
 export type Member = {
   member_id: string
+  /** Present for recruiter accounts (login/signup). */
+  recruiter_id?: string
+  company_id?: string
   email: string
   full_name: string
   /** Present after login/signup when account type is known (mock + integrated auth). */
   role?: 'member' | 'recruiter'
   headline: string | null
   bio: string | null
+  /** Backend uses `about`; keep alias for update payloads. */
+  about?: string | null
   location: string | null
   skills: string[]
   profile_photo_url: string | null
@@ -123,8 +128,18 @@ export type Application = {
   job_id: string
   member_id: string
   resume_url: string | null
+  /** Stored resume content (often base64 data URL in local dev). */
+  resume_text?: string | null
   cover_letter: string | null
-  status: 'submitted' | 'under_review' | 'shortlisted' | 'rejected' | 'accepted'
+  status:
+    | 'submitted'
+    | 'under_review'
+    | 'reviewing'
+    | 'shortlisted'
+    | 'interview'
+    | 'accepted'
+    | 'offer'
+    | 'rejected'
   applied_at: string
   updated_at: string
 }

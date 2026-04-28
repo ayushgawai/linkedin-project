@@ -277,6 +277,8 @@ analyticsRouter.post('/analytics/member/dashboard', async (req, res, next) => {
 
       // Frontend contract expects a richer dashboard shape; fields we don't track yet are zeros/empties.
       return {
+        member_id,
+        window_days,
         profile_views_per_day: viewsAgg.map((p) => ({ date: `${p.date}T00:00:00.000Z`, value: Number(p.count) || 0 })),
         post_impressions_per_day: [],
         search_appearances_per_week: [],

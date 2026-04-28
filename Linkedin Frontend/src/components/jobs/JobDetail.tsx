@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { Share2, MoreHorizontal } from 'lucide-react'
+import { Share2, MoreHorizontal, Sparkles } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { ingestEvent } from '../../api/analytics'
 import { closeJob, incrementJobViews } from '../../api/jobs'
@@ -107,7 +107,16 @@ export function JobDetail({ job, emitViewed = false }: JobDetailProps): JSX.Elem
                 View applicants
               </Button>
             ) : (
-              <Button onClick={() => setApplyOpen(true)}>Easy Apply</Button>
+              <>
+                <Button onClick={() => setApplyOpen(true)}>Easy Apply</Button>
+                <Button
+                  variant="secondary"
+                  leftIcon={<Sparkles className="h-4 w-4" />}
+                  onClick={() => navigate(`/coach?target_job_id=${encodeURIComponent(job.job_id)}`)}
+                >
+                  Career Coach
+                </Button>
+              </>
             )}
             <Button
               variant="secondary"
@@ -169,7 +178,12 @@ export function JobDetail({ job, emitViewed = false }: JobDetailProps): JSX.Elem
               </span>
             ))}
           </div>
-          <Button variant="secondary">See how your profile matches</Button>
+          <Button
+            variant="secondary"
+            onClick={() => navigate(`/coach?target_job_id=${encodeURIComponent(job.job_id)}`)}
+          >
+            See how your profile matches
+          </Button>
         </Card.Body>
       </Card>
 

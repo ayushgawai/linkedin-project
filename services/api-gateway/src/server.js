@@ -1,11 +1,19 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import http from 'node:http';
+import httpProxy from 'http-proxy';
 
 const app = express();
 app.disable('x-powered-by');
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
+
+// Explicitly handle CORS preflight so OPTIONS doesn't get proxied upstream.
+// Without this, browsers preflight POSTs (e.g. with Authorization header),
+// the gateway forwards OPTIONS to services that don't implement it, and the
+// browser blocks the actual request after a 404.
+app.options('*', cors());
 
 const PROFILE_URL = process.env.PROFILE_URL || 'http://profile:8001';
 const JOB_URL = process.env.JOB_URL || 'http://job:8002';
@@ -16,7 +24,11 @@ const ANALYTICS_URL = process.env.ANALYTICS_URL || 'http://analytics:8006';
 const AI_URL = process.env.AI_URL || 'http://ai-agent:8007';
 
 function pickUpstream(path) {
-  if (path.startsWith('/members') || path.startsWith('/auth') || path.startsWith('/recruiters')) return PROFILE_URL;
+  if (path.startsWith('/members') || path.startsWith('/auth')) return PROFILE_URL;
+  // NOTE: Recruiter signup (/recruiters/create) lives in the Profile service (auth-ish),
+  // while recruiter CRUD (/recruiters) is implemented in the Job service.
+  if (path === '/recruiters/create') return PROFILE_URL;
+  if (path.startsWith('/recruiters')) return JOB_URL;
   if (path.startsWith('/jobs') || path.startsWith('/companies')) return JOB_URL;
   if (path.startsWith('/applications')) return APPLICATION_URL;
   if (path.startsWith('/threads') || path.startsWith('/messages')) return MESSAGING_URL;
@@ -43,6 +55,17 @@ function normalizeErrorBody(body) {
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'api-gateway' });
+});
+
+// ---------------------------------------------------------------------------
+// WebSocket proxy (AI streaming)
+// ---------------------------------------------------------------------------
+// The frontend + QA harness may connect to ws://<gateway>/ai/stream/:task_id.
+// Express alone doesn't proxy WS; we handle HTTP upgrade frames here.
+const wsProxy = httpProxy.createProxyServer({
+  target: AI_URL,
+  ws: true,
+  changeOrigin: true,
 });
 
 async function fetchJson(url, options) {
@@ -169,7 +192,23 @@ app.all('*', async (req, res) => {
 });
 
 const port = Number(process.env.PORT || 8000);
-app.listen(port, () => {
+const server = http.createServer(app);
+
+server.on('upgrade', (req, socket, head) => {
+  try {
+    const url = req.url || '';
+    // Proxy AI stream sockets via gateway.
+    if (url.startsWith('/ai/stream/') || url.startsWith('/ai/tasks/')) {
+      wsProxy.ws(req, socket, head);
+      return;
+    }
+  } catch {
+    // fall through to destroy
+  }
+  socket.destroy();
+});
+
+server.listen(port, () => {
   // eslint-disable-next-line no-console
   console.log(JSON.stringify({ service: 'api-gateway', port, status: 'started' }));
 });

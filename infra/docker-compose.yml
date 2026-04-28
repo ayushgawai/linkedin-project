@@ -361,7 +361,7 @@ services:
       JOB_SERVICE_URL: http://job:8002
       APPLICATION_SERVICE_URL: http://application:8003
       MESSAGING_SERVICE_URL: http://messaging:8004
-      USE_MOCK_SERVICES: "false"
+      USE_MOCK_SERVICES: ${USE_MOCK_SERVICES:-false}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       SERVICE_PORT: 8007
       LOG_LEVEL: ${LOG_LEVEL:-info}

@@ -1026,7 +1026,7 @@ export default function ProfilePage(): JSX.Element {
                 </button>
               ) : (
                 <div className="space-y-2">
-                  {(display.skills ?? []).slice(0, 3).map((skill) => (
+                  {(display.skills ?? []).map((skill) => (
                     <div key={skill} className="border-b border-border pb-2 last:border-b-0">
                       <p className="font-semibold">{skill}</p>
                     </div>

@@ -183,6 +183,9 @@ export async function signup(payload: SignupPayload): Promise<AuthResponse> {
       } as Member,
     }
   }
+  // Recruiter signup lives in Profile service at /recruiters/create (returns token+user),
+  // while recruiter CRUD lives in Job service at /recruiters.
+  // Members support both POST /members and /members/create; keep legacy endpoint.
   const endpoint = payload.role === 'recruiter' ? '/recruiters/create' : '/members/create'
   const response = await apiClient.post<AuthResponse>(endpoint, payload)
   return response.data

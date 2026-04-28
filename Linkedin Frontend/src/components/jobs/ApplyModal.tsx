@@ -32,6 +32,7 @@ export function ApplyModal({ isOpen, onClose, job }: ApplyModalProps): JSX.Eleme
   const [phone, setPhone] = useState(profile.phone || '')
   const [resumeUrl, setResumeUrl] = useState('')
   const [resumeFileName, setResumeFileName] = useState('')
+  const [resumeText, setResumeText] = useState<string | null>(null)
   const [questionFit, setQuestionFit] = useState('')
   const [questionProject, setQuestionProject] = useState('')
 
@@ -41,7 +42,9 @@ export function ApplyModal({ isOpen, onClose, job }: ApplyModalProps): JSX.Eleme
       const payload: SubmitApplicationPayload = {
         job_id: job.job_id,
         member_id: member.member_id,
-        resume_url: resumeUrl || resumeFileName || 'resume_latest.pdf',
+        // `blob:` URLs are browser-local; recruiters can't access them. Prefer `resume_text`.
+        resume_url: resumeUrl?.startsWith('http') ? resumeUrl : null,
+        resume_text: resumeText,
         contact_email: email,
         contact_phone: phone,
         answers: {
@@ -109,6 +112,31 @@ export function ApplyModal({ isOpen, onClose, job }: ApplyModalProps): JSX.Eleme
     const url = URL.createObjectURL(file)
     setResumeUrl(url)
     setResumeFileName(file.name)
+    setResumeText(null)
+
+    // Best-effort: store resume bytes as a data URL in resume_text so recruiters can open it.
+    // Keep a conservative cap because the gateway JSON limit is 2mb and services are 1mb.
+    const MAX_BYTES = 650_000
+    if (file.size > MAX_BYTES) {
+      toast({
+        variant: 'info',
+        title: 'Resume too large to store',
+        description: 'Please upload a smaller PDF (≤ ~650KB) for recruiter preview in this demo build.',
+      })
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result
+      if (typeof result === 'string') {
+        setResumeText(result)
+      }
+    }
+    reader.onerror = () => {
+      toast({ variant: 'error', title: 'Could not read resume file' })
+    }
+    reader.readAsDataURL(file)
   }
 
   return (

@@ -53,6 +53,24 @@ export function isHealthy() {
   return ENABLED && healthy;
 }
 
+/**
+ * Explicit connectivity check for /health endpoints. Call this instead of
+ * isHealthy() alone: lazy init never constructs the Redis client until
+ * getClient() runs, so isHealthy() would stay false on cold start unless
+ * a cached code path ran first.
+ */
+export async function pingRedis() {
+  if (!ENABLED) return false;
+  try {
+    const r = getClient();
+    if (!r) return false;
+    const pong = await r.ping();
+    return pong === 'PONG';
+  } catch {
+    return false;
+  }
+}
+
 function now() {
   return process.hrtime.bigint();
 }

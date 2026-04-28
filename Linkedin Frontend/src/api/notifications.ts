@@ -31,26 +31,45 @@ export type ListNotificationsParams = {
 }
 
 export async function listNotifications(params: ListNotificationsParams): Promise<NotificationsResponse> {
-  if (!USE_MOCKS) {
-    const body: ListNotificationsParams = { ...params }
-    delete body.viewer_member_id
-    const response = await apiClient.post<NotificationsResponse>('/notifications/list', body)
-    return response.data
-  }
-  await mockDelay(300)
   const viewer = params.viewer_member_id
-  const source = MOCK_NOTIFICATIONS.filter(
+  const localSource = MOCK_NOTIFICATIONS.filter(
     (item) =>
       matchesFilter(item.type, params.filter) &&
       (!viewer || !item.recipient_member_id || item.recipient_member_id === viewer),
   )
+  if (!USE_MOCKS) {
+    try {
+      const body: ListNotificationsParams = { ...params }
+      delete body.viewer_member_id
+      const response = await apiClient.post<NotificationsResponse>('/notifications/list', body)
+      const remote = Array.isArray(response.data?.notifications) ? response.data.notifications : []
+      const merged = [...localSource, ...remote]
+      const seen = new Set<string>()
+      const deduped = merged.filter((item) => {
+        if (seen.has(item.notification_id)) return false
+        seen.add(item.notification_id)
+        return true
+      })
+      const start = (params.page - 1) * params.pageSize
+      const end = start + params.pageSize
+      return {
+        notifications: deduped.slice(start, end),
+        page: params.page,
+        has_more: end < deduped.length,
+      }
+    } catch {
+      // No real notifications service in this repo; fall back to local notifications
+      // so interview/rejection updates are still visible in integrated mode.
+    }
+  }
+  await mockDelay(300)
   const start = (params.page - 1) * params.pageSize
   const end = start + params.pageSize
 
   return {
-    notifications: source.slice(start, end),
+    notifications: localSource.slice(start, end),
     page: params.page,
-    has_more: end < source.length,
+    has_more: end < localSource.length,
   }
 }
 

@@ -90,6 +90,7 @@ export function TopNav(): JSX.Element {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const jobsNavActive = pathname === '/jobs' || pathname.startsWith('/jobs/')
+  const isRecruiter = user?.role === 'recruiter'
   const displayName = `${firstName} ${lastName}`.trim() || user?.full_name || 'Member'
   const profilePath = `/in/${memberId || user?.member_id || 'me'}`
   const activityPath = `${profilePath}/activity`
@@ -418,7 +419,24 @@ export function TopNav(): JSX.Element {
                 </span>
               </Dropdown.Trigger>
               <Dropdown.Content>
-                <Dropdown.Item>Services coming soon</Dropdown.Item>
+                <Dropdown.Item
+                  onSelect={() => {
+                    void import('../../features/ai/CareerCoachPage')
+                    navigate('/coach')
+                  }}
+                >
+                  Career Coach
+                </Dropdown.Item>
+                {isRecruiter ? (
+                  <Dropdown.Item
+                    onSelect={() => {
+                      void import('../../features/recruiter/RecruiterAiPage')
+                      navigate('/recruiter/ai')
+                    }}
+                  >
+                    AI Copilot
+                  </Dropdown.Item>
+                ) : null}
               </Dropdown.Content>
             </Dropdown.Root>
 

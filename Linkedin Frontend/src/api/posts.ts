@@ -12,7 +12,7 @@
 // ============================================
 
 import { MOCK_POSTS } from '../lib/mockData'
-import { USE_MOCKS, apiClient, mockDelay } from './client'
+import { mockDelay } from './client'
 import type { CreatePostPayload, ListFeedParams, ListFeedResponse, Post } from '../types/feed'
 import { useProfileStore } from '../store/profileStore'
 import { useAuthStore } from '../store/authStore'
@@ -20,10 +20,8 @@ import { useAuthStore } from '../store/authStore'
 let inMemoryPosts: Post[] = [...MOCK_POSTS]
 
 export async function listFeed(params: ListFeedParams): Promise<ListFeedResponse> {
-  if (!USE_MOCKS) {
-    const response = await apiClient.post<ListFeedResponse>('/posts/list', params)
-    return response.data
-  }
+  // Posts backend is not implemented in this repo; keep the feed frontend-only
+  // even when VITE_USE_MOCKS=false so we don't 404 through the gateway.
   await mockDelay(300)
   const { page, pageSize, sort } = params
   const viewerId = useAuthStore.getState().user?.member_id
@@ -52,10 +50,7 @@ export async function listFeed(params: ListFeedParams): Promise<ListFeedResponse
 }
 
 export async function createPost(payload: CreatePostPayload): Promise<Post> {
-  if (!USE_MOCKS) {
-    const response = await apiClient.post<Post>('/posts/create', payload)
-    return response.data
-  }
+  // Posts backend is not implemented in this repo; keep create frontend-only.
   await mockDelay(300)
   const profile = useProfileStore.getState().profile
   const authorName = `${profile.first_name} ${profile.last_name}`.trim() || 'You'

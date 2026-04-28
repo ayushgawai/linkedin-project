@@ -168,8 +168,9 @@ export default function RecruiterJobFormPage(): JSX.Element {
 
   function submitCreate(): void {
     if (!user) return
+    const recruiterId = user.recruiter_id || user.member_id
     createMutation.mutate({
-      recruiter_id: user.member_id,
+      recruiter_id: recruiterId,
       title: title.trim(),
       description: description.trim(),
       location: location.trim(),

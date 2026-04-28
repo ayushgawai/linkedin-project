@@ -15,17 +15,17 @@ import { Avatar, Badge, Button, Card, Textarea, useToast } from '../../component
 import { useAuthStore } from '../../store/authStore'
 
 function badgeVariantFromStatus(status: string): 'neutral' | 'brand' | 'success' | 'danger' {
-  if (status === 'submitted' || status === 'under_review') return 'neutral'
-  if (status === 'shortlisted') return 'brand'
-  if (status === 'accepted') return 'success'
+  if (status === 'submitted' || status === 'under_review' || status === 'reviewing') return 'neutral'
+  if (status === 'shortlisted' || status === 'interview') return 'brand'
+  if (status === 'accepted' || status === 'offer') return 'success'
   if (status === 'rejected') return 'danger'
   return 'neutral'
 }
 
 function statusLabel(status: string): string {
-  if (status === 'under_review') return 'Under review'
-  if (status === 'shortlisted') return 'Interview'
-  if (status === 'accepted') return 'Offer'
+  if (status === 'under_review' || status === 'reviewing') return 'Under review'
+  if (status === 'shortlisted' || status === 'interview') return 'Interview'
+  if (status === 'accepted' || status === 'offer') return 'Offer'
   if (status === 'rejected') return 'Rejected'
   return status
 }
@@ -108,7 +108,7 @@ export default function RecruiterApplicantsPage(): JSX.Element {
       const listAfter = queryClient.getQueryData<JobApplicantRow[]>(['job-applicants', jobId])
       const applicant = listAfter?.find((r) => r.application_id === vars.applicationId)
       if (applicant && job) {
-        if (vars.status === 'shortlisted') {
+        if (vars.status === 'interview') {
           try {
             await updateMemberApplicationStatus(vars.applicationId, 'interview', undefined, applicant.member_id)
           } catch {
@@ -246,8 +246,8 @@ export default function RecruiterApplicantsPage(): JSX.Element {
                       <Button
                         size="sm"
                         loading={updateMutation.isPending}
-                        disabled={current.status === 'shortlisted' || current.status === 'rejected'}
-                        onClick={() => updateMutation.mutate({ applicationId: current.application_id, status: 'shortlisted' })}
+                        disabled={current.status === 'interview' || current.status === 'offer' || current.status === 'rejected'}
+                        onClick={() => updateMutation.mutate({ applicationId: current.application_id, status: 'interview' as JobApplicantRow['status'] })}
                       >
                         Invite to interview
                       </Button>
@@ -329,6 +329,32 @@ export default function RecruiterApplicantsPage(): JSX.Element {
                           </p>
                         </object>
                       ) : null}
+                    </div>
+                  ) : current.resume_text?.startsWith('data:') ? (
+                    <div className="space-y-2">
+                      <a
+                        href={current.resume_text}
+                        download={easyApplyAnswers?.resume_file_name || 'resume'}
+                        className="text-sm font-semibold text-brand-primary hover:underline"
+                      >
+                        Download uploaded resume
+                      </a>
+                      {current.resume_text.startsWith('data:application/pdf') ? (
+                        <object
+                          data={current.resume_text}
+                          type="application/pdf"
+                          className="h-[min(520px,70vh)] w-full rounded border border-border bg-surface"
+                          title="Resume PDF"
+                        >
+                          <p className="p-4 text-sm text-text-secondary">
+                            PDF preview is not available in this browser. Use the download link above.
+                          </p>
+                        </object>
+                      ) : (
+                        <p className="text-sm text-text-secondary">
+                          This file type can’t be previewed here. Use the download link above.
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <p className="text-sm text-text-secondary">No resume file on record.</p>

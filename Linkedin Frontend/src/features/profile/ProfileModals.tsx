@@ -6,6 +6,9 @@ import { Button, ChipInput, Input, Modal, Select, Textarea } from '../../compone
 import { COMMON_TECH_SKILLS } from '../../lib/commonSkills'
 import { handleImageUpload } from '../../lib/imageUpload'
 import { useActionToast } from '../../hooks/useActionToast'
+import { USE_MOCKS } from '../../api/client'
+import { updateMember } from '../../api/profile'
+import { useAuthStore } from '../../store/authStore'
 import { makeId, useProfileStore, type Education, type Experience, type License, type Project } from '../../store/profileStore'
 
 export type ProfileModalKey =
@@ -52,6 +55,7 @@ const workplaceTypes = ['On-site', 'Hybrid', 'Remote'] as const
 export function ProfileModals({ active, editId, onClose }: Props): JSX.Element | null {
   const actionToast = useActionToast()
   const profile = useProfileStore((s) => s.profile)
+  const authUser = useAuthStore((s) => s.user)
   const updateBasicInfo = useProfileStore((s) => s.updateBasicInfo)
   const updateAbout = useProfileStore((s) => s.updateAbout)
   const patchProfile = useProfileStore((s) => s.patchProfile)
@@ -103,15 +107,19 @@ export function ProfileModals({ active, editId, onClose }: Props): JSX.Element |
         initialAbout={profile.about}
         initialSkills={profile.skills.map((s) => s.name)}
         onClose={onClose}
-        onSave={(about, topSkills) => {
+        onSave={async (about, topSkills) => {
           updateAbout(about)
-          patchProfile({
-            skills: topSkills
-              .map((name) => name.trim())
-              .filter(Boolean)
-              .slice(0, 8)
-              .map((name) => ({ id: makeId('skill'), name })),
-          })
+          const nextTopSkills = topSkills
+            .map((name) => name.trim())
+            .filter(Boolean)
+            .slice(0, 20)
+          patchProfile({ skills: nextTopSkills.map((name) => ({ id: makeId('skill'), name })) })
+
+          // Persist to backend so Career Coach reads latest skills.
+          const memberId = authUser?.member_id || profile.member_id
+          if (!USE_MOCKS && memberId) {
+            await updateMember(memberId, { about, skills: nextTopSkills })
+          }
           actionToast.profileUpdated()
           onClose()
         }}
@@ -267,7 +275,29 @@ export function ProfileModals({ active, editId, onClose }: Props): JSX.Element |
   }
 
   if (active === 'skill') {
-    return <SkillModal onClose={onClose} onSave={(name) => addSkill({ id: makeId('skill'), name })} actionToast={actionToast} />
+    return (
+      <SkillModal
+        onClose={onClose}
+        onSave={async (name) => {
+          const trimmed = name.trim()
+          if (!trimmed) return
+
+          // Optimistic local update for immediate UI feedback.
+          addSkill({ id: makeId('skill'), name: trimmed })
+
+          // Persist to backend so Career Coach reads real skills.
+          const memberId = authUser?.member_id || profile.member_id
+          const nextSkills = Array.from(
+            new Map([...profile.skills.map((s) => s.name), trimmed].map((s) => [s.toLowerCase(), s.trim()])).values(),
+          ).filter(Boolean)
+
+          if (!USE_MOCKS && memberId) {
+            await updateMember(memberId, { skills: nextSkills })
+          }
+        }}
+        actionToast={actionToast}
+      />
+    )
   }
 
   if (active === 'course') {

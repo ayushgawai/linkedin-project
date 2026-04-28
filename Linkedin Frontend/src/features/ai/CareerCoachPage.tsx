@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { getCareerCoaching, type CareerCoachResponse } from '../../api/ai'
 import { Button, Card, Input, Textarea } from '../../components/ui'
 import { useAuthStore } from '../../store/authStore'
+import { useSearchParams } from 'react-router-dom'
 
 function prettyJson(value: unknown): string {
   try {
@@ -14,8 +15,9 @@ function prettyJson(value: unknown): string {
 
 export default function CareerCoachPage(): JSX.Element {
   const user = useAuthStore((s) => s.user)
+  const [params] = useSearchParams()
   const [memberId, setMemberId] = useState(user?.member_id ?? '')
-  const [targetJobId, setTargetJobId] = useState('')
+  const [targetJobId, setTargetJobId] = useState(() => params.get('target_job_id') ?? '')
   const [raw, setRaw] = useState<CareerCoachResponse | null>(null)
 
   const canRun = useMemo(() => memberId.trim().length > 0 && targetJobId.trim().length > 0, [memberId, targetJobId])
@@ -24,6 +26,14 @@ export default function CareerCoachPage(): JSX.Element {
     mutationFn: async () => getCareerCoaching(memberId.trim(), targetJobId.trim()),
     onSuccess: (data) => setRaw(data),
   })
+
+  // If the user navigates from a job page, prefill the job id from query params.
+  // Keep it "non-destructive": only overwrite if the input is empty or matches the prior param.
+  useEffect(() => {
+    const q = params.get('target_job_id') ?? ''
+    if (!q) return
+    setTargetJobId((prev) => (prev.trim().length === 0 || prev === q ? q : prev))
+  }, [params])
 
   return (
     <div className="space-y-4">

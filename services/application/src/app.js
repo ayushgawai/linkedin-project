@@ -9,11 +9,13 @@ import { publishOrOutbox } from '../../shared/src/outbox.js';
 import { buildEnvelope, isKafkaConnected } from '../../shared/src/kafka.js';
 
 const VALID_TRANSITIONS = {
-  // Allow direct move to interview from submitted for demo UX.
-  submitted: new Set(['reviewing', 'interview', 'rejected']),
+  // Enforce a simple state machine (aligned with pytest + API contract):
+  // submitted -> reviewing -> interview -> offer
+  // Any status can move to rejected *except* offer (terminal for demo).
+  submitted: new Set(['reviewing', 'rejected']),
   reviewing: new Set(['interview', 'rejected']),
   interview: new Set(['offer', 'rejected']),
-  offer: new Set(['rejected']),
+  offer: new Set(),
   rejected: new Set()
 };
 const VALID_APPLICATION_STATUSES = new Set(Object.keys(VALID_TRANSITIONS));
