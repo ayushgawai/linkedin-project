@@ -64,6 +64,49 @@ ON DUPLICATE KEY UPDATE
   about = VALUES(about),
   profile_photo_url = VALUES(profile_photo_url);
 
+INSERT INTO members (
+  member_id,
+  first_name,
+  last_name,
+  email,
+  phone,
+  location,
+  headline,
+  about,
+  profile_photo_url
+)
+VALUES
+(
+  '66666666-6666-6666-6666-666666666666',
+  'Demo',
+  'Friend',
+  'demo.friend@example.com',
+  '+1-408-555-0106',
+  'San Jose, CA',
+  'Software Engineer',
+  'Demo profile for connections graph testing.',
+  NULL
+),
+(
+  '77777777-7777-7777-7777-777777777777',
+  'Demo',
+  'Pending',
+  'demo.pending@example.com',
+  '+1-408-555-0107',
+  'San Jose, CA',
+  'SWE Intern',
+  'Demo profile for pending connection testing.',
+  NULL
+)
+ON DUPLICATE KEY UPDATE
+  first_name = VALUES(first_name),
+  last_name = VALUES(last_name),
+  phone = VALUES(phone),
+  location = VALUES(location),
+  headline = VALUES(headline),
+  about = VALUES(about),
+  profile_photo_url = VALUES(profile_photo_url);
+
 INSERT INTO member_skills (member_id, skill)
 VALUES
   ('22222222-2222-2222-2222-222222222222', 'Node.js'),
@@ -170,3 +213,18 @@ VALUES
   ('55555555-5555-5555-5555-555555555555', 'AWS')
 ON DUPLICATE KEY UPDATE
   skill = VALUES(skill);
+
+-- Seed connections in MySQL (matches Mongo seeded graph).
+INSERT INTO connections (
+  connection_id,
+  user_a,
+  user_b,
+  status,
+  requested_by
+)
+VALUES
+  ('88888888-8888-8888-8888-888888888888', '22222222-2222-2222-2222-222222222222', '66666666-6666-6666-6666-666666666666', 'accepted', '22222222-2222-2222-2222-222222222222'),
+  ('99999999-9999-9999-9999-999999999999', '22222222-2222-2222-2222-222222222222', '77777777-7777-7777-7777-777777777777', 'pending',  '77777777-7777-7777-7777-777777777777')
+ON DUPLICATE KEY UPDATE
+  status = VALUES(status),
+  requested_by = VALUES(requested_by);
