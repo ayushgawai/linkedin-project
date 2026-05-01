@@ -102,9 +102,20 @@ Resources:
     Properties:
       GroupDescription: Allow internal service-to-service traffic
       VpcId: !Ref Vpc
-      SecurityGroupIngress:
-        - { IpProtocol: -1, SourceSecurityGroupId: !Ref ServiceSecurityGroup }
-        - { IpProtocol: -1, SourceSecurityGroupId: !Ref AlbSecurityGroup }
+
+  ServiceSecurityGroupSelfIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ServiceSecurityGroup
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref ServiceSecurityGroup
+
+  AlbToServiceSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ServiceSecurityGroup
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref AlbSecurityGroup
 
   DatabaseSecurityGroup:
     Type: AWS::EC2::SecurityGroup
