@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS applications (
   job_id VARCHAR(36) NOT NULL,
   member_id VARCHAR(36) NOT NULL,
   resume_url VARCHAR(500),
-  resume_text TEXT,
+  resume_text MEDIUMTEXT,
   cover_letter TEXT,
   answers JSON,
   application_datetime DATETIME DEFAULT CURRENT_TIMESTAMP,
