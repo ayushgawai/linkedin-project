@@ -1,0 +1,62 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Amazon ECR repositories for all LinkedInClone services.
+
+Resources:
+  ApiGatewayRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: linkedinclone-api-gateway
+      ImageScanningConfiguration: { ScanOnPush: true }
+
+  ProfileRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: linkedinclone-profile-service
+      ImageScanningConfiguration: { ScanOnPush: true }
+
+  JobRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: linkedinclone-job-service
+      ImageScanningConfiguration: { ScanOnPush: true }
+
+  ApplicationRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: linkedinclone-application-service
+      ImageScanningConfiguration: { ScanOnPush: true }
+
+  MessagingRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: linkedinclone-messaging-service
+      ImageScanningConfiguration: { ScanOnPush: true }
+
+  ConnectionRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: linkedinclone-connection-service
+      ImageScanningConfiguration: { ScanOnPush: true }
+
+  AnalyticsRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: linkedinclone-analytics-service
+      ImageScanningConfiguration: { ScanOnPush: true }
+
+  AiAgentRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: linkedinclone-ai-agent
+      ImageScanningConfiguration: { ScanOnPush: true }
+
+Outputs:
+  ApiGatewayRepositoryUri: { Value: !GetAtt ApiGatewayRepository.RepositoryUri }
+  ProfileRepositoryUri: { Value: !GetAtt ProfileRepository.RepositoryUri }
+  JobRepositoryUri: { Value: !GetAtt JobRepository.RepositoryUri }
+  ApplicationRepositoryUri: { Value: !GetAtt ApplicationRepository.RepositoryUri }
+  MessagingRepositoryUri: { Value: !GetAtt MessagingRepository.RepositoryUri }
+  ConnectionRepositoryUri: { Value: !GetAtt ConnectionRepository.RepositoryUri }
+  AnalyticsRepositoryUri: { Value: !GetAtt AnalyticsRepository.RepositoryUri }
+  AiAgentRepositoryUri: { Value: !GetAtt AiAgentRepository.RepositoryUri }
+
