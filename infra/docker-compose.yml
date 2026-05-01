@@ -292,9 +292,13 @@ services:
       DB_NAME: ${DB_NAME:-linkedinclone}
       KAFKA_BROKERS: kafka:29092
       ANALYTICS_SERVICE_URL: http://analytics:8006
+      MONGO_URI: mongodb://mongodb:27017
+      MONGO_DB: ${MONGO_DB:-linkedinclone}
     depends_on:
       mysql:
         condition: service_healthy
+      mongodb:
+        condition: service_started
       kafka:
         condition: service_healthy
       kafka-init:
