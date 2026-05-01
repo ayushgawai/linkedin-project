@@ -19,6 +19,7 @@ from typing import Optional
 from database import get_db
 from models import Connection
 from kafka_client import kafka_producer, build_envelope
+from mongo_client import upsert_connection_edge
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -86,6 +87,20 @@ def normalize_pair(a: str, b: str):
     return (min(a, b), max(a, b))
 
 
+def _mirror_to_mongo(conn: Connection) -> None:
+    """Persist connection edge into MongoDB for the professor requirement."""
+    try:
+        upsert_connection_edge(
+            conn.user_a,
+            conn.user_b,
+            status=conn.status,
+            requested_by=getattr(conn, "requested_by", None),
+            connection_id=getattr(conn, "connection_id", None),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("mongo mirror failed for connection %s: %s", getattr(conn, "connection_id", "?"), exc)
+
+
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @router.post("/request")
@@ -118,6 +133,7 @@ def request_connection(body: ConnectionRequestBody, db: Session = Depends(get_db
             existing.requested_by = body.requester_id
             db.commit()
             db.refresh(existing)
+            _mirror_to_mongo(existing)
             _produce_connection_event("connection.requested", body.requester_id, existing.connection_id, body)
             return {"request_id": existing.connection_id}
 
@@ -131,6 +147,8 @@ def request_connection(body: ConnectionRequestBody, db: Session = Depends(get_db
     )
     db.add(conn)
     db.commit()
+    db.refresh(conn)
+    _mirror_to_mongo(conn)
 
     _produce_connection_event("connection.requested", body.requester_id, connection_id, body)
     log.info(f"Connection request {connection_id} created: {user_a} <-> {user_b}")
@@ -175,6 +193,7 @@ def request_connection_rest(req: Request, body: ConnectionRestRequestBody, db: S
             existing.requested_by = body.user_a
             db.commit()
             db.refresh(existing)
+            _mirror_to_mongo(existing)
             return ok({"connection_id": existing.connection_id, "status": "pending"}, req, status=201)
 
     connection_id = str(uuid.uuid4())
@@ -187,6 +206,8 @@ def request_connection_rest(req: Request, body: ConnectionRestRequestBody, db: S
     )
     db.add(conn)
     db.commit()
+    db.refresh(conn)
+    _mirror_to_mongo(conn)
     return ok({"connection_id": connection_id, "status": "pending"}, req, status=201)
 
 
@@ -203,6 +224,8 @@ def accept_connection_rest(connection_id: str, req: Request, db: Session = Depen
 
     conn.status = "accepted"
     db.commit()
+    db.refresh(conn)
+    _mirror_to_mongo(conn)
     return ok({"connection_id": conn.connection_id, "status": "accepted"}, req, status=200)
 
 
@@ -217,6 +240,8 @@ def reject_connection_rest(connection_id: str, req: Request, db: Session = Depen
         return err("INVALID_STATUS", f"Cannot reject a request with status '{conn.status}'.", 400, req)
     conn.status = "rejected"
     db.commit()
+    db.refresh(conn)
+    _mirror_to_mongo(conn)
     return ok({"connection_id": conn.connection_id, "status": "rejected"}, req, status=200)
 
 
@@ -256,6 +281,8 @@ def accept_connection(body: ActionRequestBody, db: Session = Depends(get_db)):
 
     conn.status = "accepted"
     db.commit()
+    db.refresh(conn)
+    _mirror_to_mongo(conn)
 
     # Increment connections_count for both users in members table
     try:
@@ -296,6 +323,8 @@ def reject_connection(body: ActionRequestBody, db: Session = Depends(get_db)):
 
     conn.status = "rejected"
     db.commit()
+    db.refresh(conn)
+    _mirror_to_mongo(conn)
 
     log.info(f"Connection {body.request_id} rejected.")
     return {"success": True}
