@@ -53,7 +53,50 @@ VALUES (
   'San Jose, CA',
   'Backend Engineer',
   'Distributed systems engineer with experience in Node.js, MySQL, Docker, and AWS.',
-  'https://example.com/profile/ayush.jpg'
+  'https://i.pravatar.cc/150?img=12'
+)
+ON DUPLICATE KEY UPDATE
+  first_name = VALUES(first_name),
+  last_name = VALUES(last_name),
+  phone = VALUES(phone),
+  location = VALUES(location),
+  headline = VALUES(headline),
+  about = VALUES(about),
+  profile_photo_url = VALUES(profile_photo_url);
+
+INSERT INTO members (
+  member_id,
+  first_name,
+  last_name,
+  email,
+  phone,
+  location,
+  headline,
+  about,
+  profile_photo_url
+)
+VALUES
+(
+  '66666666-6666-6666-6666-666666666666',
+  'Rohan',
+  'Mehta',
+  'rohan.mehta@example.com',
+  '+1-408-555-0106',
+  'San Jose, CA',
+  'Software Engineer',
+  'Backend + distributed systems. Happy to connect.',
+  'https://i.pravatar.cc/150?img=32'
+),
+(
+  '77777777-7777-7777-7777-777777777777',
+  'Aisha',
+  'Khan',
+  'aisha.khan@example.com',
+  '+1-408-555-0107',
+  'San Jose, CA',
+  'SWE Intern',
+  'CS student exploring backend + cloud.',
+  'https://i.pravatar.cc/150?img=47'
 )
 ON DUPLICATE KEY UPDATE
   first_name = VALUES(first_name),
@@ -170,3 +213,46 @@ VALUES
   ('55555555-5555-5555-5555-555555555555', 'AWS')
 ON DUPLICATE KEY UPDATE
   skill = VALUES(skill);
+
+-- Seed connections in MySQL (matches Mongo seeded graph).
+INSERT INTO connections (
+  connection_id,
+  user_a,
+  user_b,
+  status,
+  requested_by
+)
+VALUES
+  ('88888888-8888-8888-8888-888888888888', '22222222-2222-2222-2222-222222222222', '66666666-6666-6666-6666-666666666666', 'accepted', '22222222-2222-2222-2222-222222222222'),
+  ('99999999-9999-9999-9999-999999999999', '22222222-2222-2222-2222-222222222222', '77777777-7777-7777-7777-777777777777', 'pending',  '77777777-7777-7777-7777-777777777777')
+ON DUPLICATE KEY UPDATE
+  status = VALUES(status),
+  requested_by = VALUES(requested_by);
+
+-- ----------------------------------------------------------------------------
+-- Demo posts (idempotent)
+-- ----------------------------------------------------------------------------
+INSERT INTO posts
+  (post_id, author_member_id, visibility, content, media_type, media_url, article_title, article_source, poll_options,
+   reactions_count, comments_count, reposts_count, created_at)
+VALUES
+  ('post-seed-1', '22222222-2222-2222-2222-222222222222', 'anyone',
+   'Excited to share our distributed LinkedIn clone is up locally: MySQL + Mongo + Kafka + Redis + AI + analytics.',
+   'text', NULL, NULL, NULL, NULL, 12, 2, 1, NOW() - INTERVAL 2 DAY),
+  ('post-seed-2', '66666666-6666-6666-6666-666666666666', 'anyone',
+   'Hiring: Backend Engineer (Node.js, Kafka). Drop a message if interested.',
+   'text', NULL, NULL, NULL, NULL, 5, 1, 0, NOW() - INTERVAL 1 DAY),
+  ('post-seed-3', '77777777-7777-7777-7777-777777777777', 'connections',
+   'Connections-only update: prepping the demo with two accounts chatting and sending requests.',
+   'text', NULL, NULL, NULL, NULL, 2, 0, 0, NOW() - INTERVAL 12 HOUR)
+ON DUPLICATE KEY UPDATE
+  content = VALUES(content),
+  visibility = VALUES(visibility),
+  media_type = VALUES(media_type),
+  media_url = VALUES(media_url),
+  article_title = VALUES(article_title),
+  article_source = VALUES(article_source),
+  poll_options = VALUES(poll_options),
+  reactions_count = VALUES(reactions_count),
+  comments_count = VALUES(comments_count),
+  reposts_count = VALUES(reposts_count);

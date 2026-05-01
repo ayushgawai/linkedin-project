@@ -174,6 +174,12 @@ export function createApplicationMySqlRepository() {
 }
 
 function handleError(res, error) {
+  // Always log unexpected errors so Docker logs show root cause.
+  if (!(error instanceof ValidationError) && !(error instanceof NotFoundError)) {
+    // eslint-disable-next-line no-console
+    console.error('[application] unexpected error', error);
+  }
+
   if (error instanceof ValidationError) {
     return sendError(res, 400, 'VALIDATION_ERROR', error.message, error.details);
   }
@@ -182,13 +188,18 @@ function handleError(res, error) {
     return sendError(res, 404, error.code, error.message, error.details);
   }
 
+  if (error && typeof error === 'object' && error.code === 'ER_DATA_TOO_LONG') {
+    return sendError(res, 413, 'PAYLOAD_TOO_LARGE', 'resume_text is too large for storage', { field: 'resume_text' });
+  }
+
   return sendError(res, 500, 'INTERNAL_SERVER_ERROR', 'unexpected server error');
 }
 
 export function createApplicationApp({ repository }) {
   const app = express();
   app.use(cors());
-  app.use(express.json());
+  // Frontend may send `resume_text` as a base64 data URL; keep parity with gateway limit.
+  app.use(express.json({ limit: '2mb' }));
 
   app.get('/health', async (_req, res) => {
     const db = await repository.health();

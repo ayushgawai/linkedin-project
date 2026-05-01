@@ -38,6 +38,7 @@ infra/perf/data/
 .vscode/
 .idea/
 *.swp
+.cursor/
 
 # OS junk
 Thumbs.db

@@ -11,6 +11,7 @@ import logging
 from routers import connections, health
 from database import engine, Base
 from kafka_client import kafka_producer
+from mongo_client import connect_mongo, close_mongo
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -20,10 +21,12 @@ log = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     log.info("Starting Connection Service...")
     Base.metadata.create_all(bind=engine)
+    connect_mongo()
     await kafka_producer.start()
     log.info("Connection Service ready on port 8005")
     yield
     await kafka_producer.stop()
+    close_mongo()
     log.info("Connection Service shut down.")
 
 

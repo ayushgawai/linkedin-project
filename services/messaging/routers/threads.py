@@ -26,7 +26,10 @@ _deleted_threads_by_user: dict[str, set[str]] = {}
 # ── Request / Response models ──────────────────────────────────────────────────
 
 class OpenThreadRequest(BaseModel):
-    participant_ids: List[str]
+    participant_ids: List[str] | None = None
+    # Frontend/gateway compatibility: allow { user_a, user_b } too.
+    user_a: str | None = None
+    user_b: str | None = None
 
 class GetThreadRequest(BaseModel):
     thread_id: str
@@ -75,12 +78,16 @@ def open_thread(body: OpenThreadRequest, db: Session = Depends(get_db)):
     Open a thread between participants.
     Idempotent — returns existing thread if one already exists between the same pair.
     """
-    if len(body.participant_ids) < 2:
+    participant_ids = body.participant_ids or []
+    if (not participant_ids) and body.user_a and body.user_b:
+        participant_ids = [body.user_a, body.user_b]
+
+    if len(participant_ids) < 2:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="At least 2 participant_ids required.")
 
     # Sort participant IDs so (A,B) and (B,A) resolve to the same thread
-    sorted_ids = sorted(body.participant_ids)
+    sorted_ids = sorted(participant_ids)
 
     # Check if thread already exists between these participants
     # Find threads where ALL sorted_ids are participants

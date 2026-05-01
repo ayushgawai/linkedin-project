@@ -1,21 +1,18 @@
-// ============================================
-// INTEGRATION CONTRACT — Shared API Client
-// ============================================
-// Current mode: MOCK-FIRST (VITE_USE_MOCKS=true by default)
-// To integrate: keep this file and swap function bodies in src/api/*.ts modules.
+// Shared API client.
 //
-// Behavior:
-// - USE_MOCKS controls whether API modules return local mock data.
-// - mockDelay() simulates network latency for loading states.
-// - apiClient injects Bearer token from authStore.
-// - 401 responses clear auth and redirect to /login.
-// ============================================
+// This repo defaults to real backend calls. A demo-data mode is still supported
+// for pages/features that aren't wired yet, but production/local correctness
+// should always prefer the real backend.
 
 import axios, { AxiosError } from 'axios'
 import { useAuthStore } from '../store/authStore'
 import type { ApiError } from '../types'
 
-export const USE_MOCKS = import.meta.env.VITE_USE_MOCKS === 'true'
+export const USE_DEMO_DATA =
+  import.meta.env.VITE_USE_DEMO_DATA === 'true' || import.meta.env.VITE_USE_MOCKS === 'true'
+
+// Back-compat export (older modules still import this name).
+export const USE_MOCKS = USE_DEMO_DATA
 
 export async function mockDelay(ms = 250): Promise<void> {
   await new Promise((resolve) => window.setTimeout(resolve, ms))
