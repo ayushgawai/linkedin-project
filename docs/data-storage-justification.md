@@ -21,15 +21,12 @@ Why MongoDB:
 - **Flexible schema** for logs/traces that evolve quickly.
 - **Write-heavy** append workloads (events) without forcing strict relational schema changes.
 
-## Connections: how we use both stores
+## Connections: how we use both stores (non-duplicative)
 
-- **MySQL**: canonical relationship state (uniqueness + status transitions).
-- **MongoDB**: mirrored, query-friendly document representation of the same edge, useful for analytics or future graph-style queries.
+- **MySQL**: canonical **request workflow** (pending/rejected), uniqueness constraints, and transactional updates.
+- **MongoDB**: canonical **accepted connections graph** (document edges), used for fast graph reads like `list` and `mutual`.
 
-Mirroring happens inside the Connection service on:
-- `POST /connections/request`
-- `POST /connections/accept`
-- `POST /connections/reject`
+We do **not** duplicate the full request lifecycle in MongoDB. MongoDB only stores edges once they become `accepted` (and deletes on reject), which is a clean “SQL for workflow, NoSQL for graph reads” split.
 
 ## Resumes / “unstructured data”
 

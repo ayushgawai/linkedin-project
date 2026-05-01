@@ -19,7 +19,7 @@ from typing import Optional
 from database import get_db
 from models import Connection
 from kafka_client import kafka_producer, build_envelope
-from mongo_client import upsert_connection_edge
+from mongo_client import connect_mongo, upsert_connection_edge, delete_connection_edge
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -87,18 +87,31 @@ def normalize_pair(a: str, b: str):
     return (min(a, b), max(a, b))
 
 
-def _mirror_to_mongo(conn: Connection) -> None:
-    """Persist connection edge into MongoDB for the professor requirement."""
+def _write_accepted_edge_to_mongo(conn: Connection) -> None:
+    """
+    Store only the accepted graph edge in MongoDB.
+
+    MySQL remains the canonical workflow store for request state (pending/rejected)
+    while MongoDB is used for the accepted connections graph (list/mutual reads).
+    """
     try:
-        upsert_connection_edge(
-            conn.user_a,
-            conn.user_b,
-            status=conn.status,
-            requested_by=getattr(conn, "requested_by", None),
-            connection_id=getattr(conn, "connection_id", None),
-        )
+        if conn.status == "accepted":
+            upsert_connection_edge(
+                conn.user_a,
+                conn.user_b,
+                status="accepted",
+                requested_by=getattr(conn, "requested_by", None),
+                connection_id=getattr(conn, "connection_id", None),
+            )
     except Exception as exc:  # noqa: BLE001
-        log.warning("mongo mirror failed for connection %s: %s", getattr(conn, "connection_id", "?"), exc)
+        log.warning("mongo write failed for connection %s: %s", getattr(conn, "connection_id", "?"), exc)
+
+
+def _delete_edge_from_mongo(conn: Connection) -> None:
+    try:
+        delete_connection_edge(conn.user_a, conn.user_b)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("mongo delete failed for connection %s: %s", getattr(conn, "connection_id", "?"), exc)
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -133,7 +146,6 @@ def request_connection(body: ConnectionRequestBody, db: Session = Depends(get_db
             existing.requested_by = body.requester_id
             db.commit()
             db.refresh(existing)
-            _mirror_to_mongo(existing)
             _produce_connection_event("connection.requested", body.requester_id, existing.connection_id, body)
             return {"request_id": existing.connection_id}
 
@@ -148,7 +160,6 @@ def request_connection(body: ConnectionRequestBody, db: Session = Depends(get_db
     db.add(conn)
     db.commit()
     db.refresh(conn)
-    _mirror_to_mongo(conn)
 
     _produce_connection_event("connection.requested", body.requester_id, connection_id, body)
     log.info(f"Connection request {connection_id} created: {user_a} <-> {user_b}")
@@ -193,7 +204,6 @@ def request_connection_rest(req: Request, body: ConnectionRestRequestBody, db: S
             existing.requested_by = body.user_a
             db.commit()
             db.refresh(existing)
-            _mirror_to_mongo(existing)
             return ok({"connection_id": existing.connection_id, "status": "pending"}, req, status=201)
 
     connection_id = str(uuid.uuid4())
@@ -207,7 +217,6 @@ def request_connection_rest(req: Request, body: ConnectionRestRequestBody, db: S
     db.add(conn)
     db.commit()
     db.refresh(conn)
-    _mirror_to_mongo(conn)
     return ok({"connection_id": connection_id, "status": "pending"}, req, status=201)
 
 
@@ -225,7 +234,7 @@ def accept_connection_rest(connection_id: str, req: Request, db: Session = Depen
     conn.status = "accepted"
     db.commit()
     db.refresh(conn)
-    _mirror_to_mongo(conn)
+    _write_accepted_edge_to_mongo(conn)
     return ok({"connection_id": conn.connection_id, "status": "accepted"}, req, status=200)
 
 
@@ -241,7 +250,7 @@ def reject_connection_rest(connection_id: str, req: Request, db: Session = Depen
     conn.status = "rejected"
     db.commit()
     db.refresh(conn)
-    _mirror_to_mongo(conn)
+    _delete_edge_from_mongo(conn)
     return ok({"connection_id": conn.connection_id, "status": "rejected"}, req, status=200)
 
 
@@ -282,7 +291,7 @@ def accept_connection(body: ActionRequestBody, db: Session = Depends(get_db)):
     conn.status = "accepted"
     db.commit()
     db.refresh(conn)
-    _mirror_to_mongo(conn)
+    _write_accepted_edge_to_mongo(conn)
 
     # Increment connections_count for both users in members table
     try:
@@ -324,7 +333,7 @@ def reject_connection(body: ActionRequestBody, db: Session = Depends(get_db)):
     conn.status = "rejected"
     db.commit()
     db.refresh(conn)
-    _mirror_to_mongo(conn)
+    _delete_edge_from_mongo(conn)
 
     log.info(f"Connection {body.request_id} rejected.")
     return {"success": True}
@@ -332,37 +341,37 @@ def reject_connection(body: ActionRequestBody, db: Session = Depends(get_db)):
 
 @router.post("/list")
 def list_connections(body: ListConnectionsBody, db: Session = Depends(get_db)):
-    """List all accepted connections for a user."""
+    """List accepted connections for a user (MongoDB graph)."""
     offset = (body.page - 1) * body.page_size
+    mdb = connect_mongo()
 
-    connections = db.execute(
-        select(Connection).where(
-            ((Connection.user_a == body.user_id) | (Connection.user_b == body.user_id)),
-            Connection.status == "accepted",
-        )
-        .offset(offset)
+    q = {
+        "status": "accepted",
+        "$or": [{"user_a": body.user_id}, {"user_b": body.user_id}],
+    }
+    cursor = (
+        mdb.connections.find(q, {"_id": 0})
+        .sort([("updated_at", -1)])
+        .skip(offset)
         .limit(body.page_size)
-    ).scalars().all()
-
-    total = db.execute(
-        select(func.count()).select_from(Connection).where(
-            ((Connection.user_a == body.user_id) | (Connection.user_b == body.user_id)),
-            Connection.status == "accepted",
-        )
-    ).scalar()
+    )
+    docs = list(cursor)
 
     results = []
-    for c in connections:
-        requester = c.requested_by
-        addressee = c.user_b if requester == c.user_a else c.user_a
-        results.append({
-            "connection_id": c.connection_id,
-            "requester_member_id": requester,
-            "addressee_member_id": addressee,
-            "status": c.status,
-            "created_at": c.created_at.isoformat() if c.created_at else None,
-            "updated_at": c.created_at.isoformat() if c.created_at else None,
-        })
+    for d in docs:
+        requester = d.get("requested_by") or d.get("user_a")
+        addressee = d.get("user_b") if requester == d.get("user_a") else d.get("user_a")
+        results.append(
+            {
+                "connection_id": d.get("connection_id")
+                or f"mongo-{d.get('user_a')}-{d.get('user_b')}",
+                "requester_member_id": requester,
+                "addressee_member_id": addressee,
+                "status": "accepted",
+                "created_at": d.get("created_at").isoformat() if d.get("created_at") else None,
+                "updated_at": d.get("updated_at").isoformat() if d.get("updated_at") else None,
+            }
+        )
 
     return results
 
@@ -371,18 +380,16 @@ def list_connections(body: ListConnectionsBody, db: Session = Depends(get_db)):
 def mutual_connections(body: MutualConnectionsBody, db: Session = Depends(get_db)):
     """
     Extra credit: Return mutual connections between two users.
-    Uses a CTE-style subquery to find intersection of both users' connection sets.
+    Uses the accepted graph edges from MongoDB.
     """
+    mdb = connect_mongo()
+
     def get_connection_ids(user_id: str):
-        rows = db.execute(
-            select(Connection).where(
-                ((Connection.user_a == user_id) | (Connection.user_b == user_id)),
-                Connection.status == "accepted",
-            )
-        ).scalars().all()
+        q = {"status": "accepted", "$or": [{"user_a": user_id}, {"user_b": user_id}]}
+        rows = mdb.connections.find(q, {"_id": 0, "user_a": 1, "user_b": 1})
         ids = set()
-        for c in rows:
-            other = c.user_b if c.user_a == user_id else c.user_a
+        for r in rows:
+            other = r["user_b"] if r["user_a"] == user_id else r["user_a"]
             ids.add(other)
         return ids
 

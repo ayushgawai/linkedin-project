@@ -66,3 +66,8 @@ def upsert_connection_edge(user_a: str, user_b: str, *, status: str, requested_b
         upsert=True,
     )
 
+
+def delete_connection_edge(user_a: str, user_b: str):
+    db = connect_mongo()
+    db.connections.delete_one({"user_a": user_a, "user_b": user_b})
+
