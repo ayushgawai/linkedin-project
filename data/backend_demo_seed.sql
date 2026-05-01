@@ -53,7 +53,7 @@ VALUES (
   'San Jose, CA',
   'Backend Engineer',
   'Distributed systems engineer with experience in Node.js, MySQL, Docker, and AWS.',
-  'https://example.com/profile/ayush.jpg'
+  'https://i.pravatar.cc/150?img=12'
 )
 ON DUPLICATE KEY UPDATE
   first_name = VALUES(first_name),
@@ -78,25 +78,25 @@ INSERT INTO members (
 VALUES
 (
   '66666666-6666-6666-6666-666666666666',
-  'Demo',
-  'Friend',
-  'demo.friend@example.com',
+  'Rohan',
+  'Mehta',
+  'rohan.mehta@example.com',
   '+1-408-555-0106',
   'San Jose, CA',
   'Software Engineer',
-  'Demo profile for connections graph testing.',
-  NULL
+  'Backend + distributed systems. Happy to connect.',
+  'https://i.pravatar.cc/150?img=32'
 ),
 (
   '77777777-7777-7777-7777-777777777777',
-  'Demo',
-  'Pending',
-  'demo.pending@example.com',
+  'Aisha',
+  'Khan',
+  'aisha.khan@example.com',
   '+1-408-555-0107',
   'San Jose, CA',
   'SWE Intern',
-  'Demo profile for pending connection testing.',
-  NULL
+  'CS student exploring backend + cloud.',
+  'https://i.pravatar.cc/150?img=47'
 )
 ON DUPLICATE KEY UPDATE
   first_name = VALUES(first_name),
