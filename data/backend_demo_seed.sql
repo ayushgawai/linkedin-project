@@ -228,3 +228,31 @@ VALUES
 ON DUPLICATE KEY UPDATE
   status = VALUES(status),
   requested_by = VALUES(requested_by);
+
+-- ----------------------------------------------------------------------------
+-- Demo posts (idempotent)
+-- ----------------------------------------------------------------------------
+INSERT INTO posts
+  (post_id, author_member_id, visibility, content, media_type, media_url, article_title, article_source, poll_options,
+   reactions_count, comments_count, reposts_count, created_at)
+VALUES
+  ('post-seed-1', '22222222-2222-2222-2222-222222222222', 'anyone',
+   'Excited to share our distributed LinkedIn clone is up locally: MySQL + Mongo + Kafka + Redis + AI + analytics.',
+   'text', NULL, NULL, NULL, NULL, 12, 2, 1, NOW() - INTERVAL 2 DAY),
+  ('post-seed-2', '66666666-6666-6666-6666-666666666666', 'anyone',
+   'Hiring: Backend Engineer (Node.js, Kafka). Drop a message if interested.',
+   'text', NULL, NULL, NULL, NULL, 5, 1, 0, NOW() - INTERVAL 1 DAY),
+  ('post-seed-3', '77777777-7777-7777-7777-777777777777', 'connections',
+   'Connections-only update: prepping the demo with two accounts chatting and sending requests.',
+   'text', NULL, NULL, NULL, NULL, 2, 0, 0, NOW() - INTERVAL 12 HOUR)
+ON DUPLICATE KEY UPDATE
+  content = VALUES(content),
+  visibility = VALUES(visibility),
+  media_type = VALUES(media_type),
+  media_url = VALUES(media_url),
+  article_title = VALUES(article_title),
+  article_source = VALUES(article_source),
+  poll_options = VALUES(poll_options),
+  reactions_count = VALUES(reactions_count),
+  comments_count = VALUES(comments_count),
+  reposts_count = VALUES(reposts_count);

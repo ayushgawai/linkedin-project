@@ -283,6 +283,7 @@ services:
       CONNECTION_URL: http://connection:8005
       ANALYTICS_URL: http://analytics:8006
       AI_URL: http://ai-agent:8007
+      POSTS_URL: http://posts:8008
     depends_on:
       profile:
         condition: service_started
@@ -297,6 +298,8 @@ services:
       analytics:
         condition: service_started
       ai-agent:
+        condition: service_started
+      posts:
         condition: service_started
     ports:
       - '8011:8000'
@@ -438,6 +441,30 @@ services:
         condition: service_started
     ports:
       - '${AI_PORT_HOST:-8007}:8007'
+    networks: [backend]
+    restart: unless-stopped
+
+  posts:
+    build:
+      context: ..
+      dockerfile: services/posts/Dockerfile
+    container_name: linkedinclone-posts
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 8008
+      SERVICE_NAME: posts
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASS: ${DB_PASS:-linkedin}
+      DB_NAME: ${DB_NAME:-linkedinclone}
+      DB_POOL_MAX: ${DB_POOL_MAX:-20}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - '${POSTS_PORT_HOST:-8008}:8008'
     networks: [backend]
     restart: unless-stopped
 

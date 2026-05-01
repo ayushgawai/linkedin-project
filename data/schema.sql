@@ -164,3 +164,24 @@ CREATE TABLE IF NOT EXISTS outbox_events (
   sent_at DATETIME NULL,
   INDEX idx_outbox_unsent (sent, created_at)
 ) ENGINE=InnoDB;
+
+-- ----------------------------------------------------------------------------
+-- Posts (feed)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS posts (
+  post_id VARCHAR(64) PRIMARY KEY,
+  author_member_id VARCHAR(36) NULL,
+  visibility ENUM('anyone', 'connections') DEFAULT 'anyone',
+  content TEXT NOT NULL,
+  media_type ENUM('text', 'image', 'article', 'poll') DEFAULT 'text',
+  media_url VARCHAR(2000),
+  article_title VARCHAR(500),
+  article_source VARCHAR(500),
+  poll_options JSON,
+  reactions_count INT DEFAULT 0,
+  comments_count INT DEFAULT 0,
+  reposts_count INT DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_posts_created (created_at DESC),
+  INDEX idx_posts_author (author_member_id, created_at DESC)
+) ENGINE=InnoDB;
