@@ -35,6 +35,70 @@ except ImportError:  # pragma: no cover
     _KAFKA_AVAILABLE = False
 
 
+# ---------------------------------------------------------------------------
+# Frontend-friendly step labels and progress percentages.
+#
+# The Frontend Testing contract (Member 3 — AI Agent, test #11) requires the
+# WebSocket to stream at least these three human-readable progress messages
+# during a shortlist task — each rendered as its own card in the UI:
+#
+#     "Parsing resumes..."
+#     "Computing scores..."
+#     "Generating outreach..."
+#
+# We keep the internal Kafka step names unchanged (so idempotency keys and
+# Mongo trace records are not disturbed) and instead enrich every WS frame
+# with a derived ``message`` and ``progress`` field so the React UI can show
+# typed progress cards without doing its own string-to-label mapping.
+# ---------------------------------------------------------------------------
+
+_STEP_LABEL: dict[str, str] = {
+    "fetching_job":          "Loading job description...",
+    "fetching_applications": "Loading applicants...",
+    "fetching_profiles":     "Loading candidate profiles...",
+    "parsing_resumes":       "Parsing resumes...",
+    "matching":              "Computing scores...",
+    "drafting":              "Generating outreach...",
+    "complete":              "Done",
+    "coach":                 "Generating coaching feedback...",
+    "parsing_resume":        "Parsing resume...",
+    "catchup":               "Reconnected — restoring task state",
+}
+
+_STEP_PROGRESS: dict[str, int] = {
+    "fetching_job":          5,
+    "fetching_applications": 15,
+    "fetching_profiles":     25,
+    "parsing_resumes":       40,
+    "matching":              60,
+    "drafting":              85,
+    "complete":              100,
+    "coach":                 50,
+    "parsing_resume":        50,
+    "catchup":               0,
+}
+
+
+def _derive_message(step: str, status: str) -> str:
+    base = _STEP_LABEL.get(step, step.replace("_", " ").capitalize())
+    if status == "failed":
+        return f"{base} — failed"
+    if status == "running":
+        return base
+    if status == "completed" and step == "complete":
+        return "Done"
+    if status == "completed":
+        return f"{base} done"
+    return base
+
+
+def _derive_progress(step: str, status: str) -> int:
+    pct = _STEP_PROGRESS.get(step, 0)
+    if status == "failed":
+        return pct  # freeze progress at the failing step
+    return pct
+
+
 class KafkaResultsConsumer:
     """Background thread: poll ai.results and broadcast to WS clients."""
 
@@ -114,15 +178,49 @@ class KafkaResultsConsumer:
             if ws_manager.active_count(task_id) == 0:
                 continue
 
-            frame = {
+            step = payload.get("step", "")
+            step_status = payload.get("step_status", "")
+            event_type = envelope.get("event_type", "")
+            partial = payload.get("partial_result") or {}
+
+            # ---- Derive task-level status the frontend can render directly ----
+            #   running         — intermediate progress
+            #   completed       — terminal success
+            #   waiting_approval — recruiter must act before sending outreach
+            #   failed           — terminal failure (UI shows error + retry)
+            if event_type == "ai.completed":
+                ui_status = "completed"
+                # Shortlist tasks finish in the "waiting_approval" phase from
+                # the recruiter's perspective even though the workflow itself
+                # is "completed" — surface that distinction to the UI.
+                if isinstance(partial, dict) and "shortlist" in partial:
+                    ui_status = "waiting_approval"
+            elif event_type == "ai.failed" or step_status == "failed":
+                ui_status = "failed"
+            else:
+                ui_status = "running"
+
+            frame: dict[str, Any] = {
                 "task_id": task_id,
                 "trace_id": envelope.get("trace_id", ""),
-                "event_type": envelope.get("event_type", ""),
-                "step": payload.get("step", ""),
-                "status": payload.get("step_status", ""),
+                "event_type": event_type,
+                "step": step,
+                "status": ui_status,
+                "step_status": step_status,
+                "message": _derive_message(step, step_status),
+                "progress": _derive_progress(step, step_status),
                 "partial_result": payload.get("partial_result"),
                 "timestamp": envelope.get("timestamp", ""),
             }
+            # On failure, expose a retryable flag the UI can use to enable a
+            # retry button instead of freezing the panel.
+            if ui_status == "failed":
+                frame["error"] = (
+                    (partial or {}).get("reason")
+                    or (partial or {}).get("error")
+                    or "Task failed"
+                )
+                frame["retryable"] = True
 
             # Hand the broadcast off to the FastAPI asyncio loop
             asyncio.run_coroutine_threadsafe(

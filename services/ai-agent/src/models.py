@@ -277,10 +277,19 @@ class CoachRequest(BaseModel):
 
 class CoachResponse(BaseModel):
     member_id: str
-    resume_improvements: list[str] = Field(default_factory=list)
+    # Frontend contract fields (Q6 / Frontend Testing Assignment):
+    # match_score is an integer 0-100 — never null or undefined.
+    match_score: int = 0
+    # Skills the member already has that the target job requires.
+    matching_skills: list[str] = Field(default_factory=list)
+    # Skills the target job requires that the member is missing.
+    missing_skills: list[str] = Field(default_factory=list)
     headline_suggestion: str = ""
-    skills_to_add: list[str] = Field(default_factory=list)
+    resume_improvements: list[str] = Field(default_factory=list)
     rationale: str = ""
+    # Backwards-compatible alias for older internal callers / Mongo traces.
+    # Mirrors `missing_skills`. Frontend should prefer `missing_skills`.
+    skills_to_add: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
