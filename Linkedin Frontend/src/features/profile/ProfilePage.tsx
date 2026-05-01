@@ -1017,7 +1017,7 @@ export default function ProfilePage(): JSX.Element {
 
         {own || (display.skills?.length ?? 0) > 0 ? (
           <Card id="skills">
-            <SectionHeader title="Skills" own={own} onAdd={() => openModal('skill')} onEdit={() => openModal('skill')} />
+            <SectionHeader title="Skills" own={own} onAdd={() => openModal('skill')} onEdit={() => openModal('skillsManage')} />
             <Card.Body>
               {!(display.skills?.length ?? 0) && own ? (
                 <button type="button" className="flex w-full flex-col items-center gap-2 py-8" onClick={() => openModal('skill')}>
@@ -1039,7 +1039,7 @@ export default function ProfilePage(): JSX.Element {
 
         {own || (display.courses?.length ?? 0) > 0 ? (
           <Card>
-            <SectionHeader title="Courses" own={own} onAdd={() => openModal('course')} onEdit={() => openModal('course')} />
+            <SectionHeader title="Courses" own={own} onAdd={() => openModal('course')} onEdit={() => openModal('coursesManage')} />
             <Card.Body>
               {!(display.courses?.length ?? 0) && own ? (
                 <button type="button" className="py-6 text-sm font-semibold text-brand-primary" onClick={() => openModal('course')}>
@@ -1047,8 +1047,8 @@ export default function ProfilePage(): JSX.Element {
                 </button>
               ) : (
                 <ul className="space-y-2">
-                  {(display.courses ?? []).slice(0, 3).map((c) => (
-                    <li key={c} className="font-semibold">
+                  {(display.courses ?? []).map((c, idx) => (
+                    <li key={`${c}-${idx}`} className="font-semibold">
                       {c}
                     </li>
                   ))}

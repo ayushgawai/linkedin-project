@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """LinkedIn Clone — Database Schema Diagram (clean rebuild)."""
 
+from pathlib import Path
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -343,7 +345,7 @@ ax.annotate("", xy=(lx+12.2, ly), xytext=(lx+11.1, ly),
 ax.text(lx+12.4, ly, "= FK relationship", fontsize=8, color="#444", va="center")
 
 # ── Save ───────────────────────────────────────────────────────────────────
-out = "/Users/sharanp/Distributed System/linkedinclone/docs/schema_diagram.png"
+out = Path(__file__).resolve().parent / "schema_diagram.png"
 plt.savefig(out, dpi=200, bbox_inches="tight",
     facecolor=CANVAS, edgecolor="none")
 print(f"Saved → {out}")

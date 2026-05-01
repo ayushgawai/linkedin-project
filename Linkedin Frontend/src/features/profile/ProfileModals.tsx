@@ -21,7 +21,9 @@ export type ProfileModalKey =
   | 'license'
   | 'project'
   | 'skill'
+  | 'skillsManage'
   | 'course'
+  | 'coursesManage'
   | 'featured'
   | 'openToWork'
   | 'contact'
@@ -274,6 +276,27 @@ export function ProfileModals({ active, editId, onClose }: Props): JSX.Element |
     )
   }
 
+  if (active === 'skillsManage') {
+    return (
+      <SkillsManageModal
+        initialSkills={profile.skills.map((s) => s.name)}
+        onClose={onClose}
+        onSave={async (skillsList) => {
+          const deduped = Array.from(new Map(skillsList.map((s) => [s.toLowerCase(), s.trim()])).values()).filter(Boolean)
+          patchProfile({
+            skills: deduped.map((name) => ({ id: makeId('skill'), name })),
+          })
+          const memberId = authUser?.member_id || profile.member_id
+          if (!USE_MOCKS && memberId) {
+            await updateMember(memberId, { skills: deduped })
+          }
+          actionToast.profileUpdated()
+          onClose()
+        }}
+      />
+    )
+  }
+
   if (active === 'skill') {
     return (
       <SkillModal
@@ -285,10 +308,11 @@ export function ProfileModals({ active, editId, onClose }: Props): JSX.Element |
           // Optimistic local update for immediate UI feedback.
           addSkill({ id: makeId('skill'), name: trimmed })
 
-          // Persist to backend so Career Coach reads real skills.
+          // Persist to backend so Career Coach reads real skills (use fresh store after addSkill).
           const memberId = authUser?.member_id || profile.member_id
+          const currentNames = useProfileStore.getState().profile.skills.map((s) => s.name)
           const nextSkills = Array.from(
-            new Map([...profile.skills.map((s) => s.name), trimmed].map((s) => [s.toLowerCase(), s.trim()])).values(),
+            new Map([...currentNames, trimmed].map((s) => [s.toLowerCase(), s.trim()])).values(),
           ).filter(Boolean)
 
           if (!USE_MOCKS && memberId) {
@@ -296,6 +320,21 @@ export function ProfileModals({ active, editId, onClose }: Props): JSX.Element |
           }
         }}
         actionToast={actionToast}
+      />
+    )
+  }
+
+  if (active === 'coursesManage') {
+    return (
+      <CoursesManageModal
+        initialCourses={profile.courses}
+        onClose={onClose}
+        onSave={(coursesList) => {
+          const deduped = Array.from(new Map(coursesList.map((c) => [c.toLowerCase(), c.trim()])).values()).filter(Boolean)
+          patchProfile({ courses: deduped })
+          actionToast.profileUpdated()
+          onClose()
+        }}
       />
     )
   }
@@ -911,6 +950,85 @@ function ProjectModal({
           </Button>
           <Button onClick={save}>Save</Button>
         </div>
+      </Modal.Footer>
+    </Modal>
+  )
+}
+
+function SkillsManageModal({
+  initialSkills,
+  onClose,
+  onSave,
+}: {
+  initialSkills: string[]
+  onClose: () => void
+  onSave: (skills: string[]) => void | Promise<void>
+}): JSX.Element {
+  const [skills, setSkills] = useState<string[]>(initialSkills)
+  useEffect(() => {
+    setSkills(initialSkills)
+  }, [initialSkills])
+
+  const save = async (): Promise<void> => {
+    const normalized = Array.from(new Map(skills.map((s) => [s.trim().toLowerCase(), s.trim()])).values()).filter(Boolean)
+    await onSave(normalized)
+  }
+
+  return (
+    <Modal isOpen onClose={onClose} title="Skills" size="md">
+      <Modal.Header>Edit skills</Modal.Header>
+      <Modal.Body>
+        <p className="mb-3 text-xs text-text-secondary">
+          Add, remove, or reorder skills shown on your profile. Changes sync to Profile service via{' '}
+          <code className="rounded bg-black/5 px-1 py-0.5 text-[11px]">POST /members/update</code> (skills stored in{' '}
+          <span className="font-medium text-text-primary">member_skills</span>).
+        </p>
+        <ChipInput value={skills} onChange={setSkills} max={40} suggestions={COMMON_TECH_SKILLS} />
+      </Modal.Body>
+      <Modal.Footer>
+        <Button variant="tertiary" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button onClick={() => void save()}>Save</Button>
+      </Modal.Footer>
+    </Modal>
+  )
+}
+
+function CoursesManageModal({
+  initialCourses,
+  onClose,
+  onSave,
+}: {
+  initialCourses: string[]
+  onClose: () => void
+  onSave: (courses: string[]) => void
+}): JSX.Element {
+  const [courses, setCourses] = useState<string[]>(initialCourses)
+  useEffect(() => {
+    setCourses(initialCourses)
+  }, [initialCourses])
+
+  const save = (): void => {
+    const normalized = Array.from(new Map(courses.map((c) => [c.trim().toLowerCase(), c.trim()])).values()).filter(Boolean)
+    onSave(normalized)
+  }
+
+  return (
+    <Modal isOpen onClose={onClose} title="Courses" size="md">
+      <Modal.Header>Edit courses</Modal.Header>
+      <Modal.Body>
+        <p className="mb-3 text-xs text-text-secondary">
+          Courses are shown on your profile locally. Profile service persists skills and core fields; edit this list here to
+          add or remove displayed courses without using the quick-add modal.
+        </p>
+        <ChipInput value={courses} onChange={setCourses} max={24} suggestions={[]} />
+      </Modal.Body>
+      <Modal.Footer>
+        <Button variant="tertiary" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button onClick={save}>Save</Button>
       </Modal.Footer>
     </Modal>
   )
