@@ -6,12 +6,17 @@ Outputs into results/charts/:
   - scenario_B_config_comparison.png
   - scenario_C_config_comparison.png
 
+Only includes .jtl rows whose filename contains _{N}u_ (thread count) when
+BENCH_CHART_THREADS or BENCH_JMETER_THREADS is set, so all four bars match
+the same load. run_all.sh sets BENCH_CHART_THREADS from BENCH_JMETER_THREADS.
+
 Usage:   python3 infra/perf/scripts/compare_chart.py [results_dir]
 Requires matplotlib:  pip3 install matplotlib
 """
 
 import csv
 import os
+import re
 import sys
 from collections import defaultdict
 
@@ -42,21 +47,89 @@ CONFIG_TO_MODE = {
     "B+S+K+Other": "bsk_other",
 }
 
+_FILE_TS = re.compile(r"(\d{8}-\d{6})\.jtl$")
 
-def load_rows():
+
+def _file_timestamp(filename):
+    m = _FILE_TS.search(filename or "")
+    return m.group(1) if m else ""
+
+
+def _thread_tag_from_env():
+    raw = os.environ.get("BENCH_CHART_THREADS") or os.environ.get("BENCH_JMETER_THREADS")
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        n = int(str(raw).strip())
+        return f"_{n}u_"
+    except ValueError:
+        return None
+
+
+def _row_count(rows):
+    return sum(len(by_cfg) for by_cfg in rows.values())
+
+
+def _build_rows(thread_tag):
     rows = defaultdict(dict)  # {scenario: {config_label: row}}
     with open(SUMMARY, newline="") as f:
         for r in csv.DictReader(f):
+            fname = r.get("file", "")
+            if thread_tag and thread_tag not in fname:
+                continue
+
             cfg = r.get("config_label") or map_mode_to_config(r.get("mode", ""))
-            rows[r["scenario"]][cfg] = r
+            if cfg not in CONFIG_ORDER:
+                continue
+            sc = r["scenario"]
+            prev = rows[sc].get(cfg)
+            if prev is None:
+                rows[sc][cfg] = r
+                continue
+
+            prev_file = prev.get("file", "")
+            cur_file = r.get("file", "")
+            prev_is_10 = "_10users_" in prev_file
+            cur_is_10 = "_10users_" in cur_file
+            if thread_tag:
+                if _file_timestamp(cur_file) >= _file_timestamp(prev_file):
+                    rows[sc][cfg] = r
+            elif cur_is_10 and not prev_is_10:
+                rows[sc][cfg] = r
+            elif cur_is_10 == prev_is_10:
+                rows[sc][cfg] = r
     return rows
+
+
+def load_rows():
+    requested = _thread_tag_from_env()
+    if requested:
+        print(
+            f"[compare_chart] preferring files containing {requested!r} (same thread count per bar)",
+            file=sys.stderr,
+        )
+
+    rows = _build_rows(requested)
+    effective = requested
+
+    if requested and _row_count(rows) == 0:
+        print(
+            "[compare_chart] WARNING: no summary rows matched the thread tag. "
+            "Your .jtl files may predate run_all.sh tagging — using all runs (load may differ per bar). "
+            "Re-run: bash infra/perf/scripts/run_all.sh full",
+            file=sys.stderr,
+        )
+        rows = _build_rows(None)
+        effective = None
+
+    return rows, effective
 
 
 def map_mode_to_config(mode):
     m = (mode or "").lower()
-    if m == "off":
+    if m in ("off", "b"):
         return "B"
-    if m == "on":
+    if m in ("on", "bs"):
         return "B+S"
     if m == "bsk":
         return "B+S+K"
@@ -65,7 +138,7 @@ def map_mode_to_config(mode):
     return mode
 
 
-def chart_scenario(rows, scenario):
+def chart_scenario(rows, scenario, threads_note=None):
     import numpy as np
     by_cfg = rows.get(scenario, {})
     x = np.arange(len(CONFIG_ORDER))
@@ -105,7 +178,10 @@ def chart_scenario(rows, scenario):
     ax2.set_ylabel("P95 latency (ms)", color="#0d47a1")
     ax2.tick_params(axis="y", labelcolor="#0d47a1")
 
-    ax1.set_title(f"Scenario {scenario}: B vs B+S vs B+S+K vs B+S+K+Other")
+    title = f"Scenario {scenario}: B vs B+S vs B+S+K vs B+S+K+Other"
+    if threads_note:
+        title += f" ({threads_note} concurrent threads)"
+    ax1.set_title(title)
 
     # Annotate bars and missing configs.
     for i, b in enumerate(bars):
@@ -152,11 +228,22 @@ def chart_scenario(rows, scenario):
 
 
 def main():
-    rows = load_rows()
-    if not rows:
-        print("[compare_chart] summary.csv is empty"); sys.exit(1)
+    rows, thread_tag_effective = load_rows()
+    if _row_count(rows) == 0:
+        print("[compare_chart] summary.csv has no usable rows for A/B/C charts.", file=sys.stderr)
+        sys.exit(1)
+
+    threads_note = None
+    if thread_tag_effective:
+        raw_threads = os.environ.get("BENCH_CHART_THREADS") or os.environ.get("BENCH_JMETER_THREADS")
+        if raw_threads and str(raw_threads).strip():
+            threads_note = str(raw_threads).strip()
+        else:
+            m = re.search(r"_(\d+)u_", thread_tag_effective)
+            threads_note = m.group(1) if m else None
+
     for scenario in ["A", "B", "C"]:
-        chart_scenario(rows, scenario)
+        chart_scenario(rows, scenario, threads_note)
     print(f"[compare_chart] done — charts in {CHARTS_DIR}")
 
 

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
   <hashTree>
-    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="Scenario B — Analytics Dashboard">
+    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="Scenario D — Analytics Dashboard">
       <stringProp name="TestPlan.comments">Expensive Mongo aggregations behind getOrSet(). Redis ON vs OFF is the headline chart.</stringProp>
       <boolProp name="TestPlan.functional_mode">false</boolProp>
       <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>

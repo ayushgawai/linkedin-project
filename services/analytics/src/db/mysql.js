@@ -6,6 +6,9 @@ let pool = null;
 
 export function getPool() {
   if (pool) return pool;
+  const tunedPoolMax = config.OTHER_TECHNIQUES_ENABLED
+    ? config.DB_POOL_MAX * 2
+    : config.DB_POOL_MAX;
   pool = mysql.createPool({
     host: config.DB_HOST,
     port: config.DB_PORT,
@@ -13,14 +16,19 @@ export function getPool() {
     password: config.DB_PASS,
     database: config.DB_NAME,
     waitForConnections: true,
-    connectionLimit: config.DB_POOL_MAX,
+    connectionLimit: tunedPoolMax,
     queueLimit: 0,
     enableKeepAlive: true,
     keepAliveInitialDelay: 10_000,
     namedPlaceholders: true,
   });
   logger.info(
-    { host: config.DB_HOST, db: config.DB_NAME, pool_max: config.DB_POOL_MAX },
+    {
+      host: config.DB_HOST,
+      db: config.DB_NAME,
+      pool_max: tunedPoolMax,
+      other_techniques_enabled: config.OTHER_TECHNIQUES_ENABLED,
+    },
     'mysql pool created',
   );
   return pool;

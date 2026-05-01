@@ -22,7 +22,7 @@ async function main() {
     console.error(`[summarize] ${RESULTS_DIR} does not exist`);
     process.exit(1);
   }
-  const files = fs.readdirSync(RESULTS_DIR).filter((f) => f.endsWith('.jtl'));
+  const files = fs.readdirSync(RESULTS_DIR).filter((f) => f.endsWith('.jtl')).sort();
   if (files.length === 0) {
     console.error('[summarize] no .jtl files found — run run_all.sh first');
     process.exit(1);
@@ -59,18 +59,50 @@ async function main() {
 
 function mapModeToConfig(mode) {
   const m = (mode || '').toLowerCase();
-  if (m === 'off') return 'B';
-  if (m === 'on') return 'B+S';
+  if (m === 'off' || m === 'b') return 'B';
+  if (m === 'on' || m === 'bs') return 'B+S';
   if (m === 'bsk') return 'B+S+K';
   if (m === 'bsk_other' || m === 'bsk+other' || m === 'bskother') return 'B+S+K+Other';
   return mode || 'unknown';
 }
 
+/** Timestamp suffix; optional thread segment {N}u before it (run_all.sh). */
+const TS_SUFFIX = /^\d{8}-\d{6}$/;
+const THREAD_MID = /^\d+u$/;
+
 function parseTag(filename) {
-  // e.g. "A_on_20260419-154200.jtl"
   const base = filename.replace(/\.jtl$/, '');
   const parts = base.split('_');
-  return [parts[0], parts[1]];
+  const scenario = parts[0] || '?';
+
+  if (parts.length < 3) {
+    return [scenario, parts[1] || 'unknown'];
+  }
+
+  const last = parts[parts.length - 1];
+  if (!TS_SUFFIX.test(last)) {
+    return [scenario, parts[1] || 'unknown'];
+  }
+
+  let end = parts.length - 1;
+  if (end >= 1 && THREAD_MID.test(parts[end - 1])) {
+    end -= 1;
+  }
+
+  const modeParts = parts.slice(1, end);
+  if (
+    modeParts.length === 2 &&
+    modeParts[0] === 'bsk' &&
+    modeParts[1] === 'other'
+  ) {
+    return [scenario, 'bsk_other'];
+  }
+
+  let mode = modeParts.join('_');
+  if (mode.endsWith('_10users')) {
+    mode = mode.slice(0, -'_10users'.length);
+  }
+  return [scenario, mode];
 }
 
 async function aggregateJtl(filePath) {

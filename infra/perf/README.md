@@ -1,16 +1,17 @@
 # infra/perf — JMeter Performance Suite
 
 End-to-end load / benchmark suite for Member 5's Phase 5 deliverable.
-Three scenarios, each run in **Redis-ON** and **Redis-OFF** modes, then
-compared to produce the "cache impact" charts that appear in the report.
+Scenarios can be run in base (`b`), SQL cache (`bs`), Kafka (`bsk`), and
+Kafka + additional techniques (`bsk_other`) modes for side-by-side comparison.
 
 ## Scenarios
 
-| ID  | Name                          | Target endpoints                                                                                               | Users / duration | What it proves                                                        |
-| --- | ----------------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------- | --------------------------------------------------------------------- |
-| A   | Job search + detail           | `POST /jobs/search`, `POST /jobs/get`                                                                          | 50 / 120 s       | Read-path cache-aside win on a realistic "browse + drill-down" flow    |
-| B   | Analytics dashboard           | `POST /analytics/jobs/top`, `POST /analytics/funnel`, `POST /analytics/geo`, `POST /analytics/member/dashboard` | 30 / 120 s       | Redis caching of expensive Mongo aggregations (the headline chart)     |
-| C   | Profile read + invalidation   | `POST /members/get` (90%), `POST /members/update` (10%)                                                        | 50 / 120 s       | Cache-aside with write-through invalidation (stale-read risk exposed)  |
+| ID  | Name                        | Target endpoints                                                                                                 | Users / duration | What it proves                                                            |
+| --- | --------------------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------- |
+| A   | Job search + detail         | `POST /jobs/search`, `POST /jobs/get`                                                                            | 100 / 60 s       | Read-path cache-aside win on a realistic "browse + drill-down" flow      |
+| B   | Application submit          | `POST /applications/submit`                                                                                      | 100 / 60 s       | Write-path contention + Kafka emit cost under concurrent application load |
+| C   | Profile read + invalidation | `POST /members/get` (90%), `POST /members/update` (10%)                                                          | 100 / 60 s       | Cache-aside with write-through invalidation (stale-read risk exposed)    |
+| D   | Analytics dashboard         | `POST /analytics/jobs/top`, `POST /analytics/funnel`, `POST /analytics/geo`, `POST /analytics/member/dashboard` | 100 / 60 s       | Aggregation-heavy analytics endpoints and optional "Other" optimizations |
 
 Each scenario writes a raw `.jtl` to `results/<scenario>_<mode>_<timestamp>.jtl`
 plus a JMeter HTML report to `results/<scenario>_<mode>_<timestamp>/`.
@@ -28,14 +29,20 @@ plus a JMeter HTML report to `results/<scenario>_<mode>_<timestamp>/`.
 ## Running
 
 ```bash
-# From repo root — runs all 3 scenarios, both modes, generates charts.
+# From repo root — backward-compatible default (legacy on/off sequence).
 bash infra/perf/scripts/run_all.sh
 
-# Run a single scenario in one mode (quick sanity check).
-bash infra/perf/scripts/run_all.sh --only=A --mode=on
+# Run one explicit mode.
+bash infra/perf/scripts/run_all.sh b
+bash infra/perf/scripts/run_all.sh bs
+bash infra/perf/scripts/run_all.sh bsk
+bash infra/perf/scripts/run_all.sh bsk_other
+
+# Run all named modes in sequence (b, bs, bsk, bsk_other).
+bash infra/perf/scripts/run_all.sh full
 
 # Custom duration / user count via env vars:
-BENCH_JMETER_DURATION=30 BENCH_JMETER_THREADS=10 bash infra/perf/scripts/run_all.sh --only=B
+BENCH_JMETER_DURATION=30 BENCH_JMETER_THREADS=10 bash infra/perf/scripts/run_all.sh bsk --only=A
 ```
 
 Between runs the script:
@@ -62,13 +69,35 @@ infra/perf/results/
     └── cache_hit_ratio_timeline.png
 ```
 
+## Mode Flags
+
+`run_all.sh` applies mode-specific env flags before each JMeter pass:
+
+- `b`: `REDIS_ENABLED=false`, `KAFKA_ENABLED=false`
+- `bs`: `REDIS_ENABLED=true`, `KAFKA_ENABLED=false`
+- `bsk`: `REDIS_ENABLED=true`, `KAFKA_ENABLED=true`, `OTHER_TECHNIQUES_ENABLED=false`
+- `bsk_other`: `REDIS_ENABLED=true`, `KAFKA_ENABLED=true`, `OTHER_TECHNIQUES_ENABLED=true`
+
+## What "Other" Means
+
+`OTHER_TECHNIQUES_ENABLED` is implemented in the analytics service and currently toggles:
+
+1. **MySQL pool boost**: doubles analytics `DB_POOL_MAX` (`connectionLimit=DB_POOL_MAX*2`).
+2. **Analytics endpoint caching**: enables Redis `getOrSet(..., 30s)` caching for:
+   - `POST /analytics/jobs/top`
+   - `POST /analytics/funnel`
+   - `POST /analytics/geo`
+
+When `OTHER_TECHNIQUES_ENABLED=false`, those endpoints bypass Redis and query MongoDB/MySQL directly.
+
 ## Toggling Redis off
 
 `run_all.sh` does this for you. Manual flip:
 
 ```bash
-REDIS_ENABLED=false docker compose -f infra/docker-compose.yml \
-  up -d --no-deps --force-recreate profile job analytics
+REDIS_ENABLED=false KAFKA_ENABLED=false OTHER_TECHNIQUES_ENABLED=false \
+  docker compose -f infra/docker-compose.yml \
+  up -d --no-deps --force-recreate profile job application analytics
 ```
 
 The services continue running — `cache.js` degrades gracefully, every

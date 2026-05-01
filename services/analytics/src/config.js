@@ -36,6 +36,10 @@ const EnvSchema = z.object({
     .default('info'),
 
   ANALYTICS_CACHE_TTL_SEC: z.coerce.number().int().positive().default(60),
+  OTHER_TECHNIQUES_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
 
   BENCH_ADMIN_TOKEN: z.string().default('dev-only'),
 });

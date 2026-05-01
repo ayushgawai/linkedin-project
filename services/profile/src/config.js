@@ -21,6 +21,10 @@ const EnvSchema = z.object({
 
   CACHE_TTL_ENTITY_SEC: z.coerce.number().int().positive().default(300),
   CACHE_TTL_SEARCH_SEC: z.coerce.number().int().positive().default(60),
+  OTHER_TECHNIQUES_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
 
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
 });

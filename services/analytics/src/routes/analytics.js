@@ -1,13 +1,58 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { validate } from '../util/validator.js';
-import { ok } from '../util/envelope.js';
 import { getDb } from '../db/mongo.js';
 import { getPool } from '../db/mysql.js';
 import { config } from '../config.js';
 import { getOrSet, keys } from '../../../shared/cache.js';
 
 export const analyticsRouter = Router();
+const OTHER_TECHNIQUES_ANALYTICS_TTL_SEC = 30;
+
+async function getAnalyticsResult(cacheKey, loader) {
+  if (!config.OTHER_TECHNIQUES_ENABLED) {
+    return loader();
+  }
+  return getOrSet(cacheKey, OTHER_TECHNIQUES_ANALYTICS_TTL_SEC, loader);
+}
+
+// ---------------------------------------------------------------------------
+// GET /analytics/events
+// Recent ingested events (frontend AnalyticsEvent[] contract).
+// ---------------------------------------------------------------------------
+analyticsRouter.get('/analytics/events', async (req, res, next) => {
+  try {
+    const page = Math.max(1, Number.parseInt(String(req.query.page ?? '1'), 10) || 1);
+    const page_size = Math.min(200, Math.max(1, Number.parseInt(String(req.query.page_size ?? '50'), 10) || 50));
+    const event_type = typeof req.query.event_type === 'string' && req.query.event_type.trim()
+      ? req.query.event_type.trim()
+      : null;
+    const skip = (page - 1) * page_size;
+
+    const match = event_type ? { event_type } : {};
+    const rows = await getDb().collection('events')
+      .find(match)
+      .sort({ timestamp: -1, _received_at: -1 })
+      .skip(skip)
+      .limit(page_size)
+      .toArray();
+
+    // Frontend expects AnalyticsEvent[] directly (not envelope).
+    const events = rows.map((r) => ({
+      event_id: String(r._id),
+      member_id: r.actor_id ?? null,
+      event_type: r.event_type || '',
+      event_source: r._source || 'unknown',
+      entity_id: r.entity?.entity_id ?? r.entity_id ?? null,
+      metadata: r.payload && typeof r.payload === 'object' ? r.payload : {},
+      occurred_at: r.timestamp || (r._received_at instanceof Date ? r._received_at.toISOString() : new Date().toISOString()),
+    }));
+
+    return res.json(events);
+  } catch (err) {
+    next(err);
+  }
+});
 
 // ---------------------------------------------------------------------------
 // POST /analytics/jobs/top
@@ -15,6 +60,8 @@ export const analyticsRouter = Router();
 // ---------------------------------------------------------------------------
 
 const TopJobsSchema = z.object({
+  // Frontend sends "window", docs also allow window_days.
+  window: z.enum(['7d', '14d', '30d', '90d']).optional(),
   metric: z.enum(['applications', 'views', 'saves']).default('applications'),
   window_days: z.number().int().positive().max(365).default(30),
   limit: z.number().int().positive().max(100).default(10),
@@ -29,10 +76,14 @@ const METRIC_TO_EVENT = {
 
 analyticsRouter.post('/analytics/jobs/top', async (req, res, next) => {
   try {
-    const { metric, window_days, limit, sort } = validate(TopJobsSchema, req.body);
+    const parsed = validate(TopJobsSchema, req.body);
+    const window_days = resolveWindowDays(parsed);
+    const metric = parsed.metric;
+    const limit = parsed.limit;
+    const sort = parsed.sort;
     const cacheKey = keys.analyticsTopJobs(metric, window_days, limit, sort);
 
-    const data = await getOrSet(cacheKey, config.ANALYTICS_CACHE_TTL_SEC, async () => {
+    const data = await getAnalyticsResult(cacheKey, async () => {
       const eventType = METRIC_TO_EVENT[metric];
       const since = new Date(Date.now() - window_days * 86_400_000);
 
@@ -70,10 +121,107 @@ analyticsRouter.post('/analytics/jobs/top', async (req, res, next) => {
         count: r.count,
       }));
 
-      return { metric, window_days, jobs };
+      // Frontend recruiter dashboard expects this richer shape.
+      const top_jobs_by_applications = jobs.map((j) => ({
+        name: j.title || j.job_id,
+        value: Number(j.count) || 0,
+      }));
+      const clicks_per_job = jobs.slice(0, 8).map((j) => ({
+        name: j.title || j.job_id,
+        value: Number(j.count) || 0,
+      }));
+
+      const savedByDay = await getDb().collection('events').aggregate([
+        {
+          $match: {
+            event_type: 'job.saved',
+            timestamp: { $gte: since.toISOString() },
+          },
+        },
+        {
+          $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d', date: { $toDate: '$timestamp' } } },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ]).toArray();
+      const saved_jobs_trend = savedByDay.map((r) => ({ date: `${r._id}T00:00:00.000Z`, value: Number(r.count) || 0 }));
+
+      const [[kpiRow]] = await getPool().query(
+        `SELECT
+            COUNT(CASE WHEN status='open' THEN 1 END) AS active_jobs,
+            COALESCE(SUM(applicants_count), 0) AS total_applicants
+           FROM jobs`,
+      );
+
+      const kpis = {
+        active_jobs: Number(kpiRow?.active_jobs || 0),
+        total_applicants: Number(kpiRow?.total_applicants || 0),
+        avg_time_to_review_days: 0,
+        pending_messages: 0,
+      };
+
+      return {
+        // New recruiter dashboard contract fields:
+        kpis,
+        top_jobs_by_applications,
+        clicks_per_job,
+        saved_jobs_trend,
+        // Keep old fields for backwards compatibility:
+        metric,
+        window_days,
+        jobs,
+      };
     });
 
-    return res.json(ok(data, req.traceId));
+    return res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /analytics/jobs/saved-per-day
+// Saved-jobs time series over the requested window.
+// ---------------------------------------------------------------------------
+
+const SavedPerDaySchema = z.object({
+  window_days: z.number().int().positive().max(365).default(30),
+});
+
+analyticsRouter.post('/analytics/jobs/saved-per-day', async (req, res, next) => {
+  try {
+    const { window_days } = validate(SavedPerDaySchema, req.body);
+    const since = new Date(Date.now() - window_days * 86_400_000);
+
+    const rows = await getDb().collection('events').aggregate([
+      {
+        $match: {
+          event_type: 'job.saved',
+          timestamp: { $gte: since.toISOString() },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            $dateToString: {
+              format: '%Y-%m-%d',
+              date: { $toDate: '$timestamp' },
+            },
+          },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]).toArray();
+
+    return res.json({
+      trend: rows.map((r) => ({
+        date: r._id,
+        count: Number(r.count) || 0,
+      })),
+    });
   } catch (err) {
     next(err);
   }
@@ -85,27 +233,51 @@ analyticsRouter.post('/analytics/jobs/top', async (req, res, next) => {
 // ---------------------------------------------------------------------------
 
 const FunnelSchema = z.object({
-  job_id: z.string().min(1),
-  window_days: z.number().int().positive().max(365).default(30),
+  // Frontend currently calls this without job_id.
+  job_id: z.string().min(1).optional(),
+  recruiter_id: z.string().min(1).optional(),
+  window: z.enum(['7d', '14d', '30d', '90d']).optional(),
+  window_days: z.number().int().positive().max(365).optional(),
 });
 
 analyticsRouter.post('/analytics/funnel', async (req, res, next) => {
   try {
-    const { job_id, window_days } = validate(FunnelSchema, req.body);
-    const cacheKey = keys.analyticsFunnel(job_id, window_days);
+    const parsed = validate(FunnelSchema, req.body);
+    const window_days = resolveWindowDays(parsed);
+    const cacheKey = keys.analyticsFunnel(parsed.job_id || 'all', window_days);
 
-    const data = await getOrSet(cacheKey, config.ANALYTICS_CACHE_TTL_SEC, async () => {
+    const data = await getAnalyticsResult(cacheKey, async () => {
       const since = new Date(Date.now() - window_days * 86_400_000);
+      const match = {
+        'entity.entity_type': 'job',
+        event_type: { $in: ['job.viewed', 'job.saved', 'apply_start', 'application.submitted'] },
+        timestamp: { $gte: since.toISOString() },
+      };
+      if (parsed.job_id) {
+        match['entity.entity_id'] = parsed.job_id;
+      } else if (parsed.recruiter_id) {
+        const [jobRows] = await getPool().query(
+          'SELECT job_id FROM jobs WHERE recruiter_id = :recruiter_id',
+          { recruiter_id: parsed.recruiter_id },
+        );
+        const ids = jobRows.map((r) => r.job_id);
+        if (ids.length === 0) {
+          return {
+            job_id: null,
+            window_days,
+            view: 0,
+            save: 0,
+            apply_start: 0,
+            submit: 0,
+            rates: { view_to_save: 0, save_to_apply_start: 0, apply_start_to_submit: 0, view_to_submit: 0 },
+            low_performing_jobs: [],
+          };
+        }
+        match['entity.entity_id'] = { $in: ids };
+      }
 
       const rows = await getDb().collection('events').aggregate([
-        {
-          $match: {
-            'entity.entity_type': 'job',
-            'entity.entity_id': job_id,
-            event_type: { $in: ['job.viewed', 'job.saved', 'apply_start', 'application.submitted'] },
-            timestamp: { $gte: since.toISOString() },
-          },
-        },
+        { $match: match },
         { $group: { _id: '$event_type', count: { $sum: 1 } } },
       ]).toArray();
 
@@ -122,10 +294,51 @@ analyticsRouter.post('/analytics/funnel', async (req, res, next) => {
         apply_start_to_submit: safeRate(submit, apply_start),
         view_to_submit: safeRate(submit, view),
       };
-      return { job_id, window_days, view, save, apply_start, submit, rates };
+
+      // Frontend recruiter dashboard expects low_performing_jobs from this endpoint.
+      const lowAgg = await getDb().collection('events').aggregate([
+        {
+          $match: {
+            event_type: 'application.submitted',
+            'entity.entity_type': 'job',
+            ...(parsed.job_id ? { 'entity.entity_id': parsed.job_id } : {}),
+            timestamp: { $gte: since.toISOString() },
+          },
+        },
+        { $group: { _id: '$entity.entity_id', count: { $sum: 1 } } },
+        { $sort: { count: 1 } },
+        { $limit: 5 },
+      ]).toArray();
+      const lowIds = lowAgg.map((r) => r._id).filter(Boolean);
+      let lowTitleMap = new Map();
+      if (lowIds.length) {
+        const placeholders = lowIds.map(() => '?').join(',');
+        const [rowsTitle] = await getPool().query(
+          `SELECT job_id, title FROM jobs WHERE job_id IN (${placeholders})`,
+          lowIds,
+        );
+        lowTitleMap = new Map(rowsTitle.map((r) => [r.job_id, r.title]));
+      }
+      const low_performing_jobs = lowAgg.map((r) => ({
+        name: lowTitleMap.get(r._id) || r._id,
+        value: Number(r.count) || 0,
+      }));
+
+      return {
+        // Frontend-recruiter field:
+        low_performing_jobs,
+        // Backwards-compatible funnel shape:
+        job_id: parsed.job_id || null,
+        window_days,
+        view,
+        save,
+        apply_start,
+        submit,
+        rates,
+      };
     });
 
-    return res.json(ok(data, req.traceId));
+    return res.json(data);
   } catch (err) {
     next(err);
   }
@@ -137,28 +350,44 @@ analyticsRouter.post('/analytics/funnel', async (req, res, next) => {
 // ---------------------------------------------------------------------------
 
 const GeoSchema = z.object({
-  job_id: z.string().min(1),
-  window_days: z.number().int().positive().max(365).default(30),
+  // Frontend currently calls this without job_id.
+  job_id: z.string().min(1).optional(),
+  recruiter_id: z.string().min(1).optional(),
+  window: z.enum(['7d', '14d', '30d', '90d']).optional(),
+  window_days: z.number().int().positive().max(365).optional(),
   limit: z.number().int().positive().max(100).default(20),
 });
 
 analyticsRouter.post('/analytics/geo', async (req, res, next) => {
   try {
-    const { job_id, window_days, limit } = validate(GeoSchema, req.body);
-    const cacheKey = keys.analyticsGeo(job_id, window_days, limit);
+    const parsed = validate(GeoSchema, req.body);
+    const window_days = resolveWindowDays(parsed);
+    const limit = parsed.limit;
+    const cacheKey = keys.analyticsGeo(parsed.job_id || 'all', window_days, limit);
 
-    const data = await getOrSet(cacheKey, config.ANALYTICS_CACHE_TTL_SEC, async () => {
+    const data = await getAnalyticsResult(cacheKey, async () => {
       const since = new Date(Date.now() - window_days * 86_400_000);
+      const match = {
+        event_type: 'application.submitted',
+        'entity.entity_type': 'job',
+        timestamp: { $gte: since.toISOString() },
+      };
+      if (parsed.job_id) {
+        match['entity.entity_id'] = parsed.job_id;
+      } else if (parsed.recruiter_id) {
+        const [jobRows] = await getPool().query(
+          'SELECT job_id FROM jobs WHERE recruiter_id = :recruiter_id',
+          { recruiter_id: parsed.recruiter_id },
+        );
+        const ids = jobRows.map((r) => r.job_id);
+        if (ids.length === 0) {
+          return { job_id: null, window_days, cities: [], city_applications: [] };
+        }
+        match['entity.entity_id'] = { $in: ids };
+      }
 
       const cities = await getDb().collection('events').aggregate([
-        {
-          $match: {
-            event_type: 'application.submitted',
-            'entity.entity_type': 'job',
-            'entity.entity_id': job_id,
-            timestamp: { $gte: since.toISOString() },
-          },
-        },
+        { $match: match },
         {
           $group: {
             _id: {
@@ -181,10 +410,17 @@ analyticsRouter.post('/analytics/geo', async (req, res, next) => {
         },
       ]).toArray();
 
-      return { job_id, window_days, cities };
+      return {
+        // Frontend recruiter field:
+        city_applications: cities.map((c) => ({ city: c.city, value: Number(c.count) || 0 })),
+        // Backwards-compatible shape:
+        job_id: parsed.job_id || null,
+        window_days,
+        cities,
+      };
     });
 
-    return res.json(ok(data, req.traceId));
+    return res.json(data);
   } catch (err) {
     next(err);
   }
@@ -295,7 +531,7 @@ analyticsRouter.post('/analytics/member/dashboard', async (req, res, next) => {
       };
     });
 
-    return res.json(ok(data, req.traceId));
+    return res.json(data);
   } catch (err) {
     next(err);
   }
