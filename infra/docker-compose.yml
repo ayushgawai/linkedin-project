@@ -18,6 +18,8 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
       - ../data/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      # Demo seed (idempotent) so fresh clones have jobs/users immediately.
+      - ../data/backend_demo_seed.sql:/docker-entrypoint-initdb.d/02-backend-demo-seed.sql:ro
     healthcheck:
       test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD']
       interval: 10s
