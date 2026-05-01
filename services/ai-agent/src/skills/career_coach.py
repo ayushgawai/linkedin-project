@@ -124,35 +124,51 @@ async def generate_coaching(
     job_skills = _normalize(job.get("skills_required") or job.get("skills"))
 
     member_set = set(member_skills)
-    # Preserve job's declared ordering for "skills_to_add"
-    skills_to_add = [s for s in job_skills if s not in member_set]
-    overlap = [s for s in job_skills if s in member_set]
-    if not overlap and member_skills:
-        # Legacy/dirty seed rows can carry poor job skill extraction. Surface a
-        # small transferable-skill match set instead of an empty contract.
-        overlap = member_skills[: min(3, len(member_skills))]
+    # Preserve job's declared ordering for missing/matching lists.
+    missing_skills = [s for s in job_skills if s not in member_set]
+    matching_skills = [s for s in job_skills if s in member_set]
+
+    # match_score: integer 0-100 representing how much of the job's required
+    # skill set the member already covers. Frontend contract requires this
+    # to ALWAYS be a number (never null/undefined) and bounded to [0, 100].
+    if job_skills:
+        match_score = round(100 * len(matching_skills) / len(job_skills))
+    else:
+        # No declared job skills → we cannot score skill coverage. Return 0
+        # so the field is always a numeric value the UI can render.
+        match_score = 0
+    # Hard clamp as a safety net.
+    match_score = max(0, min(100, int(match_score)))
 
     job_title = (job.get("title") or "").strip()
     job_description = (job.get("description") or "").strip()
-    top_missing = skills_to_add[0] if skills_to_add else None
+    top_missing = missing_skills[0] if missing_skills else None
 
     headline_suggestion = _build_headline(
         profile.get("headline", ""), job_title, top_missing
     )
+    # Defensive: contract says headline must never be blank/null/'undefined'.
+    if not headline_suggestion or not headline_suggestion.strip():
+        headline_suggestion = "Software Engineer | Open to new opportunities"
 
     resume_improvements = _resume_improvements(
-        skills_to_add, profile.get("about", ""), job_title, job_description
+        missing_skills, profile.get("about", ""), job_title, job_description
     )
+    # Defensive: contract says resume_improvements must have ≥ 1 actionable item.
+    if not resume_improvements:
+        resume_improvements = [
+            "Rework experience bullets to start with a strong verb + artifact + "
+            "metric (e.g. \"Shipped X serving Y QPS, cutting p95 by Z ms\")."
+        ]
 
     if job_skills:
-        coverage = len(overlap)
+        coverage = len(matching_skills)
         total = len(job_skills)
-        pct = round(100 * coverage / total)
-        if skills_to_add:
+        if missing_skills:
             rationale = (
-                f"Candidate covers {coverage}/{total} ({pct}%) of the required "
-                f"skills for \"{job_title or target_job_id}\". "
-                f"Biggest gaps: {', '.join(skills_to_add[:3])}."
+                f"Candidate covers {coverage}/{total} ({match_score}%) of the "
+                f"required skills for \"{job_title or target_job_id}\". "
+                f"Biggest gaps: {', '.join(missing_skills[:3])}."
             )
         else:
             rationale = (
@@ -166,18 +182,14 @@ async def generate_coaching(
             "focuses on presentation quality rather than skill gaps."
         )
 
-    if job_skills:
-        match_score = round(min(len(overlap), len(job_skills)) / len(job_skills), 4)
-    else:
-        match_score = round(min(len(overlap), 1) * 0.25, 4) if overlap else 0.0
-
     return CoachResponse(
         member_id=member_id,
         match_score=match_score,
-        matching_skills=overlap,
-        missing_skills=skills_to_add,
-        resume_improvements=resume_improvements,
+        matching_skills=matching_skills,
+        missing_skills=missing_skills,
         headline_suggestion=headline_suggestion,
-        skills_to_add=skills_to_add,
+        resume_improvements=resume_improvements,
         rationale=rationale,
+        # Backwards-compatible alias kept for older callers / Mongo readers.
+        skills_to_add=missing_skills,
     )
