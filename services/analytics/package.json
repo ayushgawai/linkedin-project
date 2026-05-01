@@ -12,6 +12,7 @@
     "seed:reset": "node ../../scripts/bench/seed.js --reset"
   },
   "dependencies": {
+    "cors": "^2.8.5",
     "express": "^4.21.2",
     "kafkajs": "^2.2.4",
     "mongodb": "^6.12.0",

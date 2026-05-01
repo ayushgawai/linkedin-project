@@ -197,12 +197,24 @@ analyticsRouter.post('/analytics/geo', async (req, res, next) => {
 
 const MemberDashboardSchema = z.object({
   member_id: z.string().min(1),
-  window_days: z.number().int().positive().max(365).default(30),
+  // Frontend sends "window" ("7d" | "14d" | "30d" | "90d"), professor doc uses window_days.
+  window: z.enum(['7d', '14d', '30d', '90d']).optional(),
+  window_days: z.number().int().positive().max(365).optional(),
 });
+
+function resolveWindowDays(body) {
+  if (typeof body.window_days === 'number' && Number.isFinite(body.window_days)) return body.window_days;
+  if (body.window === '7d') return 7;
+  if (body.window === '14d') return 14;
+  if (body.window === '90d') return 90;
+  return 30;
+}
 
 analyticsRouter.post('/analytics/member/dashboard', async (req, res, next) => {
   try {
-    const { member_id, window_days } = validate(MemberDashboardSchema, req.body);
+    const parsed = validate(MemberDashboardSchema, req.body);
+    const member_id = parsed.member_id;
+    const window_days = resolveWindowDays(parsed);
     const cacheKey = keys.analyticsMemberDashboard(member_id, window_days);
 
     const data = await getOrSet(cacheKey, config.ANALYTICS_CACHE_TTL_SEC, async () => {
@@ -220,6 +232,29 @@ analyticsRouter.post('/analytics/member/dashboard', async (req, res, next) => {
         { $project: { _id: 0, date: '$_id', count: 1 } },
       ]).toArray();
 
+      const topViewersAgg = await getDb().collection('profile_views').aggregate([
+        { $match: { member_id, viewed_at: { $gte: since } } },
+        { $group: { _id: '$viewer_id', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 8 },
+      ]).toArray();
+      const topViewerIds = topViewersAgg.map((r) => r._id).filter(Boolean);
+      let top_viewers = [];
+      if (topViewerIds.length) {
+        const placeholders = topViewerIds.map(() => '?').join(',');
+        const [rows] = await getPool().query(
+          `SELECT member_id, first_name, last_name, headline
+             FROM members
+            WHERE member_id IN (${placeholders})`,
+          topViewerIds,
+        );
+        const map = new Map(rows.map((r) => [
+          r.member_id,
+          { member_id: r.member_id, full_name: `${r.first_name} ${r.last_name}`.trim(), headline: r.headline || '' },
+        ]));
+        top_viewers = topViewerIds.map((id) => map.get(id)).filter(Boolean);
+      }
+
       const [statusRows] = await getPool().query(
         `SELECT status, COUNT(*) AS count
            FROM applications
@@ -231,11 +266,32 @@ analyticsRouter.post('/analytics/member/dashboard', async (req, res, next) => {
         statusRows.map((r) => [r.status, Number(r.count)]),
       );
 
+      const status = {
+        submitted: application_status_breakdown.submitted || 0,
+        reviewing: application_status_breakdown.reviewing || 0,
+        interview: application_status_breakdown.interview || 0,
+        offer: application_status_breakdown.offer || 0,
+        rejected: application_status_breakdown.rejected || 0,
+      };
+      const profileViewsValue = viewsAgg.reduce((sum, p) => sum + (Number(p.count) || 0), 0);
+
+      // Frontend contract expects a richer dashboard shape; fields we don't track yet are zeros/empties.
       return {
         member_id,
         window_days,
-        profile_views: viewsAgg,
-        application_status_breakdown,
+        profile_views_per_day: viewsAgg.map((p) => ({ date: `${p.date}T00:00:00.000Z`, value: Number(p.count) || 0 })),
+        post_impressions_per_day: [],
+        search_appearances_per_week: [],
+        applications_status_breakdown: status,
+        engagement_breakdown: { reactions: 0, comments: 0, reposts: 0, shares: 0 },
+        top_skills_searched: [],
+        top_viewers,
+        kpis: {
+          profile_views: { value: profileViewsValue, change_pct: 0 },
+          post_impressions: { value: 0, change_pct: 0 },
+          search_appearances: { value: 0, change_pct: 0 },
+          application_response_rate: { value: 0, change_pct: 0 },
+        },
       };
     });
 

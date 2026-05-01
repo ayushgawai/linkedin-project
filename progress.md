@@ -1,18 +1,15 @@
-# Member 1 Progress Log
+# Ayush Backend and Deployment Progress Log
 
 ## 2026-03-30
-- Initialized project scope for Member 1 only (up to API documentation milestone).
+- Initialized Ayush backend and deployment scope (up to API documentation milestone).
 - Created monorepo folder structure.
 - Added `.gitignore` with `personal/` exclusion.
 - Added `.env.example`.
 - Added project `README.md` with team roles and setup skeleton.
 - Added service placeholders (`services/*`) with health endpoint stubs and Dockerfiles.
-- Added Member 1 API documentation artifacts:
-  - `docs/api/member1-api-documentation.md`
-  - `docs/api/member1-openapi.yaml`
-  - `docs/api/member1-postman-collection.json`
+- Added initial backend API documentation artifacts for Ayush's scope.
 - Added API contract verification script: `tests/api_contract_check.sh`.
-- Created private draft docx in `personal/member1-api-documentation-draft.docx` (excluded from git).
+- Created a private draft docx in `personal/` (excluded from git).
 - Ran API doc validation script: passed.
 - Validated Postman collection JSON syntax: passed.
 - Validated Docker Compose config rendering: passed.
@@ -32,3 +29,40 @@
 - Improved DOCX table formatting: enforced full table borders, bold + shaded header rows, and removed fixed table layout to reduce awkward line wrapping.
 - Converted architecture diagram to PNG for Google Docs compatibility: `docs/submission/LinkedInClone_Architecture_Diagram.png`.
 - Updated submission doc to reference PNG and regenerated DOCX with formatting fixes preserved.
+
+## 2026-04-19
+- Created branch `feature/ayush/backend-infra-foundation` for Ayush backend and infrastructure work.
+- Added backend demo seed data in `data/backend_demo_seed.sql`.
+- Added repeatable smoke-test helper in `scripts/backend_smoke_test.sh`.
+- Implemented Profile Service API contract in `services/profile/src/app.js` with:
+  - member create/get/update/delete/search
+  - validation and standardized success/error envelopes
+  - MySQL-backed repository and health checks
+- Implemented Job Service API contract in `services/job/src/app.js` with:
+  - job create/get/update/search/close/byRecruiter
+  - recruiter existence checks and standardized error handling
+  - MySQL-backed repository and health checks
+- Implemented Application Service API contract in `services/application/src/app.js` with:
+  - submit/get/byJob/byMember/updateStatus/addNote
+  - duplicate-application and closed-job protections
+  - status transition enforcement
+  - MySQL-backed repository and health checks
+- Added shared service helpers under `services/shared/src/` for:
+  - HTTP response envelopes
+  - validation errors
+  - MySQL connection management
+  - in-memory repositories for fast tests
+- Extended `data/schema.sql` to support application `answers` and `status_note`.
+- Updated service Dockerfiles to include shared code and expose the correct backend service ports.
+- Extended `infra/docker-compose.yml` to run `profile`, `job`, and `application` services with MySQL.
+- Added AWS deployment assets:
+  - `infra/aws/backend-platform.yaml`
+  - `docs/aws-deployment-runbook.md`
+- Added automated backend service tests in `tests/backend-services.test.js`.
+- Updated root package scripts and CI workflow to install dependencies and run backend service tests.
+- Verification completed:
+  - `npm run test:backend-services` passed
+  - `npm test` passed
+  - `npm run test:api-doc` passed
+  - module import smoke check passed
+- Local `docker compose config` verification could not be run in this shell because `docker` is not installed on PATH.

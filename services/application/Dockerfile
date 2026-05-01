@@ -1,7 +1,11 @@
 FROM node:20-alpine
-WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm install --omit=dev || npm install --omit=dev
-COPY src ./src
-EXPOSE 8000
+WORKDIR /workspace
+COPY services/shared/package.json ./services/shared/package.json
+RUN cd services/shared && npm install --omit=dev
+COPY services/application/package.json ./services/application/package.json
+RUN cd services/application && npm install --omit=dev
+COPY services/shared/src ./services/shared/src
+COPY services/application/src ./services/application/src
+WORKDIR /workspace/services/application
+EXPOSE 8003
 CMD ["npm", "start"]

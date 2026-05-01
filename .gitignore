@@ -48,3 +48,15 @@ Thumbs.db
 # repo root stays clean. Remove the pattern if you ever want to commit them.
 LinkedInClone_*.docx
 LinkedInClone_*.txt
+
+*.egg-info/
+
+# Data pipeline — raw CSVs and generated seeds are local-only
+data/raw/
+data/seeds/
+
+# Local dataset drop (do not commit)
+Data_2/
+
+# Test coverage output
+tests/coverage/

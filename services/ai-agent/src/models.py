@@ -277,6 +277,9 @@ class CoachRequest(BaseModel):
 
 class CoachResponse(BaseModel):
     member_id: str
+    match_score: float = 0.0
+    matching_skills: list[str] = Field(default_factory=list)
+    missing_skills: list[str] = Field(default_factory=list)
     resume_improvements: list[str] = Field(default_factory=list)
     headline_suggestion: str = ""
     skills_to_add: list[str] = Field(default_factory=list)

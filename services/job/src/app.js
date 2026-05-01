@@ -1,3 +1,5 @@
+export { createJobApp, createJobMySqlRepository } from './member1-memory-app.js';
+
 import express from 'express';
 import { traceMiddleware } from './middleware/trace.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';

@@ -1,18 +1,12 @@
-# LinkedInClone full stack — MySQL, MongoDB, Redis, Kafka + Zookeeper,
-# and the three Node services Phase 5 benchmarks hit (analytics, profile, job).
+# LinkedInClone — MySQL, MongoDB, Redis, Kafka, Zookeeper, Profile, Job,
+# Application, Messaging, Connection, Analytics, AI Agent. Build context is repo root.
 #
-# Build context is the repo root so each service Dockerfile can COPY
-# services/shared/ into its image. Run from this file's folder:
-#   cd infra && docker compose up -d
-# or from repo root:
 #   docker compose -f infra/docker-compose.yml up -d
+#   cd infra && docker compose up -d
 
 name: linkedinclone
 
 services:
-  # ---------------------------------------------------------------------------
-  # Infrastructure
-  # ---------------------------------------------------------------------------
   mysql:
     image: mysql:8.4
     container_name: linkedinclone-mysql
@@ -20,7 +14,7 @@ services:
       MYSQL_ROOT_PASSWORD: ${DB_PASS:-linkedin}
       MYSQL_DATABASE: ${DB_NAME:-linkedinclone}
     ports:
-      - '${DB_PORT_HOST:-3306}:3306'
+      - '${DB_PORT_HOST:-3307}:3306'
     volumes:
       - mysql_data:/var/lib/mysql
       - ../data/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
@@ -29,6 +23,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 30s
     networks: [backend]
 
   mongodb:
@@ -44,6 +39,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 20s
     networks: [backend]
 
   redis:
@@ -59,6 +55,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 5s
     networks: [backend]
 
   zookeeper:
@@ -67,8 +64,6 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
-      # Whitelist the 4-letter words our healthcheck / `cub zk-ready` rely on.
-      # cp-zookeeper >=3.5 locks these down to just `srvr` by default.
       ZOOKEEPER_4LW_COMMANDS_WHITELIST: 'srvr,ruok,stat,mntr,conf'
     ports:
       - '${ZOOKEEPER_PORT_HOST:-2181}:2181'
@@ -76,9 +71,6 @@ services:
       - zookeeper_data:/var/lib/zookeeper/data
       - zookeeper_log:/var/lib/zookeeper/log
     healthcheck:
-      # `cub zk-ready` ships in the Confluent image and exits 0 once ZK is
-      # accepting client connections. Replaces the nc-based ruok probe,
-      # which fails because `nc` isn't installed in cp-zookeeper.
       test: ['CMD-SHELL', 'cub zk-ready localhost:2181 5']
       interval: 10s
       timeout: 10s
@@ -97,7 +89,6 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      # Dual-listener: INSIDE used by other compose services, OUTSIDE used by host.
       KAFKA_LISTENERS: INSIDE://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
       KAFKA_ADVERTISED_LISTENERS: INSIDE://kafka:29092,OUTSIDE://localhost:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INSIDE:PLAINTEXT,OUTSIDE:PLAINTEXT
@@ -113,25 +104,21 @@ services:
       interval: 15s
       timeout: 10s
       retries: 10
+      start_period: 50s
     networks: [backend]
 
-  # One-shot job that seeds the default Kafka topics so consumers don't race
-  # the producer on a cold start. Idempotent — `--if-not-exists` guards.
   kafka-init:
     image: confluentinc/cp-kafka:7.6.1
     container_name: linkedinclone-kafka-init
     depends_on:
       kafka:
         condition: service_healthy
-    # Using array-form command + `|` literal block avoids YAML folding issues
-    # where a folded scalar preserves newlines on "more indented" lines and
-    # breaks bash parsing of a multi-line `for` loop.
     command:
       - bash
       - -c
       - |
         set -eu
-        TOPICS="job.viewed job.saved application.submitted application.status.updated connection.accepted connection.requested message.sent member.created member.updated member.deleted job.created job.closed"
+        TOPICS="job.viewed job.saved application.submitted application.status.updated connection.accepted connection.requested message.sent member.created member.updated member.deleted job.created job.closed ai.requests ai.results"
         for t in $$TOPICS; do
           kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists \
             --topic "$$t" --partitions 3 --replication-factor 1
@@ -140,9 +127,6 @@ services:
     networks: [backend]
     restart: 'no'
 
-  # ---------------------------------------------------------------------------
-  # Application services owned by Member 5 (Naman)
-  # ---------------------------------------------------------------------------
   profile:
     build:
       context: ..
@@ -200,8 +184,121 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     ports:
       - '${JOB_PORT_HOST:-8002}:8002'
+    networks: [backend]
+    restart: unless-stopped
+
+  application:
+    build:
+      context: ..
+      dockerfile: services/application/Dockerfile
+    container_name: linkedinclone-application
+    environment:
+      PORT: 8003
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASS: ${DB_PASS:-linkedin}
+      DB_NAME: ${DB_NAME:-linkedinclone}
+      KAFKA_BROKERS: kafka:29092
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - '${APPLICATION_PORT_HOST:-8003}:8003'
+    networks: [backend]
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: ..
+      dockerfile: services/api-gateway/Dockerfile
+    container_name: linkedinclone-api-gateway
+    environment:
+      PORT: 8000
+      PROFILE_URL: http://profile:8001
+      JOB_URL: http://job:8002
+      APPLICATION_URL: http://application:8003
+      MESSAGING_URL: http://messaging:8004
+      CONNECTION_URL: http://connection:8005
+      ANALYTICS_URL: http://analytics:8006
+      AI_URL: http://ai-agent:8007
+    depends_on:
+      profile:
+        condition: service_started
+      job:
+        condition: service_started
+      application:
+        condition: service_started
+      messaging:
+        condition: service_started
+      connection:
+        condition: service_started
+      analytics:
+        condition: service_started
+      ai-agent:
+        condition: service_started
+    ports:
+      - '8011:8000'
+    networks: [backend]
+    restart: unless-stopped
+
+  messaging:
+    build:
+      context: ..
+      dockerfile: services/messaging/Dockerfile
+    container_name: linkedinclone-messaging
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASS: ${DB_PASS:-linkedin}
+      DB_NAME: ${DB_NAME:-linkedinclone}
+      KAFKA_BROKERS: kafka:29092
+      ANALYTICS_SERVICE_URL: http://analytics:8006
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - '${MESSAGING_PORT_HOST:-8004}:8004'
+    networks: [backend]
+    restart: unless-stopped
+
+  connection:
+    build:
+      context: ..
+      dockerfile: services/connection/Dockerfile
+    container_name: linkedinclone-connection
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASS: ${DB_PASS:-linkedin}
+      DB_NAME: ${DB_NAME:-linkedinclone}
+      KAFKA_BROKERS: kafka:29092
+      ANALYTICS_SERVICE_URL: http://analytics:8006
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - '${CONNECTION_PORT_HOST:-8005}:8005'
     networks: [backend]
     restart: unless-stopped
 
@@ -245,6 +342,47 @@ services:
         condition: service_completed_successfully
     ports:
       - '${ANALYTICS_PORT_HOST:-8006}:8006'
+    networks: [backend]
+    restart: unless-stopped
+
+  ai-agent:
+    build:
+      context: ..
+      dockerfile: services/ai-agent/Dockerfile
+    container_name: linkedinclone-ai-agent
+    environment:
+      MONGO_URI: mongodb://mongodb:27017
+      MONGO_DB: ${MONGO_DB:-linkedinclone}
+      KAFKA_BROKERS: kafka:29092
+      KAFKA_CONSUMER_GROUP: ${KAFKA_CONSUMER_GROUP:-ai-supervisor-group}
+      KAFKA_TOPIC_REQUESTS: ai.requests
+      KAFKA_TOPIC_RESULTS: ai.results
+      PROFILE_SERVICE_URL: http://profile:8001
+      JOB_SERVICE_URL: http://job:8002
+      APPLICATION_SERVICE_URL: http://application:8003
+      MESSAGING_SERVICE_URL: http://messaging:8004
+      USE_MOCK_SERVICES: ${USE_MOCK_SERVICES:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      SERVICE_PORT: 8007
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      CORS_ORIGINS: http://localhost:3000
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      profile:
+        condition: service_started
+      job:
+        condition: service_started
+      application:
+        condition: service_started
+      messaging:
+        condition: service_started
+    ports:
+      - '${AI_PORT_HOST:-8007}:8007'
     networks: [backend]
     restart: unless-stopped
 

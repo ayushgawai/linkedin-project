@@ -1,7 +1,7 @@
 // Contract tests for the central error-handler middleware.
 //
 // Every response shape on the analytics service MUST match the frozen
-// envelope in the master prompt. These tests mount the real middleware
+// envelope in the API contract. These tests mount the real middleware
 // against a disposable express app with synthetic routes that throw the
 // three categories of error: Zod validation, ApiError, and unknown.
 //

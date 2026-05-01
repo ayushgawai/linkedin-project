@@ -12,52 +12,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
       - name: Install ripgrep
         run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Run API documentation contract checks
         run: |
           bash tests/submission_contract_check.sh
 
-      - name: Validate Postman collection JSON
-        run: python3 - << 'PY'
-import json
-with open('docs/submission/LinkedInClone_API_Collection.postman_collection.json', 'r', encoding='utf-8') as f:
-    json.load(f)
-print('Postman collection JSON is valid')
-PY
-
-  # Unit + contract tests for the analytics service (Part 5).
-  # Intentionally does NOT require MySQL/Mongo/Redis/Kafka so this job stays
-  # fast (<1 min) and flake-free. The tests exercise:
-  #   - API envelope helpers (ok/fail/ApiError)
-  #   - Central error-handler middleware (Zod/ApiError/unknown → envelope)
-  #   - Trace-id propagation (X-Trace-Id header)
-  #   - 404 ROUTE_NOT_FOUND envelope
-  #   - Cache-aside helpers (hashObject determinism, key conventions,
-  #     graceful-degradation with REDIS_ENABLED=false)
-  #   - ingestEnvelope idempotency (first-write vs duplicate-key skip)
-  #
-  # A live-DB integration job can be added later if we want end-to-end
-  # coverage; the JMeter suite in infra/perf/ already serves that role locally.
-  analytics-tests:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: services/analytics
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install workspace dependencies
-        run: npm ci --ignore-scripts
-        working-directory: .
-
-      - name: Run analytics unit + contract tests
+      - name: Run Node test suite (Member 1 + analytics + contract-aligned checks)
         run: npm test
+
+      - name: Validate Postman collection JSON
+        run: |
+          python3 - << 'PY'
+          import json
+          with open('docs/submission/LinkedInClone_API_Collection.postman_collection.json', 'r', encoding='utf-8') as f:
+              json.load(f)
+          print('Postman collection JSON is valid')
+          PY

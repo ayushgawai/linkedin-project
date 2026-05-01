@@ -28,7 +28,7 @@ test('hashObject changes when values change', () => {
   assert.notEqual(a, b);
 });
 
-test('keys.* follow the master-prompt naming convention', () => {
+test('keys.* follow the API documentation naming convention', () => {
   assert.equal(cache.keys.member('m-1'), 'member:m-1');
   assert.equal(cache.keys.job('j-1'), 'job:j-1');
   assert.equal(cache.keys.recruiter('r-1'), 'recruiter:r-1');

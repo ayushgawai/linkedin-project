@@ -169,6 +169,163 @@ def _get_producer() -> KafkaProducer:
 
 
 # ---------------------------------------------------------------------------
+# Frontend compatibility routes
+# (Frontend expects /ai/tasks/* endpoints; map to professor-spec /ai/*)
+# ---------------------------------------------------------------------------
+
+from pydantic import BaseModel, Field  # noqa: E402
+
+
+class _FrontendStartParams(BaseModel):
+    min_match_score: float = 0.15
+    top_n: int = 3
+    weighted_skills: list[str] = Field(default_factory=list)
+    location_radius_miles: int = 50
+    outreach_tone: str = "professional"
+
+
+class _FrontendStartBody(BaseModel):
+    job_id: str
+    params: _FrontendStartParams
+
+
+class _FrontendStatusBody(BaseModel):
+    task_id: str
+
+
+class _FrontendListBody(BaseModel):
+    pass
+
+
+class _FrontendApproveBody(BaseModel):
+    task_id: str
+    step_id: str
+    edited_content: str | None = None
+
+
+class _FrontendRejectBody(BaseModel):
+    task_id: str
+    step_id: str
+    reason: str
+
+
+def _frontend_task_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    """
+    Transform the MongoDB ai_traces doc into the shape expected by
+    `Linkedin Frontend/src/api/ai.ts`.
+    """
+    task_id = doc.get("task_id", "")
+    trace_id = doc.get("trace_id", "")
+    job_id = doc.get("job_id", "")
+    created_at = doc.get("created_at")
+    updated_at = doc.get("updated_at")
+
+    # Map status
+    raw_status = (doc.get("status") or "pending").lower()
+    if raw_status in ("pending", "running"):
+        status = "running"
+    elif raw_status == "completed":
+        status = "completed"
+    elif raw_status == "failed":
+        status = "failed"
+    else:
+        status = "running"
+
+    # Map steps -> frontend AiTaskStep
+    steps_out: list[dict[str, Any]] = []
+    for idx, s in enumerate(doc.get("steps", []) or []):
+        step_name = s.get("step") or f"step-{idx+1}"
+        step_status = (s.get("status") or "running").lower()
+        if step_status in ("running", "pending"):
+            st = step_status
+        elif step_status in ("completed", "failed"):
+            st = "completed" if step_status == "completed" else "rejected"
+        else:
+            st = "running"
+        steps_out.append(
+            {
+                "step_id": s.get("step_id") or f"step-{idx+1}",
+                "step_name": step_name,
+                "step_index": idx,
+                "agent_name": s.get("agent_name") or "AI Agent",
+                "status": st,
+                "output": (s.get("partial_result") or {}).get("message")
+                if isinstance(s.get("partial_result"), dict)
+                else None,
+            }
+        )
+
+    result = doc.get("result") or {}
+    final_output = None
+    if isinstance(result, dict):
+        # common in our workflow
+        if "shortlist" in result:
+            final_output = "shortlist_ready"
+        elif "matches" in result:
+            final_output = "matches_ready"
+
+    return {
+        "task_id": task_id,
+        "trace_id": trace_id,
+        "title": f"Shortlist candidates for {job_id}" if job_id else f"AI task {task_id}",
+        "status": status,
+        "job_id": job_id,
+        "created_at": created_at.isoformat() + "Z" if hasattr(created_at, "isoformat") else str(created_at or ""),
+        "updated_at": updated_at.isoformat() + "Z" if hasattr(updated_at, "isoformat") else str(updated_at or ""),
+        "steps": steps_out,
+        "final_output": final_output,
+        "error": doc.get("error"),
+    }
+
+
+@app.post("/ai/tasks/start", tags=["AI Workflow"])
+def ai_tasks_start(body: _FrontendStartBody) -> JSONResponse:
+    # Map frontend start -> professor-spec request (shortlist)
+    req = AIRequestBody(recruiter_id="frontend", task_type="shortlist", job_id=body.job_id)
+    return ai_request(req)
+
+
+@app.post("/ai/tasks/status", tags=["AI Workflow"])
+def ai_tasks_status(body: _FrontendStatusBody) -> JSONResponse:
+    # Map frontend status -> professor-spec status
+    res = ai_status(AIStatusBody(task_id=body.task_id))
+    # Convert data payload into frontend AiTask shape when possible
+    try:
+        doc = get_ai_traces().find_one({"task_id": body.task_id}, {"_id": 0})
+        if doc:
+            return JSONResponse(status_code=200, content=_ok(_frontend_task_from_doc(doc), doc.get("trace_id")))
+    except Exception:
+        pass
+    return res
+
+
+@app.post("/ai/tasks/list", tags=["AI Workflow"])
+def ai_tasks_list(_body: _FrontendListBody) -> JSONResponse:
+    try:
+        docs = list(get_ai_traces().find({}, {"_id": 0}).sort("created_at", -1).limit(50))
+        return JSONResponse(status_code=200, content=_ok([_frontend_task_from_doc(d) for d in docs]))
+    except Exception as exc:
+        return JSONResponse(status_code=500, content=_err("DB_ERROR", f"Failed to list tasks: {exc}"))
+
+
+@app.post("/ai/tasks/approve", tags=["AI Workflow"])
+async def ai_tasks_approve(body: _FrontendApproveBody) -> JSONResponse:
+    # step_id is frontend-only; map to approve/edit action
+    action = ApprovalAction.EDIT if body.edited_content else ApprovalAction.APPROVE
+    req = AIApproveBody(task_id=body.task_id, member_id="frontend", action=action, edited_content=body.edited_content)
+    resp = await ai_approve(req)
+    # Frontend expects { success: boolean }
+    return JSONResponse(status_code=200, content={"success": True})
+
+
+@app.post("/ai/tasks/reject", tags=["AI Workflow"])
+async def ai_tasks_reject(body: _FrontendRejectBody) -> JSONResponse:
+    req = AIApproveBody(task_id=body.task_id, member_id="frontend", action=ApprovalAction.REJECT, edited_content=None)
+    await ai_approve(req)
+    return JSONResponse(status_code=200, content={"success": True})
+
+
+# ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
 
@@ -354,6 +511,37 @@ def ai_status(body: AIStatusBody) -> JSONResponse:
         except Exception:
             # Skip malformed step records instead of blowing up
             continue
+
+    # If strict parsing failed for all steps, fall back to a raw step view.
+    if not steps and (doc.get("steps") or []):
+        raw_steps = []
+        for s in doc.get("steps", []):
+            if not isinstance(s, dict):
+                continue
+            raw_steps.append(
+                {
+                    "step": s.get("step"),
+                    "status": s.get("status"),
+                    "timestamp": (
+                        s.get("timestamp").isoformat() + "Z"
+                        if hasattr(s.get("timestamp"), "isoformat")
+                        else s.get("timestamp")
+                    ),
+                    "partial_result": s.get("partial_result"),
+                }
+            )
+        return JSONResponse(
+            status_code=200,
+            content=_ok(
+                {
+                    "task_id": body.task_id,
+                    "status": doc.get("status", "pending"),
+                    "steps": raw_steps,
+                    "result": doc.get("result"),
+                },
+                trace_id,
+            ),
+        )
 
     response = AIStatusResponse(
         task_id=body.task_id,
@@ -668,6 +856,18 @@ async def ai_stream(websocket: WebSocket, task_id: str) -> None:
     except Exception as exc:
         logger.warning("WebSocket error for task_id={}: {}", task_id, exc)
         ws_manager.disconnect(task_id, websocket)
+
+
+# ---------------------------------------------------------------------------
+# WS alias for frontend: /ai/tasks/{task_id}
+# Frontend uses VITE_WS_BASE_URL + /ai/tasks/{task_id}?token=...
+# We ignore token (dev-only) and reuse the same stream implementation.
+# ---------------------------------------------------------------------------
+
+
+@app.websocket("/ai/tasks/{task_id}")
+async def ai_tasks_stream(websocket: WebSocket, task_id: str) -> None:
+    await ai_stream(websocket, task_id)
 
 
 # ---------------------------------------------------------------------------

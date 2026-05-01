@@ -1,13 +1,13 @@
 import { Router } from 'express';
 import { pingMySQL } from '../db/mysql.js';
-import { isHealthy as isRedisHealthy } from '../../../shared/cache.js';
+import { pingRedis } from '../../../shared/cache.js';
 import { config } from '../config.js';
 
 export const healthRouter = Router();
 
 healthRouter.get('/health', async (req, res) => {
   const mysqlOk = await pingMySQL();
-  const redisOk = isRedisHealthy();
+  const redisOk = await pingRedis();
   res.status(mysqlOk ? 200 : 503).json({
     status: mysqlOk ? 'ok' : 'degraded',
     service: config.SERVICE_NAME,
