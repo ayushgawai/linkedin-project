@@ -15,6 +15,48 @@ const STORAGE_ENV = {
 
 let s3 = null;
 
+/**
+ * Public URL base for objects stored in MinIO/S3. When unset, avoid using the
+ * Docker-only hostname `minio` — browsers on the host cannot resolve it.
+ */
+function effectivePublicBaseUrl() {
+  if (STORAGE_ENV.publicBaseUrl) {
+    return String(STORAGE_ENV.publicBaseUrl).replace(/\/+$/, '');
+  }
+  const ep = STORAGE_ENV.endpoint || '';
+  const m = /^https?:\/\/minio(:(\d+))?/i.exec(ep);
+  if (m) {
+    const port = m[2] || '9000';
+    return `http://127.0.0.1:${port}/${STORAGE_ENV.bucket}`;
+  }
+  return `${ep.replace(/\/+$/, '')}/${STORAGE_ENV.bucket}`;
+}
+
+/**
+ * Rewrite URLs already persisted with http://minio:9000/... so any browser can load them.
+ */
+export function rewriteMediaUrlsForClient(url) {
+  if (url == null) return url;
+  const s = String(url);
+  return s
+    .replace(/^http:\/\/minio:9000\//gi, 'http://127.0.0.1:9000/')
+    .replace(/^https:\/\/minio:9000\//gi, 'http://127.0.0.1:9000/')
+    .replace(/^http:\/\/minio\//gi, 'http://127.0.0.1:9000/')
+    .replace(/^https:\/\/minio\//gi, 'http://127.0.0.1:9000/');
+}
+
+/** Apply {@link rewriteMediaUrlsForClient} to member row photo fields (mutates copy). */
+export function mapMemberMediaRow(row) {
+  if (!row || typeof row !== 'object') return row;
+  return {
+    ...row,
+    profile_photo_url:
+      row.profile_photo_url == null ? row.profile_photo_url : rewriteMediaUrlsForClient(String(row.profile_photo_url)),
+    cover_photo_url:
+      row.cover_photo_url == null ? row.cover_photo_url : rewriteMediaUrlsForClient(String(row.cover_photo_url)),
+  };
+}
+
 function getS3() {
   if (STORAGE_ENV.provider !== 's3') return null;
   if (s3) return s3;
@@ -75,7 +117,7 @@ export async function maybeStoreDataUrl({ kind, memberId, dataUrl }) {
     }),
   );
 
-  const base = STORAGE_ENV.publicBaseUrl || `${STORAGE_ENV.endpoint.replace(/\/+$/, '')}/${STORAGE_ENV.bucket}`;
+  const base = effectivePublicBaseUrl();
   const url = `${base}/${key}`;
   return { stored: true, url };
 }

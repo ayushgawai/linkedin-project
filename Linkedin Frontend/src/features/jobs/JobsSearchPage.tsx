@@ -6,24 +6,73 @@ import { listJobs } from '../../api/jobs'
 import { JobDetail, JobListItem } from '../../components/jobs'
 import { Button, Card, Input, Modal, Select, Skeleton } from '../../components/ui'
 import { useSavedJobsStore } from '../../store/savedJobsStore'
+import { cn } from '../../lib/cn'
 
-function FiltersPanel({ keyword, location, onKeyword, onLocation }: { keyword: string; location: string; onKeyword: (v: string) => void; onLocation: (v: string) => void }): JSX.Element {
+const LOCATION_PRESETS = ['San Jose, CA', 'San Francisco, CA', 'New York, NY', 'Austin, TX']
+
+function FiltersPanel({
+  keyword,
+  location,
+  remoteOnly,
+  onKeyword,
+  onLocation,
+  onRemoteOnly,
+  onPickLocation,
+}: {
+  keyword: string
+  location: string
+  remoteOnly: boolean
+  onKeyword: (v: string) => void
+  onLocation: (v: string) => void
+  onRemoteOnly: (v: boolean) => void
+  onPickLocation: (v: string) => void
+}): JSX.Element {
   return (
     <Card>
       <Card.Body className="space-y-3">
         <Input label="Keyword" value={keyword} onChange={(e) => onKeyword(e.target.value)} />
-        <div className="relative">
-          <Input label="Location" value={location} onChange={(e) => onLocation(e.target.value)} />
-          <LocateFixed className="absolute right-3 top-3 h-4 w-4 text-text-secondary" />
+        <Input
+          label="Location"
+          value={location}
+          onChange={(e) => onLocation(e.target.value)}
+          rightIcon={<LocateFixed className="h-4 w-4 text-text-secondary" aria-hidden />}
+        />
+        <div>
+          <p className="mb-2 text-xs font-medium text-text-secondary">Location quick picks</p>
+          <div className="flex flex-wrap gap-2">
+            {LOCATION_PRESETS.map((city) => (
+              <button
+                type="button"
+                key={city}
+                onClick={() => onPickLocation(city)}
+                className={cn(
+                  'rounded-full border px-3 py-1 text-xs font-medium transition',
+                  location.trim() === city && !remoteOnly
+                    ? 'border-brand-primary bg-brand-primary/10 text-brand-primary'
+                    : 'border-border text-text-secondary hover:bg-black/[0.03]',
+                )}
+              >
+                {city}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => {
+                onRemoteOnly(!remoteOnly)
+                if (!remoteOnly) onLocation('')
+              }}
+              className={cn(
+                'rounded-full border px-3 py-1 text-xs font-medium transition',
+                remoteOnly ? 'border-brand-primary bg-brand-primary/10 text-brand-primary' : 'border-border text-text-secondary hover:bg-black/[0.03]',
+              )}
+            >
+              Remote only
+            </button>
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {['Date posted', 'Experience level', 'Company', 'Remote'].map((chip) => (
-            <button type="button" key={chip} className="rounded-full bg-black/5 px-3 py-1 text-xs text-text-secondary">{chip}</button>
-          ))}
-          <label className="inline-flex items-center gap-2 rounded-full bg-black/5 px-3 py-1 text-xs text-text-secondary">
-            <input type="checkbox" /> Easy Apply
-          </label>
-        </div>
+        <label className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-black/5 px-3 py-1 text-xs text-text-secondary">
+          <input type="checkbox" disabled className="h-3.5 w-3.5 rounded border-border opacity-60" /> Easy Apply (coming soon)
+        </label>
       </Card.Body>
     </Card>
   )
@@ -32,6 +81,7 @@ function FiltersPanel({ keyword, location, onKeyword, onLocation }: { keyword: s
 export default function JobsSearchPage(): JSX.Element {
   const [keyword, setKeyword] = useState('')
   const [location, setLocation] = useState('')
+  const [remoteOnly, setRemoteOnly] = useState(false)
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false)
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => new Set())
@@ -40,8 +90,15 @@ export default function JobsSearchPage(): JSX.Element {
   const removeSavedJob = useSavedJobsStore((s) => s.remove)
 
   const query = useQuery({
-    queryKey: ['jobs-search', keyword, location],
-    queryFn: () => listJobs({ keyword, location, page: 1, pageSize: 80 }),
+    queryKey: ['jobs-search', keyword, location, remoteOnly],
+    queryFn: () =>
+      listJobs({
+        keyword,
+        location,
+        page: 1,
+        pageSize: 80,
+        remote: remoteOnly || undefined,
+      }),
     staleTime: 30_000,
   })
 
@@ -50,7 +107,7 @@ export default function JobsSearchPage(): JSX.Element {
 
   useEffect(() => {
     setDismissedIds(new Set())
-  }, [keyword, location])
+  }, [keyword, location, remoteOnly])
 
   const dismissJob = useCallback((jobId: string) => {
     setDismissedIds((prev) => new Set(prev).add(jobId))
@@ -115,7 +172,18 @@ export default function JobsSearchPage(): JSX.Element {
 
       <div className="grid grid-cols-12 gap-3">
         <div className="hidden lg:col-span-3 lg:block">
-          <FiltersPanel keyword={keyword} location={location} onKeyword={setKeyword} onLocation={setLocation} />
+          <FiltersPanel
+            keyword={keyword}
+            location={location}
+            remoteOnly={remoteOnly}
+            onKeyword={setKeyword}
+            onLocation={setLocation}
+            onRemoteOnly={setRemoteOnly}
+            onPickLocation={(city) => {
+              setRemoteOnly(false)
+              setLocation(city)
+            }}
+          />
         </div>
 
         <div className="col-span-12 lg:col-span-5">
@@ -178,7 +246,18 @@ export default function JobsSearchPage(): JSX.Element {
       <Modal isOpen={mobileFiltersOpen} onClose={() => setMobileFiltersOpen(false)} title="Filters" size="md">
         <Modal.Header>Filters</Modal.Header>
         <Modal.Body>
-          <FiltersPanel keyword={keyword} location={location} onKeyword={setKeyword} onLocation={setLocation} />
+          <FiltersPanel
+            keyword={keyword}
+            location={location}
+            remoteOnly={remoteOnly}
+            onKeyword={setKeyword}
+            onLocation={setLocation}
+            onRemoteOnly={setRemoteOnly}
+            onPickLocation={(city) => {
+              setRemoteOnly(false)
+              setLocation(city)
+            }}
+          />
         </Modal.Body>
       </Modal>
     </div>

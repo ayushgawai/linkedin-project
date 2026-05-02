@@ -88,6 +88,7 @@ const CreateFrontendSchema = z.object({
   title: z.string().min(1).max(300),
   description: z.string().min(1),
   location: z.string().min(1).max(255),
+  salary_range: z.string().max(100).optional().nullable(),
   work_mode: z.enum(REMOTE).optional(),
   employment_type: z.enum(EMPLOYMENT).optional(),
   industry: z.string().max(200).optional().nullable(),
@@ -525,17 +526,19 @@ jobsRouter.post('/jobs/byRecruiter', async (req, res, next) => {
     const offset = (page - 1) * page_size;
 
     const [rows] = await pool.query(
-      `SELECT job_id, title, status, applicants_count, views_count, posted_datetime
-         FROM jobs
-        WHERE recruiter_id = :recruiter_id
-        ORDER BY posted_datetime DESC
+      `SELECT j.job_id, j.title, j.status, j.location, j.remote_type, j.employment_type,
+              j.applicants_count, j.views_count, j.posted_datetime,
+              r.company_name
+         FROM jobs j
+         LEFT JOIN recruiters r ON r.recruiter_id = j.recruiter_id
+        WHERE j.recruiter_id = :recruiter_id
+        ORDER BY j.posted_datetime DESC
         LIMIT :page_size OFFSET :offset`,
       { recruiter_id, page_size, offset },
     );
-    const [[{ total }]] = await pool.query(
-      'SELECT COUNT(*) AS total FROM jobs WHERE recruiter_id = :recruiter_id',
-      { recruiter_id },
-    );
+    const [[{ total }]] = await pool.query('SELECT COUNT(*) AS total FROM jobs j WHERE j.recruiter_id = :recruiter_id', {
+      recruiter_id,
+    });
 
     return res.json(ok({ results: rows, total: Number(total), page, page_size }, req.traceId));
   } catch (err) {

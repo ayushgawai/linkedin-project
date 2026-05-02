@@ -8,15 +8,49 @@ import type { CreateJobPayload, JobRecord, JobSearchFilters, JobSearchResponse, 
 
 let mockJobs: JobRecord[] = [...MOCK_JOBS]
 
+/** Turn MySQL DATETIME / ISO strings into short relative labels for cards. */
+function postedTimeFromSqlDatetime(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined
+  const d = new Date(raw)
+  if (Number.isNaN(d.getTime())) return undefined
+  const diffMs = Date.now() - d.getTime()
+  if (diffMs < 0) return 'Just now'
+  const mins = Math.floor(diffMs / 60_000)
+  if (mins < 1) return 'Just now'
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 48) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 14) return `${days}d ago`
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function unwrapJobEnvelope<T>(body: unknown): T {
+  if (body && typeof body === 'object' && (body as { success?: boolean }).success === true && 'data' in body) {
+    return (body as { data: T }).data
+  }
+  return body as T
+}
+
 function normalizeJobRecord(raw: any): JobRecord {
   const companyName = typeof raw?.company_name === 'string' && raw.company_name.trim() ? raw.company_name : 'Company'
+  const workMode =
+    raw?.work_mode === 'remote' || raw?.work_mode === 'hybrid' || raw?.work_mode === 'onsite'
+      ? raw.work_mode
+      : raw?.remote_type === 'remote' || raw?.remote_type === 'hybrid' || raw?.remote_type === 'onsite'
+        ? raw.remote_type
+        : 'onsite'
   return {
     ...raw,
     company_name: companyName,
     title: typeof raw?.title === 'string' && raw.title.trim() ? raw.title : 'Job',
     location: typeof raw?.location === 'string' && raw.location.trim() ? raw.location : '',
     description: typeof raw?.description === 'string' ? raw.description : '',
-    posted_time_ago: raw?.posted_time_ago ?? raw?.posted_at ?? raw?.posted_datetime ?? 'Recently',
+    posted_time_ago:
+      (typeof raw?.posted_time_ago === 'string' && raw.posted_time_ago.trim() && raw.posted_time_ago) ||
+      (typeof raw?.posted_at === 'string' && raw.posted_at.trim() && raw.posted_at) ||
+      postedTimeFromSqlDatetime(raw?.posted_datetime) ||
+      'Recently',
     company_logo_url: raw?.company_logo_url ?? null,
     applicants_count: Number(raw?.applicants_count ?? 0),
     views_count: Number(raw?.views_count ?? 0),
@@ -25,7 +59,7 @@ function normalizeJobRecord(raw: any): JobRecord {
     skills_required: Array.isArray(raw?.skills_required) ? raw.skills_required : [],
     connections_count: Number(raw?.connections_count ?? 0),
     followers_count: Number(raw?.followers_count ?? 0),
-    work_mode: raw?.work_mode === 'remote' || raw?.work_mode === 'hybrid' || raw?.work_mode === 'onsite' ? raw.work_mode : 'onsite',
+    work_mode: workMode,
     employment_type:
       raw?.employment_type === 'full_time' ||
       raw?.employment_type === 'part_time' ||
@@ -37,6 +71,7 @@ function normalizeJobRecord(raw: any): JobRecord {
     industry: typeof raw?.industry === 'string' ? raw.industry : 'Software',
     company_size: typeof raw?.company_size === 'string' ? raw.company_size : '51-200 employees',
     company_about: typeof raw?.company_about === 'string' ? raw.company_about : '',
+    salary_range: (typeof raw?.salary_range === 'string' ? raw.salary_range.trim() : '') || null,
   } as JobRecord
 }
 
@@ -47,12 +82,14 @@ function getMockJobs(): JobRecord[] {
 function filterMockJobsBySearch(jobs: JobRecord[], filters: JobSearchFilters): JobRecord[] {
   const kw = (filters.keyword ?? '').trim().toLowerCase()
   const loc = (filters.location ?? '').trim().toLowerCase()
-  if (!kw && !loc) return jobs
+  const remoteOnly = filters.remote === true
+  if (!kw && !loc && !remoteOnly) return jobs
   return jobs.filter((job) => {
     const hay = `${job.title} ${job.company_name} ${job.description} ${job.skills_required.join(' ')}`.toLowerCase()
     const matchKw = !kw || hay.includes(kw)
     const matchLoc = !loc || job.location.toLowerCase().includes(loc)
-    return matchKw && matchLoc
+    const matchRemote = !remoteOnly || job.work_mode === 'remote'
+    return matchKw && matchLoc && matchRemote
   })
 }
 
@@ -101,8 +138,8 @@ export async function getJob(job_id: string): Promise<JobRecord> {
     const jobs = getMockJobs()
     return jobs.find((job) => job.job_id === job_id) ?? jobs[0]
   }
-  const response = await apiClient.post<JobRecord>('/jobs/get', { job_id })
-  return normalizeJobRecord(response.data as any)
+  const response = await apiClient.post<unknown>('/jobs/get', { job_id })
+  return normalizeJobRecord(unwrapJobEnvelope(response.data))
 }
 
 export async function closeJob(job_id: string): Promise<{ success: boolean }> {
@@ -149,13 +186,14 @@ export async function createJob(payload: CreateJobPayload): Promise<JobRecord> {
       company_about:
         (payload.company_about ?? '').trim() ||
         'Modern product company building reliable software for global teams.',
+      salary_range: (payload as Partial<JobRecord>).salary_range?.trim() || null,
     }
     mockJobs = [newJob, ...getMockJobs()]
     return newJob
   }
   // Gateway/job-service supports RESTful create at POST /jobs
-  const response = await apiClient.post<JobRecord>('/jobs', payload)
-  return response.data
+  const response = await apiClient.post<unknown>('/jobs', payload)
+  return normalizeJobRecord(unwrapJobEnvelope(response.data))
 }
 
 export async function updateJob(payload: UpdateJobPayload): Promise<JobRecord> {
@@ -171,17 +209,26 @@ export async function updateJob(payload: UpdateJobPayload): Promise<JobRecord> {
     mockJobs = jobs.map((job) => (job.job_id === payload.job_id ? updated : job))
     return updated
   }
-  const response = await apiClient.post<JobRecord>('/jobs/update', payload)
-  return response.data
+  const response = await apiClient.post<unknown>('/jobs/update', payload)
+  return normalizeJobRecord(unwrapJobEnvelope(response.data))
 }
 
-export async function listJobsByRecruiter(recruiter_id: string): Promise<JobRecord[]> {
+export type ListJobsByRecruiterOptions = {
+  page?: number
+  page_size?: number
+}
+
+export async function listJobsByRecruiter(recruiter_id: string, opts?: ListJobsByRecruiterOptions): Promise<JobRecord[]> {
   if (USE_MOCKS) {
     await mockDelay(220)
     return getMockJobs().filter((job) => job.recruiter_id === recruiter_id)
   }
-  const response = await apiClient.post<unknown>('/jobs/byRecruiter', { recruiter_id })
-  const data: any = response.data as any
+  const response = await apiClient.post<unknown>('/jobs/byRecruiter', {
+    recruiter_id,
+    page: opts?.page ?? 1,
+    page_size: opts?.page_size ?? 100,
+  })
+  const data: any = unwrapJobEnvelope(response.data) as any
   if (Array.isArray(data)) return (data as any[]).map(normalizeJobRecord)
   if (data && Array.isArray(data.results)) return (data.results as any[]).map(normalizeJobRecord)
   if (data && Array.isArray(data.jobs)) return (data.jobs as any[]).map(normalizeJobRecord)

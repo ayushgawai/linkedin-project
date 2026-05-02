@@ -8,7 +8,7 @@ import {
   ThumbsDown,
   ThumbsUp,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { listMemberApplications } from '../../api/applications'
 import { filterByDatePosted, type DatePostedOption } from '../../lib/datePostedFilter'
@@ -85,6 +85,24 @@ export default function JobTrackerPage(): JSX.Element {
 
   const raw = q.data ?? []
 
+  /** If the user hid a rejected row, restore visibility when the employer moves them back into the pipeline. */
+  const prevStatusByAppRef = useRef<Map<string, string>>(new Map())
+  useEffect(() => {
+    const unhide = useTrackerHiddenStore.getState().unhide
+    const prev = prevStatusByAppRef.current
+    for (const a of raw) {
+      const was = prev.get(a.application_id)
+      if (was === 'rejected' && a.status !== 'rejected') {
+        unhide(a.application_id)
+      }
+    }
+    const next = new Map<string, string>()
+    for (const a of raw) {
+      next.set(a.application_id, a.status)
+    }
+    prevStatusByAppRef.current = next
+  }, [raw])
+
   const applications = useMemo(() => {
     return raw
       .filter((a) => !hiddenSet.includes(a.application_id))
@@ -123,6 +141,9 @@ export default function JobTrackerPage(): JSX.Element {
         <h1 className="text-xl font-semibold tracking-tight text-text-primary">Job tracker</h1>
       </div>
 
+      <p className="mb-3 max-w-2xl text-sm text-text-secondary">
+        Status updates when the hiring team advances your application. You do not need to move yourself between stages here.
+      </p>
       <div className="mb-6 mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap gap-2" role="tablist" aria-label="Application status">
           {(
@@ -194,21 +215,21 @@ export default function JobTrackerPage(): JSX.Element {
                 <EmptyState
                   icon={<CalendarCheck className="h-6 w-6" />}
                   title="No interviews yet"
-                  description="Applications that move to the interview stage will appear here"
+                  description="When a recruiter invites you to interview, that application appears here automatically."
                 />
               ) : null}
               {tab === 'offer' ? (
                 <EmptyState
                   icon={<CheckCircle className="h-6 w-6" />}
                   title="No offers yet"
-                  description="Applications moved to Offer will appear here"
+                  description="When a recruiter marks your application as an offer, it will show up here."
                 />
               ) : null}
               {tab === 'rejected' ? (
                 <EmptyState
                   icon={<CheckCircle className="h-6 w-6" />}
                   title="No rejections"
-                  description="Keep going — no news is good news!"
+                  description="Keep going — no news is good news! If an employer restored your application, open the Applied tab to see it again."
                 />
               ) : null}
             </div>

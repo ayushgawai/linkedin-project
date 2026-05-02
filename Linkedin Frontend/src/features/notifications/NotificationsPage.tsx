@@ -3,6 +3,7 @@ import { useInfiniteQuery } from '@tanstack/react-query'
 import { BarChart3, Bot, BriefcaseBusiness, Check, MessageCircle, MoreHorizontal, Reply, UserPlus } from 'lucide-react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { listNotifications } from '../../api/notifications'
+import { useOutcomeNotificationSync } from '../../hooks/useOutcomeNotificationSync'
 import type { NotificationFilter, NotificationRecord } from '../../types/notifications'
 import { useAuthStore } from '../../store/authStore'
 import { Avatar, Button, Card, Dropdown, Skeleton, useToast } from '../../components/ui'
@@ -150,6 +151,7 @@ export function NotificationsLeftRail(): JSX.Element {
 }
 
 export default function NotificationsPage(): JSX.Element {
+  useOutcomeNotificationSync()
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const user = useAuthStore((s) => s.user)

@@ -10,10 +10,15 @@ export function mapStatusToTab(status: MemberApplicationBackendStatus): MemberAp
   if (status === 'interview') {
     return 'interview'
   }
+  // submitted, under_review, and raw backend "reviewing" (before normalize) belong in Applied.
+  if ((status as string) === 'reviewing') {
+    return 'applied'
+  }
   return 'applied'
 }
 
 export function getStatusLabel(status: MemberApplicationBackendStatus): string {
+  if ((status as string) === 'reviewing') return 'Reviewing'
   switch (status) {
     case 'submitted':
       return 'Submitted'
@@ -31,6 +36,7 @@ export function getStatusLabel(status: MemberApplicationBackendStatus): string {
 }
 
 export function getStatusColor(status: MemberApplicationBackendStatus): string {
+  if ((status as string) === 'reviewing') return 'text-text-secondary'
   switch (status) {
     case 'submitted':
     case 'under_review':

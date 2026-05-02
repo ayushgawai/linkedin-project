@@ -1,4 +1,6 @@
 export { RecruiterRouteGuard } from './RecruiterRouteGuard'
+export { RecruiterJobFeatureGate } from './RecruiterJobFeatureGate'
+export { RecruiterAccessNotice } from './RecruiterAccessNotice'
 export { default as RecruiterDashboardPage } from './RecruiterDashboardPage'
 export { default as RecruiterJobsPage } from './RecruiterJobsPage'
 export { default as RecruiterJobFormPage } from './RecruiterJobFormPage'

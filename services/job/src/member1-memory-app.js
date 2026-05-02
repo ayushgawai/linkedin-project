@@ -70,10 +70,13 @@ function validateUpdatePayload(body) {
   requireString(body.job_id, 'job_id');
   const changes = {};
 
-  for (const field of ['company_id', 'recruiter_id', 'title', 'description', 'location', 'salary_range']) {
+  for (const field of ['company_id', 'recruiter_id', 'title', 'description', 'location']) {
     if (field in body) {
       changes[field] = requireString(body[field], field);
     }
+  }
+  if ('salary_range' in body) {
+    changes.salary_range = optionalString(body.salary_range);
   }
 
   if ('seniority_level' in body) {
@@ -143,7 +146,8 @@ async function hydrateJob(jobId, executor = query) {
     connections_count: 0,
     followers_count: 0,
     company_size: '',
-    company_about: ''
+    company_about: '',
+    salary_range: row.salary_range || null
   };
 }
 

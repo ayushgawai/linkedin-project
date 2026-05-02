@@ -1,10 +1,11 @@
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
-import { Button, ChipInput, Input, Modal, Select, Textarea } from '../../components/ui'
+import { Button, ChipInput, Input, Modal, Select, Textarea, useToast } from '../../components/ui'
 import { COMMON_TECH_SKILLS } from '../../lib/commonSkills'
-import { handleImageUpload } from '../../lib/imageUpload'
+import { readImageFileAsDataUrl } from '../../lib/imageUpload'
 import { useActionToast } from '../../hooks/useActionToast'
 import { USE_MOCKS } from '../../api/client'
 import { updateMember } from '../../api/profile'
@@ -55,8 +56,10 @@ const employmentTypes = ['Full-time', 'Part-time', 'Self-employed', 'Freelance',
 const workplaceTypes = ['On-site', 'Hybrid', 'Remote'] as const
 
 export function ProfileModals({ active, editId, onClose }: Props): JSX.Element | null {
+  const { toast } = useToast()
   const actionToast = useActionToast()
   const profile = useProfileStore((s) => s.profile)
+  const queryClient = useQueryClient()
   const authUser = useAuthStore((s) => s.user)
   const updateBasicInfo = useProfileStore((s) => s.updateBasicInfo)
   const updateAbout = useProfileStore((s) => s.updateAbout)
@@ -134,13 +137,39 @@ export function ProfileModals({ active, editId, onClose }: Props): JSX.Element |
       <AvatarCoverModal
         kind="avatar"
         onClose={onClose}
-        onApply={(url) => {
-          updatePhoto(url)
+        onApply={async (url) => {
+          const memberId = authUser?.member_id || profile.member_id
+          if (!USE_MOCKS && memberId) {
+            try {
+              await updateMember(memberId, { profile_photo_url: url || null })
+              updatePhoto(url)
+              void queryClient.invalidateQueries({ queryKey: ['member', memberId] })
+            } catch (err: unknown) {
+              const msg =
+                err && typeof err === 'object' && 'message' in err
+                  ? String((err as { message?: string }).message)
+                  : 'Photo was not saved. Check API gateway, MinIO, and DB migration for photo columns.'
+              toast({ variant: 'error', title: 'Could not save profile photo', description: msg })
+              onClose()
+              return
+            }
+          } else {
+            updatePhoto(url)
+          }
           actionToast.profileUpdated()
           onClose()
         }}
-        onRemove={() => {
+        onRemove={async () => {
           updatePhoto('')
+          const memberId = authUser?.member_id || profile.member_id
+          if (!USE_MOCKS && memberId) {
+            try {
+              await updateMember(memberId, { profile_photo_url: null })
+              void queryClient.invalidateQueries({ queryKey: ['member', memberId] })
+            } catch {
+              /* ignore */
+            }
+          }
           actionToast.profileUpdated()
           onClose()
         }}
@@ -153,13 +182,39 @@ export function ProfileModals({ active, editId, onClose }: Props): JSX.Element |
       <AvatarCoverModal
         kind="cover"
         onClose={onClose}
-        onApply={(url) => {
-          updateCover(url)
+        onApply={async (url) => {
+          const memberId = authUser?.member_id || profile.member_id
+          if (!USE_MOCKS && memberId) {
+            try {
+              await updateMember(memberId, { cover_photo_url: url || null })
+              updateCover(url)
+              void queryClient.invalidateQueries({ queryKey: ['member', memberId] })
+            } catch (err: unknown) {
+              const msg =
+                err && typeof err === 'object' && 'message' in err
+                  ? String((err as { message?: string }).message)
+                  : 'Cover photo was not saved.'
+              toast({ variant: 'error', title: 'Could not save cover photo', description: msg })
+              onClose()
+              return
+            }
+          } else {
+            updateCover(url)
+          }
           actionToast.profileUpdated()
           onClose()
         }}
-        onRemove={() => {
+        onRemove={async () => {
           updateCover('')
+          const memberId = authUser?.member_id || profile.member_id
+          if (!USE_MOCKS && memberId) {
+            try {
+              await updateMember(memberId, { cover_photo_url: null })
+              void queryClient.invalidateQueries({ queryKey: ['member', memberId] })
+            } catch {
+              /* ignore */
+            }
+          }
           actionToast.profileUpdated()
           onClose()
         }}
@@ -516,10 +571,11 @@ function AvatarCoverModal({
 }: {
   kind: 'avatar' | 'cover'
   onClose: () => void
-  onApply: (url: string) => void
-  onRemove: () => void
+  onApply: (url: string) => void | Promise<void>
+  onRemove: () => void | Promise<void>
 }): JSX.Element {
   const [err, setErr] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
   return (
     <Modal isOpen onClose={onClose} title={kind === 'avatar' ? 'Profile photo' : 'Background photo'} size="lg">
       <Modal.Header>{kind === 'avatar' ? 'Update photo' : 'Update cover'}</Modal.Header>
@@ -529,19 +585,31 @@ function AvatarCoverModal({
             type="file"
             accept="image/*"
             className="hidden"
+            disabled={busy}
             onChange={(e) => {
-              const f = e.target.files?.[0]
+              const input = e.target
+              const f = input.files?.[0]
               if (!f) return
-              const r = handleImageUpload(f, 8)
-              if (r.error) {
-                setErr(r.error)
-                return
-              }
+              setBusy(true)
               setErr(null)
-              onApply(r.url)
+              void (async () => {
+                try {
+                  const r = await readImageFileAsDataUrl(f, 8)
+                  if (r.error) {
+                    setErr(r.error)
+                    return
+                  }
+                  await Promise.resolve(onApply(r.url))
+                } catch {
+                  setErr('Could not read image')
+                } finally {
+                  setBusy(false)
+                  input.value = ''
+                }
+              })()
             }}
           />
-          Upload image (max 8MB)
+          {busy ? 'Processing…' : 'Upload image (max 8MB)'}
         </label>
         {err ? <p className="text-sm text-red-600">{err}</p> : null}
         <button type="button" className="text-sm font-semibold text-red-600" onClick={onRemove}>
@@ -855,9 +923,11 @@ function ProjectModal({
   const [description, setDesc] = useState(initial?.description ?? '')
   const [skills, setSkills] = useState<string[]>(initial?.skills ?? [])
   const [media, setMedia] = useState(initial?.media ?? [])
+  const [project_url, setProjectUrl] = useState(initial?.project_url ?? '')
 
   const save = (): void => {
     if (!name.trim()) return
+    const trimmedUrl = project_url.trim()
     onSave({
       id: initial?.id ?? makeId('prj'),
       name: name.trim(),
@@ -867,6 +937,7 @@ function ProjectModal({
       description: description.slice(0, 2000),
       skills,
       media,
+      project_url: trimmedUrl || null,
     })
   }
 
@@ -901,6 +972,15 @@ function ProjectModal({
         <label className="text-sm text-text-secondary">
           Description
           <Textarea className="mt-1 min-h-[100px]" maxLength={2000} value={description} onChange={(e) => setDesc(e.target.value)} />
+        </label>
+        <label className="text-sm text-text-secondary">
+          Project or repository link
+          <Input
+            className="mt-1"
+            placeholder="https://github.com/org/repo"
+            value={project_url}
+            onChange={(e) => setProjectUrl(e.target.value)}
+          />
         </label>
         <div>
           <p className="mb-1 text-sm text-text-secondary">Skills</p>

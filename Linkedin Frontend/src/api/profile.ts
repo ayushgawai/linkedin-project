@@ -10,6 +10,7 @@
 // POST /members/search { filters }                → Member[]
 // ============================================
 
+import { rewriteMinioUrlForApiGateway } from '../lib/mediaUrl'
 import { USE_MOCKS, apiClient, mockDelay } from './client'
 import { delay, seedDemoData } from '../lib/mockData'
 import { DIRECTORY_MEMBERS, getDirectoryMember } from '../lib/profileDirectory'
@@ -37,6 +38,23 @@ type SearchMembersFilters = {
   skills?: string[]
 }
 
+/** Profile service returns `{ success, data }` from `ok()`; gateway forwards that body. */
+function unwrapProfileResponse(body: unknown): unknown {
+  if (body && typeof body === 'object' && (body as { success?: boolean }).success === true && 'data' in body) {
+    return (body as { data: unknown }).data
+  }
+  return body
+}
+
+/** Strip values that cannot be loaded by other users (e.g. blob: from another session). */
+function normalizePhotoUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const t = value.trim()
+  if (!t) return null
+  if (t.startsWith('blob:')) return null
+  return t
+}
+
 function normalizeMember(raw: any): Member {
   const now = new Date().toISOString()
   const first = typeof raw?.first_name === 'string' ? raw.first_name : ''
@@ -54,8 +72,12 @@ function normalizeMember(raw: any): Member {
     bio: raw?.bio ?? raw?.about ?? null,
     location: raw?.location ?? null,
     skills: Array.isArray(raw?.skills) ? raw.skills : [],
-    profile_photo_url: raw?.profile_photo_url ?? null,
-    cover_photo_url: raw?.cover_photo_url ?? null,
+    profile_photo_url: rewriteMinioUrlForApiGateway(
+      normalizePhotoUrl(raw?.profile_photo_url) ?? normalizePhotoUrl(raw?.profilePhotoUrl),
+    ),
+    cover_photo_url: rewriteMinioUrlForApiGateway(
+      normalizePhotoUrl(raw?.cover_photo_url) ?? normalizePhotoUrl(raw?.coverPhotoUrl),
+    ),
     is_premium: raw?.is_premium,
     connections_count: raw?.connections_count ?? 0,
     followers_count: raw?.followers_count ?? 0,
@@ -77,6 +99,12 @@ function normalizeMember(raw: any): Member {
     created_at: String(raw?.created_at ?? now),
     updated_at: String(raw?.updated_at ?? now),
   }
+}
+
+function normalizeAuthResponse(body: unknown): AuthResponse {
+  const raw = unwrapProfileResponse(body) as AuthResponse
+  if (!raw?.user || typeof raw.user !== 'object') return raw
+  return { ...raw, user: normalizeMember(raw.user as any) as Member }
 }
 
 function memberSkillsToStoreSkills(skills: string[] | undefined): Skill[] {
@@ -147,8 +175,8 @@ export async function login(email: string, password: string): Promise<AuthRespon
       user: { ...toMemberProfile(profile), role } as Member & { role?: 'member' | 'recruiter' },
     }
   }
-  const response = await apiClient.post<AuthResponse>('/auth/login', { email, password })
-  return response.data
+  const response = await apiClient.post<unknown>('/auth/login', { email, password })
+  return normalizeAuthResponse(response.data)
 }
 
 export async function signup(payload: SignupPayload): Promise<AuthResponse> {
@@ -187,8 +215,8 @@ export async function signup(payload: SignupPayload): Promise<AuthResponse> {
   // while recruiter CRUD lives in Job service at /recruiters.
   // Members support both POST /members and /members/create; keep legacy endpoint.
   const endpoint = payload.role === 'recruiter' ? '/recruiters/create' : '/members/create'
-  const response = await apiClient.post<AuthResponse>(endpoint, payload)
-  return response.data
+  const response = await apiClient.post<unknown>(endpoint, payload)
+  return normalizeAuthResponse(response.data)
 }
 
 export async function getMember(member_id: string): Promise<Member> {
@@ -204,8 +232,8 @@ export async function getMember(member_id: string): Promise<Member> {
     if (seeded) return seeded
     return Promise.reject({ status: 404, message: 'Profile not found' })
   }
-  const response = await apiClient.post<Member>('/members/get', { member_id })
-  return normalizeMember(response.data as any)
+  const response = await apiClient.post<unknown>('/members/get', { member_id })
+  return normalizeMember(unwrapProfileResponse(response.data) as any)
 }
 
 export async function updateMember(member_id: string, fields: Partial<Member>): Promise<Member> {
@@ -214,8 +242,13 @@ export async function updateMember(member_id: string, fields: Partial<Member>): 
     applyMemberFieldsToProfile(member_id, fields)
     return toMemberProfile(useProfileStore.getState().profile)
   }
-  const response = await apiClient.post<Member>('/members/update', { member_id, ...fields })
-  return normalizeMember(response.data as any)
+  const response = await apiClient.post<unknown>('/members/update', { member_id, ...fields })
+  const next = normalizeMember(unwrapProfileResponse(response.data) as any)
+  applyMemberFieldsToProfile(member_id, {
+    profile_photo_url: next.profile_photo_url,
+    cover_photo_url: next.cover_photo_url,
+  })
+  return next
 }
 
 export async function searchMembers(filters: SearchMembersFilters): Promise<Member[]> {
@@ -247,7 +280,7 @@ export async function searchMembers(filters: SearchMembersFilters): Promise<Memb
     skill: Array.isArray(filters.skills) && filters.skills.length > 0 ? filters.skills[0] : undefined,
   }
   const response = await apiClient.post<unknown>('/members/search', payload)
-  const data: any = response.data as any
+  const data: any = unwrapProfileResponse(response.data) as any
   if (Array.isArray(data)) return (data as any[]).map(normalizeMember)
   if (data && Array.isArray(data.results)) return (data.results as any[]).map(normalizeMember)
   return []

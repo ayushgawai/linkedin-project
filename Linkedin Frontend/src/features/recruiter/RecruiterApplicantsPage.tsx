@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router-dom'
 import {
   addApplicationNote,
   listApplicationsByJob,
+  undoRejectApplication,
   updateApplicationStatus,
   updateMemberApplicationStatus,
   type JobApplicantRow,
@@ -13,6 +14,7 @@ import { getJob } from '../../api/jobs'
 import { pushMockApplicationOutcomeNotification } from '../../api/notifications'
 import { Avatar, Badge, Button, Card, Textarea, useToast } from '../../components/ui'
 import { useAuthStore } from '../../store/authStore'
+import type { ApiError } from '../../types'
 
 function badgeVariantFromStatus(status: string): 'neutral' | 'brand' | 'success' | 'danger' {
   if (status === 'submitted' || status === 'under_review' || status === 'reviewing') return 'neutral'
@@ -87,6 +89,29 @@ export default function RecruiterApplicantsPage(): JSX.Element {
     mutationFn: ({ applicationId, status }: { applicationId: string; status: JobApplicantRow['status'] }) =>
       updateApplicationStatus(applicationId, status),
     onSuccess: async (_, vars) => {
+      const resolveJobMeta = async (): Promise<{ title: string; company_name: string }> => {
+        const cached = jobQuery.data?.job_id === jobId ? jobQuery.data : undefined
+        if (cached?.title?.trim()) {
+          return {
+            title: cached.title.trim(),
+            company_name: (cached.company_name ?? 'Company').trim() || 'Company',
+          }
+        }
+        if (!jobId) return { title: 'this role', company_name: 'the hiring team' }
+        try {
+          const j = await queryClient.ensureQueryData({
+            queryKey: ['job', jobId],
+            queryFn: () => getJob(jobId),
+          })
+          return {
+            title: j.title?.trim() || 'this role',
+            company_name: (j.company_name ?? 'Company').trim() || 'Company',
+          }
+        } catch {
+          return { title: 'this role', company_name: 'the hiring team' }
+        }
+      }
+
       if (user) {
         await ingestEvent({
           event_type: 'application.status.changed',
@@ -104,24 +129,28 @@ export default function RecruiterApplicantsPage(): JSX.Element {
         ),
       )
 
-      const job = jobQuery.data?.job_id === jobId ? jobQuery.data : undefined
       const listAfter = queryClient.getQueryData<JobApplicantRow[]>(['job-applicants', jobId])
       const applicant = listAfter?.find((r) => r.application_id === vars.applicationId)
-      if (applicant && job) {
+      if (applicant) {
         if (vars.status === 'interview') {
           try {
             await updateMemberApplicationStatus(vars.applicationId, 'interview', undefined, applicant.member_id)
           } catch {
             /* tracker row may be missing for seeded-only applicants */
           }
+          const meta = await resolveJobMeta()
           pushMockApplicationOutcomeNotification({
             recipient_member_id: applicant.member_id,
             job_id: jobId,
-            job_title: job.title,
-            company_name: job.company_name,
+            job_title: meta.title,
+            company_name: meta.company_name,
             kind: 'interview',
           })
-          toast({ variant: 'success', title: 'Interview invitation sent', description: `${applicant.member_name} was notified.` })
+          toast({
+            variant: 'success',
+            title: 'Interview invitation sent',
+            description: `${applicant.member_name} will see this in Notifications (refresh if already open).`,
+          })
         }
         if (vars.status === 'rejected') {
           try {
@@ -129,19 +158,60 @@ export default function RecruiterApplicantsPage(): JSX.Element {
           } catch {
             /* tracker row may be missing for seeded-only applicants */
           }
+          const meta = await resolveJobMeta()
           pushMockApplicationOutcomeNotification({
             recipient_member_id: applicant.member_id,
             job_id: jobId,
-            job_title: job.title,
-            company_name: job.company_name,
+            job_title: meta.title,
+            company_name: meta.company_name,
             kind: 'rejected',
           })
-          toast({ variant: 'success', title: 'Candidate notified', description: `${applicant.member_name} received an update.` })
+          toast({
+            variant: 'success',
+            title: 'Candidate notified',
+            description: `${applicant.member_name} will see this in Notifications (refresh if already open).`,
+          })
         }
         void queryClient.invalidateQueries({ queryKey: ['my-applications', applicant.member_id] })
       }
 
       void queryClient.invalidateQueries({ queryKey: ['notifications'] })
+    },
+  })
+
+  const undoMutation = useMutation({
+    mutationFn: ({ applicationId, memberId }: { applicationId: string; memberId: string }) =>
+      undoRejectApplication(applicationId, memberId),
+    onSuccess: async (_, vars) => {
+      queryClient.setQueryData<JobApplicantRow[]>(['job-applicants', jobId], (prev) =>
+        prev?.map((r) =>
+          r.application_id === vars.applicationId
+            ? { ...r, status: 'reviewing', updated_at: new Date().toISOString() }
+            : r,
+        ),
+      )
+      void queryClient.invalidateQueries({ queryKey: ['my-applications', vars.memberId] })
+      void queryClient.invalidateQueries({ queryKey: ['notifications'] })
+      toast({
+        variant: 'success',
+        title: 'Rejection undone',
+        description: 'Candidate is back under review. You can invite them to interview when ready.',
+      })
+    },
+    onError: (err: unknown) => {
+      const api = err as ApiError
+      const raw = api.details as { code?: string; error?: { code?: string }; message?: string } | undefined
+      const code = raw?.code ?? raw?.error?.code
+      const isTransition =
+        code === 'INVALID_STATUS_TRANSITION' ||
+        (typeof api.message === 'string' && api.message.toLowerCase().includes('invalid') && api.message.toLowerCase().includes('transition'))
+      toast({
+        variant: 'error',
+        title: 'Could not undo rejection',
+        description: isTransition
+          ? 'Your Application API is still on an older build (rejected→reviewing is not enabled). Rebuild and restart: docker compose -f infra/docker-compose.yml build application && docker compose -f infra/docker-compose.yml up -d application'
+          : api.message || 'Only rejected applications can be restored.',
+      })
     },
   })
 
@@ -223,7 +293,7 @@ export default function RecruiterApplicantsPage(): JSX.Element {
                 <p className="text-base font-semibold text-text-primary">Review an applicant</p>
                 <p className="max-w-sm text-sm text-text-secondary">
                   Choose <span className="font-medium">Review</span> on the left to see their Easy Apply answers, resume (PDF), and contact details.
-                  You can invite them to interview or send a rejection — they will get a notification.
+                  You can invite them to interview or send a rejection — they will get a notification. You can undo a rejection to return them to under review, then invite them to interview.
                 </p>
               </Card.Body>
             </Card>
@@ -243,10 +313,31 @@ export default function RecruiterApplicantsPage(): JSX.Element {
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
+                      {current.status === 'rejected' ? (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          loading={undoMutation.isPending}
+                          disabled={updateMutation.isPending}
+                          onClick={() =>
+                            undoMutation.mutate({
+                              applicationId: current.application_id,
+                              memberId: current.member_id,
+                            })
+                          }
+                        >
+                          Undo rejection
+                        </Button>
+                      ) : null}
                       <Button
                         size="sm"
                         loading={updateMutation.isPending}
-                        disabled={current.status === 'interview' || current.status === 'offer' || current.status === 'rejected'}
+                        disabled={
+                          undoMutation.isPending ||
+                          current.status === 'interview' ||
+                          current.status === 'offer' ||
+                          current.status === 'rejected'
+                        }
                         onClick={() => updateMutation.mutate({ applicationId: current.application_id, status: 'interview' as JobApplicantRow['status'] })}
                       >
                         Invite to interview
@@ -255,7 +346,7 @@ export default function RecruiterApplicantsPage(): JSX.Element {
                         size="sm"
                         variant="destructive"
                         loading={updateMutation.isPending}
-                        disabled={current.status === 'rejected'}
+                        disabled={undoMutation.isPending || current.status === 'rejected'}
                         onClick={() => updateMutation.mutate({ applicationId: current.application_id, status: 'rejected' })}
                       >
                         Reject

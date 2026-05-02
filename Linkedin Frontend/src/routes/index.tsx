@@ -5,7 +5,7 @@ import { RecruiterLeftRail } from '../components/layout/RecruiterLeftRail'
 import { Skeleton } from '../components/ui'
 import { RouteErrorFallback } from './RouteErrorFallback'
 import { NotificationsLeftRail } from '../features/notifications'
-import { RecruiterRouteGuard } from '../features/recruiter'
+import { RecruiterJobFeatureGate, RecruiterRouteGuard } from '../features/recruiter'
 import { CommunityRightRail } from '../features/community/CommunityRightRail'
 import NotFoundPage from '../pages/NotFoundPage'
 import InternalErrorPage from '../pages/InternalErrorPage'
@@ -81,10 +81,31 @@ export const router = createBrowserRouter([
           { path: 'news', element: <LazyPage component={NewsPage} /> },
           { path: 'jobs', element: <LazyPage component={JobsDiscoveryPage} /> },
           { path: 'jobs/tracker', element: <LazyPage component={JobTrackerPage} /> },
-          { path: 'jobs/post', element: <LazyPage component={RecruiterJobFormPage} /> },
-          { path: 'jobs/post/:jobId/edit', element: <LazyPage component={RecruiterJobFormPage} /> },
+          {
+            path: 'jobs/post',
+            element: (
+              <RecruiterJobFeatureGate>
+                <LazyPage component={RecruiterJobFormPage} />
+              </RecruiterJobFeatureGate>
+            ),
+          },
+          {
+            path: 'jobs/post/:jobId/edit',
+            element: (
+              <RecruiterJobFeatureGate>
+                <LazyPage component={RecruiterJobFormPage} />
+              </RecruiterJobFeatureGate>
+            ),
+          },
           { path: 'jobs/search', element: <LazyPage component={JobsSearchPage} /> },
-          { path: 'jobs/:jobId/applicants', element: <LazyPage component={RecruiterApplicantsPage} /> },
+          {
+            path: 'jobs/:jobId/applicants',
+            element: (
+              <RecruiterJobFeatureGate>
+                <LazyPage component={RecruiterApplicantsPage} />
+              </RecruiterJobFeatureGate>
+            ),
+          },
           { path: 'jobs/:jobId', element: <LazyPage component={JobDetailPage} /> },
           { path: 'saved', element: <LazyPage component={SavedPage} /> },
           { path: 'premium', element: <LazyPage component={PremiumPage} /> },
@@ -136,7 +157,14 @@ export const router = createBrowserRouter([
         element: <AppShell protectedRoute leftRail={null} rightRail={null} mainColumnClassName="md:col-span-12 lg:col-span-12" />,
         errorElement: <RouteErrorFallback />,
         children: [
-          { path: 'job-posting-activity', element: <LazyPage component={JobPostingActivityPage} /> },
+          {
+            path: 'job-posting-activity',
+            element: (
+              <RecruiterJobFeatureGate noticeVariant="hub">
+                <LazyPage component={JobPostingActivityPage} />
+              </RecruiterJobFeatureGate>
+            ),
+          },
           { path: 'recruiter/job-posting-activity', element: <Navigate to="/job-posting-activity" replace /> },
           { path: 'messaging', element: <LazyPage component={MessagingPage} /> },
           { path: 'messaging/:threadId', element: <LazyPage component={MessagingPage} /> },

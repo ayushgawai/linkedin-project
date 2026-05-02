@@ -12,7 +12,7 @@ Valid status transitions:
   interview  → offer      ✓
   interview  → rejected   ✓
   offer      → *          ✗  (terminal)
-  rejected   → *          ✗  (terminal)
+  rejected   → reviewing ✓  (recruiter undo)
   submitted  → offer      ✗  (skips stages)
   submitted  → interview  ✗  (skips stages)
 """
@@ -220,11 +220,12 @@ class TestStatusTransitions:
         resp = self._update_status(app["application_id"], "rejected")
         assert_error(resp, 400, "INVALID_STATUS_TRANSITION")
 
-    def test_rejected_to_reviewing_is_invalid(self, open_job):
+    def test_rejected_to_reviewing_undo(self, open_job):
         app = self._fresh_application(open_job)
         self._update_status(app["application_id"], "rejected")
         resp = self._update_status(app["application_id"], "reviewing")
-        assert_error(resp, 400, "INVALID_STATUS_TRANSITION")
+        data = assert_success(resp, 200)
+        assert data["status"] == "reviewing"
 
     def test_update_nonexistent_application_returns_404(self):
         resp = requests.patch(

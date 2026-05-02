@@ -38,6 +38,7 @@ import { useGroupsStore } from '../../store/groupsStore'
 import { useNewslettersStore } from '../../store/newslettersStore'
 import type { Member } from '../../types'
 import type { ListFeedResponse, Post } from '../../types/feed'
+import { ProfileHiringAlertsCard } from './ProfileHiringAlertsCard'
 import { ProfileModals, type ProfileModalKey } from './ProfileModals'
 
 const CreatePostModal = lazy(async () => {
@@ -52,6 +53,14 @@ function initials(name: string): string {
     .slice(0, 2)
     .map((p) => p.charAt(0).toUpperCase())
     .join('') || '?'
+}
+
+/** Only allow safe external links on the profile. */
+function projectLinkHref(url: string | null | undefined): string | null {
+  const u = url?.trim()
+  if (!u) return null
+  if (u.startsWith('https://') || u.startsWith('http://')) return u
+  return null
 }
 
 function SectionHeader({
@@ -161,6 +170,8 @@ export default function ProfilePage(): JSX.Element {
     queryKey: ['member', memberId],
     queryFn: () => getMember(memberId),
     enabled: Boolean(memberId) && !isOwnProfile,
+    staleTime: 0,
+    refetchOnMount: 'always',
   })
 
   const connectionsQuery = useQuery({
@@ -427,7 +438,7 @@ export default function ProfilePage(): JSX.Element {
                 <Avatar
                   size="3xl"
                   name={fullName || display.full_name || 'Member'}
-                  src={display.profile_photo_url}
+                  src={display.profile_photo_url || undefined}
                   imageAlt={`${fullName || display.full_name || 'Member'} profile photo`}
                   className="!h-[120px] !w-[120px] md:!h-[160px] md:!w-[160px]"
                 />
@@ -549,6 +560,8 @@ export default function ProfilePage(): JSX.Element {
             </div>
           </Card.Body>
         </Card>
+
+        {own && authUser?.member_id ? <ProfileHiringAlertsCard memberId={authUser.member_id} /> : null}
 
         {showCompletionCard ? (
           <Card>
@@ -1008,6 +1021,17 @@ export default function ProfilePage(): JSX.Element {
                     </p>
                     {project.associated_with ? <p className="text-sm text-text-secondary">Associated with {project.associated_with}</p> : null}
                     <p className="mt-1 line-clamp-3 text-sm">{project.description}</p>
+                    {projectLinkHref(project.project_url) ? (
+                      <a
+                        href={projectLinkHref(project.project_url)!}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-brand-primary hover:underline"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                        View project link
+                      </a>
+                    ) : null}
                   </article>
                 ))
               )}

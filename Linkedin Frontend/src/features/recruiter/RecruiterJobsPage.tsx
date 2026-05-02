@@ -13,10 +13,12 @@ export default function RecruiterJobsPage(): JSX.Element {
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('all')
 
+  const recruiterId = (user?.recruiter_id || user?.member_id) ?? ''
+
   const jobsQuery = useQuery({
-    queryKey: ['recruiter-jobs', user?.member_id],
-    queryFn: async () => listJobsByRecruiter(user?.member_id ?? ''),
-    enabled: Boolean(user),
+    queryKey: ['recruiter-jobs', recruiterId],
+    queryFn: async () => listJobsByRecruiter(recruiterId, { page: 1, page_size: 100 }),
+    enabled: Boolean(user) && Boolean(recruiterId),
   })
 
   const closeMutation = useMutation({ mutationFn: closeJob })

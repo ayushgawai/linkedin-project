@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS members (
   location VARCHAR(255),
   headline VARCHAR(500),
   about TEXT,
-  profile_photo_url VARCHAR(500),
+  profile_photo_url MEDIUMTEXT,
+  cover_photo_url MEDIUMTEXT,
   connections_count INT DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP

@@ -98,6 +98,9 @@ export function JobDetail({ job, emitViewed = false }: JobDetailProps): JSX.Elem
               <p className="text-xs text-text-tertiary">
                 {job.location} · {job.work_mode} · {postedLabel} · {job.applicants_count} applicants
               </p>
+              {job.salary_range?.trim() ? (
+                <p className="text-sm font-medium text-text-primary">{job.salary_range.trim()}</p>
+              ) : null}
             </div>
           </div>
           <p className="text-sm text-text-secondary">{job.applicants_count} applicants • {localViews} views</p>

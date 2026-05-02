@@ -14,16 +14,35 @@
 // Auth: Bearer token via src/api/client.ts interceptor
 // ============================================
 
+import { isAxiosError } from 'axios'
 import { apiClient, mockDelay, USE_MOCKS } from './client'
 import { MOCK_JOBS } from '../lib/jobsMockData'
 import { generateMockMemberApplications } from '../lib/memberApplicationsMock'
-import type { Application } from '../types'
+import type { ApiError, Application } from '../types'
 import type { JobRecord } from '../types/jobs'
 import type { SubmitApplicationPayload } from '../types/jobs'
 import type { MemberApplication, RejectedFromStage, TrackerStatusUpdate } from '../types/tracker'
 import { getMember } from './profile'
 
 const mockListByMember = new Map<string, MemberApplication[]>()
+
+/** Axios errors and our apiClient interceptor reject with `{ status, message }`. */
+function errorHttpStatus(err: unknown): number | undefined {
+  if (isAxiosError(err)) return err.response?.status
+  if (err && typeof err === 'object' && 'status' in err) {
+    const s = (err as ApiError).status
+    if (typeof s === 'number') return s
+  }
+  return undefined
+}
+
+/** Application service wraps payloads as `{ success, data }`; gateway may return the body directly. */
+function unwrapApplicationPayload<T>(body: unknown): T {
+  if (body && typeof body === 'object' && (body as { success?: boolean }).success === true && 'data' in body) {
+    return (body as { data: T }).data
+  }
+  return body as T
+}
 
 function normalizeTrackerStatus(status: string | null | undefined): string {
   if (status === 'reviewing') return 'under_review'
@@ -117,11 +136,20 @@ export async function listMemberApplications(member_id: string): Promise<MemberA
     await mockDelay(200)
     return sortApps(getMockList(member_id))
   }
-  const response = await apiClient.post<unknown>('/applications/byMember', { member_id })
-  const data: any = response.data as any
+  const response = await apiClient.post<unknown>('/applications/byMember', {
+    member_id,
+    page: 1,
+    page_size: 100,
+  })
+  const data: any = unwrapApplicationPayload(response.data)
   const rows = Array.isArray(data) ? data : data && Array.isArray(data.results) ? data.results : data && Array.isArray(data.applications) ? data.applications : []
   if (Array.isArray(rows)) {
-    return rows.map((row: any) => ({ ...row, status: normalizeTrackerStatus(row.status) })) as MemberApplication[]
+    return rows.map((row: any) => ({
+      ...row,
+      applied_at: row.applied_at || row.application_datetime || new Date().toISOString(),
+      updated_at: row.updated_at || row.application_datetime || row.applied_at || new Date().toISOString(),
+      status: normalizeTrackerStatus(row.status),
+    })) as MemberApplication[]
   }
   return []
 }
@@ -202,17 +230,21 @@ export async function listApplicationsByJob(job_id: string): Promise<JobApplican
     return out
   }
   const response = await apiClient.post<unknown>('/applications/byJob', { job_id })
-  const data: any = response.data as any
+  const data: any = unwrapApplicationPayload(response.data)
   const raw =
     Array.isArray(data) ? data : data && Array.isArray(data.results) ? data.results : data && Array.isArray(data.applications) ? data.applications : []
   if (!Array.isArray(raw) || raw.length === 0) return []
 
   const enriched = await Promise.all(
     raw.map(async (row: any) => {
+      const appliedAt = row.applied_at || row.application_datetime || new Date().toISOString()
+      const updatedAt = row.updated_at || row.application_datetime || appliedAt
       try {
         const member = await getMember(String(row.member_id))
         return {
           ...row,
+          applied_at: appliedAt,
+          updated_at: updatedAt,
           status: normalizeRecruiterStatus(row.status),
           member_name: member.full_name || `Member ${String(row.member_id).slice(0, 6)}`,
           headline: member.headline ?? '',
@@ -220,6 +252,8 @@ export async function listApplicationsByJob(job_id: string): Promise<JobApplican
       } catch {
         return {
           ...row,
+          applied_at: appliedAt,
+          updated_at: updatedAt,
           status: normalizeRecruiterStatus(row.status),
           member_name: row.member_name || `Member ${String(row.member_id).slice(0, 6)}`,
           headline: row.headline || '',
@@ -243,11 +277,63 @@ export async function updateApplicationStatus(application_id: string, status: Ap
     }
     return { success: true }
   }
+  const backendStatus = toBackendStatus(status)
+  if (backendStatus === 'interview') {
+    try {
+      const response = await apiClient.post<unknown>('/applications/updateStatus', {
+        application_id,
+        status: 'interview',
+      })
+      return unwrapApplicationPayload(response.data) as { success: boolean }
+    } catch (err: unknown) {
+      const code = errorHttpStatus(err)
+      if (code === 400) {
+        await apiClient.post('/applications/updateStatus', { application_id, status: 'reviewing' })
+        const response = await apiClient.post<unknown>('/applications/updateStatus', {
+          application_id,
+          status: 'interview',
+        })
+        return unwrapApplicationPayload(response.data) as { success: boolean }
+      }
+      throw err
+    }
+  }
   const response = await apiClient.post<{ success: boolean }>('/applications/updateStatus', {
     application_id,
-    status: toBackendStatus(status),
+    status: backendStatus,
   })
-  return response.data
+  return unwrapApplicationPayload(response.data) as { success: boolean }
+}
+
+/** Move a rejected application back to reviewing so the candidate returns to the active pipeline. */
+export async function undoRejectApplication(application_id: string, member_id: string): Promise<{ success: boolean }> {
+  if (USE_MOCKS) {
+    await mockDelay(180)
+    for (const list of mockApplicantsByJobId.values()) {
+      const row = list.find((r) => r.application_id === application_id)
+      if (row && row.status === 'rejected') {
+        row.status = 'reviewing'
+        row.updated_at = new Date().toISOString()
+      }
+    }
+    const list = getMockList(member_id)
+    const i = list.findIndex((a) => a.application_id === application_id)
+    if (i >= 0) {
+      const cur = list[i]!
+      list[i] = {
+        ...cur,
+        status: 'under_review',
+        rejected_from: undefined,
+        updated_at: new Date().toISOString(),
+      }
+    }
+    return { success: true }
+  }
+  const response = await apiClient.post<unknown>('/applications/updateStatus', {
+    application_id,
+    status: 'reviewing',
+  })
+  return unwrapApplicationPayload(response.data) as { success: boolean }
 }
 
 export async function updateMemberApplicationStatus(
@@ -295,10 +381,9 @@ export async function updateMemberApplicationStatus(
       rejection_reason: rejectionReason,
     })
     return response.data
-  } catch (error: any) {
-    // Real backend enforces submitted -> reviewing -> interview.
-    // The tracker UI conceptually jumps straight to Interview, so bridge that here.
-    if (backendStatus === 'interview') {
+  } catch (error: unknown) {
+    const code = errorHttpStatus(error)
+    if (backendStatus === 'interview' && code === 400) {
       await apiClient.post('/applications/updateStatus', { application_id, status: 'reviewing' })
       const response = await apiClient.post<MemberApplication>('/applications/updateStatus', {
         application_id,

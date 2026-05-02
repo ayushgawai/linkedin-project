@@ -6,6 +6,8 @@ export type JobRecord = {
   company_logo_url: string | null
   description: string
   location: string
+  /** Single free-text range, e.g. "$120k–$150k USD" (from job service `salary_range`). */
+  salary_range?: string | null
   work_mode: 'remote' | 'hybrid' | 'onsite'
   employment_type: 'full_time' | 'part_time' | 'contract' | 'internship' | 'temporary'
   industry: string

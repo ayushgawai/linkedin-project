@@ -2,6 +2,7 @@ import { useMutation } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { signInWithGoogle, MISSING_GOOGLE_CLIENT_ID } from '../api/googleAuth'
 import { useAuthStore } from '../store/authStore'
+import { useProfileStore } from '../store/profileStore'
 import { useToast } from '../components/ui'
 
 type Options = {
@@ -18,6 +19,7 @@ export function useGoogleSignIn({ redirectTo = '/feed' }: Options = {}) {
     mutationFn: signInWithGoogle,
     onSuccess: ({ token, user }) => {
       setAuth(token, user)
+      useProfileStore.getState().hydrateFromAuthMember(user)
       navigate(redirectTo)
     },
     onError: (error: Error) => {

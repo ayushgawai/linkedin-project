@@ -14,6 +14,62 @@ import { MOCK_NOTIFICATIONS } from '../lib/mockData'
 import { USE_MOCKS, apiClient, mockDelay } from './client'
 import type { NotificationFilter, NotificationRecord, NotificationsResponse } from '../types/notifications'
 
+/** Outcome pushes (interview/rejected) sync across tabs via localStorage so the candidate account can see them. */
+export const OUTCOME_NOTIFICATIONS_STORAGE_KEY = 'linkedin-clone-outcome-notifications-v1'
+
+/** Fired after a new outcome notification is stored (same tab); other tabs get `storage` on the key above. */
+export const OUTCOME_NOTIFICATION_EVENT = 'linkedin-outcome-notification'
+
+function isPersistedNotificationRecord(v: unknown): v is NotificationRecord {
+  if (!v || typeof v !== 'object') return false
+  const o = v as Record<string, unknown>
+  return (
+    typeof o.notification_id === 'string' &&
+    typeof o.type === 'string' &&
+    typeof o.title === 'string' &&
+    typeof o.preview === 'string' &&
+    typeof o.timestamp === 'string' &&
+    typeof o.unread === 'boolean' &&
+    typeof o.target_url === 'string'
+  )
+}
+
+function readPersistedOutcomeNotifications(): NotificationRecord[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = window.localStorage.getItem(OUTCOME_NOTIFICATIONS_STORAGE_KEY)
+    if (!raw?.trim()) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(isPersistedNotificationRecord)
+  } catch {
+    return []
+  }
+}
+
+function persistOutcomeNotification(record: NotificationRecord): void {
+  if (typeof window === 'undefined') return
+  try {
+    const prev = readPersistedOutcomeNotifications()
+    const next = [record, ...prev.filter((r) => r.notification_id !== record.notification_id)].slice(0, 150)
+    window.localStorage.setItem(OUTCOME_NOTIFICATIONS_STORAGE_KEY, JSON.stringify(next))
+  } catch {
+    /* storage full or disabled */
+  }
+}
+
+function mergeLocalNotificationSources(): NotificationRecord[] {
+  const persisted = readPersistedOutcomeNotifications()
+  const seen = new Set<string>()
+  const out: NotificationRecord[] = []
+  for (const item of [...persisted, ...MOCK_NOTIFICATIONS]) {
+    if (seen.has(item.notification_id)) continue
+    seen.add(item.notification_id)
+    out.push(item)
+  }
+  return out
+}
+
 function matchesFilter(type: string, filter: NotificationFilter): boolean {
   if (filter === 'all') return true
   if (filter === 'jobs') return type === 'job_recommendation' || type === 'application_status'
@@ -32,7 +88,7 @@ export type ListNotificationsParams = {
 
 export async function listNotifications(params: ListNotificationsParams): Promise<NotificationsResponse> {
   const viewer = params.viewer_member_id
-  const localSource = MOCK_NOTIFICATIONS.filter(
+  const localSource = mergeLocalNotificationSources().filter(
     (item) =>
       matchesFilter(item.type, params.filter) &&
       (!viewer || !item.recipient_member_id || item.recipient_member_id === viewer),
@@ -97,4 +153,8 @@ export function pushMockApplicationOutcomeNotification(input: {
     interview_invite: input.kind === 'interview',
   }
   MOCK_NOTIFICATIONS.unshift(record)
+  persistOutcomeNotification(record)
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(OUTCOME_NOTIFICATION_EVENT))
+  }
 }

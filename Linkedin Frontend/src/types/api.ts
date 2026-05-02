@@ -67,6 +67,7 @@ export type Member = {
     description: string
     skills: string[]
     media: Array<{ id: string; image: string; title: string; url: string }>
+    project_url?: string | null
   }>
   courses?: string[]
   featured?: Array<{

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bookmark, ClipboardCheck, MessageCircle, MoreHorizontal, PencilLine, X } from 'lucide-react'
+import { Bookmark, Briefcase, ClipboardCheck, History, MessageCircle, MoreHorizontal, PencilLine, Users, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { closeJob, listJobsByRecruiter } from '../../api/jobs'
@@ -55,7 +55,7 @@ function PostedJobRowMenu({ job }: { job: JobRecord }): JSX.Element {
             <span className="sr-only">Job actions</span>
           </Dropdown.Trigger>
           <Dropdown.Content className="min-w-[10rem]">
-            <Dropdown.Item className="font-medium text-text-primary" onSelect={() => navigate(`/jobs/post/${job.job_id}/edit`)}>
+            <Dropdown.Item className="font-medium text-text-primary" onSelect={() => navigate(`/recruiter/jobs/${job.job_id}/edit`)}>
               Edit
             </Dropdown.Item>
             <Dropdown.Item
@@ -90,6 +90,11 @@ function PostedJobRowMenu({ job }: { job: JobRecord }): JSX.Element {
   )
 }
 
+function jobStatus(job: JobRecord): 'open' | 'closed' {
+  const raw = job as JobRecord & { status?: string }
+  return raw.status === 'closed' ? 'closed' : 'open'
+}
+
 export default function JobPostingActivityPage(): JSX.Element {
   const user = useAuthStore((state) => state.user)
   const navigate = useNavigate()
@@ -100,14 +105,30 @@ export default function JobPostingActivityPage(): JSX.Element {
   const removeSavedJob = useSavedJobsStore((s) => s.remove)
   const savedIds = useMemo(() => savedEntries.map((e) => e.job.job_id), [savedEntries])
 
+  const recruiterId = (user?.recruiter_id || user?.member_id) ?? ''
+
   const jobsQuery = useQuery({
-    queryKey: ['recruiter-jobs-activity', user?.member_id],
-    queryFn: () => listJobsByRecruiter(user!.member_id),
-    enabled: Boolean(user?.member_id),
+    queryKey: ['recruiter-jobs-activity', recruiterId],
+    queryFn: () => listJobsByRecruiter(recruiterId, { page: 1, page_size: 100 }),
+    enabled: Boolean(recruiterId),
   })
 
   const jobs = useMemo(() => jobsQuery.data ?? [], [jobsQuery.data])
   const isEmpty = !jobsQuery.isLoading && jobs.length === 0
+
+  const openRoles = useMemo(() => jobs.filter((j) => jobStatus(j) === 'open').length, [jobs])
+  const totalApplicants = useMemo(() => jobs.reduce((sum, j) => sum + (j.applicants_count ?? 0), 0), [jobs])
+  const totalViews = useMemo(() => jobs.reduce((sum, j) => sum + (j.views_count ?? 0), 0), [jobs])
+
+  const recentActivity = useMemo(() => {
+    return [...jobs]
+      .sort((a, b) => {
+        const ta = new Date((a as JobRecord & { posted_datetime?: string }).posted_datetime ?? 0).getTime()
+        const tb = new Date((b as JobRecord & { posted_datetime?: string }).posted_datetime ?? 0).getTime()
+        return tb - ta
+      })
+      .slice(0, 8)
+  }, [jobs])
 
   return (
     <PageContainer className="pb-10 pt-2">
@@ -135,6 +156,45 @@ export default function JobPostingActivityPage(): JSX.Element {
       </aside>
 
       <main className="col-span-12 space-y-4 lg:col-span-6">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Card>
+            <Card.Body className="flex items-start gap-3 p-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-primary/10 text-brand-primary">
+                <Briefcase className="h-5 w-5" aria-hidden />
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">Open roles</p>
+                <p className="mt-1 text-2xl font-semibold text-text-primary">{jobsQuery.isLoading ? '—' : openRoles}</p>
+                <p className="mt-0.5 text-xs text-text-secondary">of {jobs.length} listed</p>
+              </div>
+            </Card.Body>
+          </Card>
+          <Card>
+            <Card.Body className="flex items-start gap-3 p-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-primary/10 text-brand-primary">
+                <Users className="h-5 w-5" aria-hidden />
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">Applicants</p>
+                <p className="mt-1 text-2xl font-semibold text-text-primary">{jobsQuery.isLoading ? '—' : totalApplicants}</p>
+                <p className="mt-0.5 text-xs text-text-secondary">across your posts</p>
+              </div>
+            </Card.Body>
+          </Card>
+          <Card>
+            <Card.Body className="flex items-start gap-3 p-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-primary/10 text-brand-primary">
+                <History className="h-5 w-5" aria-hidden />
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">Job views</p>
+                <p className="mt-1 text-2xl font-semibold text-text-primary">{jobsQuery.isLoading ? '—' : totalViews}</p>
+                <p className="mt-0.5 text-xs text-text-secondary">all-time on listings</p>
+              </div>
+            </Card.Body>
+          </Card>
+        </div>
+
         {!bannerDismissed && (
           <Card className="relative overflow-hidden">
             <Card.Body className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:gap-4">
@@ -199,11 +259,41 @@ export default function JobPostingActivityPage(): JSX.Element {
             )}
           </Card.Body>
         </Card>
+
+        {!jobsQuery.isLoading && jobs.length > 0 ? (
+          <Card>
+            <Card.Header className="border-b border-border">
+              <h2 className="text-base font-semibold text-text-primary">Recent posting activity</h2>
+              <p className="mt-1 text-sm text-text-secondary">Latest updates across your live listings.</p>
+            </Card.Header>
+            <Card.Body className="divide-y divide-border p-0">
+              {recentActivity.map((job) => (
+                <div key={`act-${job.job_id}`} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
+                  <div className="min-w-0">
+                    <p className="font-medium text-text-primary">
+                      Posted <span className="text-brand-primary">&quot;{job.title}&quot;</span>
+                    </p>
+                    <p className="mt-0.5 text-xs text-text-secondary">
+                      {job.company_name} · {job.location || 'Location TBD'} · {job.posted_time_ago}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 gap-4 text-xs text-text-secondary">
+                    <span>{job.applicants_count} applicants</span>
+                    <span>{job.views_count} views</span>
+                    <span className={jobStatus(job) === 'open' ? 'font-semibold text-[#057642]' : 'text-text-tertiary'}>
+                      {jobStatus(job) === 'open' ? 'Open' : 'Closed'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </Card.Body>
+          </Card>
+        ) : null}
       </main>
 
       <aside className="col-span-12 flex flex-col gap-4 lg:col-span-3">
         <Card>
-          <Card.Body className="p-4">
+          <Card.Body className="space-y-3 p-4">
             <Link
               to="/jobs/post"
               className={cn(
@@ -213,6 +303,9 @@ export default function JobPostingActivityPage(): JSX.Element {
               <PencilLine className="h-4 w-4 shrink-0" aria-hidden />
               Post a free job
             </Link>
+            <Button variant="secondary" className="w-full" type="button" onClick={() => navigate('/recruiter/jobs')}>
+              Recruiter dashboard
+            </Button>
           </Card.Body>
         </Card>
         <Card className="border border-[#e0e0e0] bg-white shadow-sm">

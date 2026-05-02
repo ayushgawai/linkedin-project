@@ -18,6 +18,7 @@ export default function SignupPage(): JSX.Element {
   const { toast } = useToast()
   const setAuth = useAuthStore((state) => state.setAuth)
   const user = useAuthStore((state) => state.user)
+  const hydrateFromAuthMember = useProfileStore((state) => state.hydrateFromAuthMember)
   const patchProfile = useProfileStore((state) => state.patchProfile)
   const updateBasicInfo = useProfileStore((state) => state.updateBasicInfo)
   const [step, setStep] = useState<1 | 2 | 3>(1)
@@ -52,14 +53,7 @@ export default function SignupPage(): JSX.Element {
     },
     onSuccess: ({ token, user: authUser }, variables) => {
       setAuth(token, authUser)
-      // Overwrite the temporary member_id created on step 1 with the real backend id.
-      // Otherwise profile edits (skills) may be posted using the stale id, and the
-      // Career Coach will keep reading "old" skills from the backend.
-      patchProfile({ member_id: authUser.member_id, email: authUser.email })
-      const parts = (authUser.full_name || '').trim().split(/\s+/).filter(Boolean)
-      if (parts.length) {
-        updateBasicInfo({ first_name: parts[0] ?? '', last_name: parts.slice(1).join(' ') })
-      }
+      hydrateFromAuthMember(authUser)
       navigate(variables.role === 'recruiter' ? '/recruiter' : '/feed')
     },
     onError: (error: { message?: string }) => {

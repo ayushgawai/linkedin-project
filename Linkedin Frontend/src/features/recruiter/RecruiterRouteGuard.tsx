@@ -9,7 +9,7 @@ export function RecruiterRouteGuard({ children }: { children: JSX.Element }): JS
   }
 
   if (user.role !== 'recruiter') {
-    return <Navigate to="/feed" replace />
+    return <Navigate to="/jobs" replace state={{ recruiterAccessDenied: true }} />
   }
 
   return children

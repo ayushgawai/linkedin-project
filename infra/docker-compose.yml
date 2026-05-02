@@ -284,7 +284,11 @@ services:
       ANALYTICS_URL: http://analytics:8006
       AI_URL: http://ai-agent:8007
       POSTS_URL: http://posts:8008
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: ${S3_BUCKET:-linkedinclone-media}
     depends_on:
+      minio:
+        condition: service_healthy
       profile:
         condition: service_started
       job:

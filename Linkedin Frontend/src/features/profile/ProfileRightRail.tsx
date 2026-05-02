@@ -1,5 +1,5 @@
 import { Pencil } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { listConnections, requestConnection } from '../../api/connections'
 import { searchMembers } from '../../api/profile'
@@ -15,9 +15,22 @@ const fictionalCompanies = [
   { id: 'co-f3', name: 'Futura Stack', tagline: 'AI infrastructure' },
 ]
 
+function memberIdFromProfilePath(pathname: string): string | null {
+  const m = pathname.replace(/\/+$/, '').match(/^\/in\/([^/]+)$/)
+  if (!m) return null
+  const id = m[1]
+  return id && id !== 'me' ? id : null
+}
+
 export function ProfileRightRail(): JSX.Element {
+  const location = useLocation()
   const user = useAuthStore((s) => s.user)
   const profileMemberId = useProfileStore((s) => s.profile.member_id)
+  /** URL shown for "Public profile" must match the profile in the address bar, not only the logged-in user. */
+  const viewedMemberId = memberIdFromProfilePath(location.pathname)
+  const publicProfileMemberId = viewedMemberId ?? user?.member_id ?? profileMemberId ?? ''
+  const publicHost =
+    typeof window !== 'undefined' && window.location?.host ? window.location.host : 'clonecorp.com'
   const toggleFollowCompany = useProfileStore((s) => s.toggleFollowCompany)
   const followed = useProfileStore((s) => s.followedCompanyIds)
   const connectionsQuery = useQuery({
@@ -69,7 +82,9 @@ export function ProfileRightRail(): JSX.Element {
                 <Pencil className="h-4 w-4" />
               </button>
             </div>
-            <p className="mt-1 break-all text-text-secondary">clonecorp.com/in/{profileMemberId || '…'}</p>
+            <p className="mt-1 break-all text-text-secondary">
+              {publicHost}/in/{publicProfileMemberId || '…'}
+            </p>
           </div>
         </Card.Body>
       </Card>

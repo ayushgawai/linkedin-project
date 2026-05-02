@@ -95,6 +95,7 @@ export default function RecruiterJobFormPage(): JSX.Element {
   const [description, setDescription] = useState('')
   const [company, setCompany] = useState('Apex Labs')
   const [employmentType, setEmploymentType] = useState<string>('full_time')
+  const [salaryRange, setSalaryRange] = useState('')
 
   const [skillInput, setSkillInput] = useState('')
   const [skills, setSkills] = useState<string[]>([])
@@ -115,6 +116,7 @@ export default function RecruiterJobFormPage(): JSX.Element {
     setCompany(job.company_name)
     setEmploymentType(job.employment_type)
     setSkills([...job.skills_required])
+    setSalaryRange(job.salary_range?.trim() ?? '')
   }, [existingQuery.data, isEdit])
 
   const greeting = useMemo(
@@ -181,6 +183,7 @@ export default function RecruiterJobFormPage(): JSX.Element {
       industry: 'Software',
       easy_apply: true,
       promoted: true,
+      salary_range: salaryRange.trim() || null,
     })
   }
 
@@ -195,6 +198,7 @@ export default function RecruiterJobFormPage(): JSX.Element {
       work_mode: workplace as 'remote' | 'hybrid' | 'onsite',
       employment_type: employmentType as 'full_time' | 'part_time' | 'contract' | 'internship' | 'temporary',
       skills_required: skills.length > 0 ? skills : ['React', 'TypeScript'],
+      salary_range: salaryRange.trim() || null,
     })
   }
 
@@ -322,6 +326,13 @@ export default function RecruiterJobFormPage(): JSX.Element {
                 <span className="mb-1 block text-sm font-medium text-[#1f1f1f]">Employment type</span>
                 <Select variant="native" options={employmentOptions} value={employmentType} onValueChange={setEmploymentType} />
               </div>
+              <Input
+                label="Salary range (optional)"
+                placeholder="e.g. $120,000–$150,000/yr · Remote US"
+                value={salaryRange}
+                onChange={(e) => setSalaryRange(e.target.value)}
+                maxLength={100}
+              />
               <div className="flex gap-3 pt-2">
                 <Button type="button" variant="secondary" className="flex-1 rounded-full" onClick={() => setPhase(0)}>
                   Back
@@ -367,6 +378,9 @@ export default function RecruiterJobFormPage(): JSX.Element {
                   </li>
                   <li>
                     <span className="text-[#666]">Location:</span> {location} · {workplaceOptions.find((o) => o.value === workplace)?.label}
+                  </li>
+                  <li>
+                    <span className="text-[#666]">Salary range:</span> {salaryRange.trim() || '—'}
                   </li>
                   <li>
                     <span className="text-[#666]">Skills:</span> {skills.length ? skills.join(', ') : 'Defaults will be used'}

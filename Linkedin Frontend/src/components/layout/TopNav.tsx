@@ -9,8 +9,11 @@ import {
   Search,
   Users,
 } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
 import { cloneElement, isValidElement, useMemo, useRef, useState, type ReactElement } from 'react'
 import { NavLink, Link, useLocation, useNavigate } from 'react-router-dom'
+import { listNotifications } from '../../api/notifications'
+import { useOutcomeNotificationSync } from '../../hooks/useOutcomeNotificationSync'
 import { Avatar, Dropdown, Input } from '../ui'
 import { BrandMark } from './BrandMark'
 import { InternalNavLogo } from './InternalNavLogo'
@@ -36,11 +39,13 @@ function NavItem({
   label,
   icon,
   preload,
+  badgeCount,
 }: {
   to: string
   label: string
   icon: ReactElement<{ className?: string }>
   preload?: () => Promise<unknown>
+  badgeCount?: number
 }): JSX.Element {
   return (
     <NavLink
@@ -63,7 +68,14 @@ function NavItem({
           : icon
         return (
           <>
-            <span className="inline-flex">{iconNode}</span>
+            <span className="relative inline-flex">
+              {iconNode}
+              {typeof badgeCount === 'number' && badgeCount > 0 ? (
+                <span className="absolute -right-1.5 -top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[#cc1016] px-1 text-[10px] font-bold leading-none text-white">
+                  {badgeCount > 99 ? '99+' : badgeCount}
+                </span>
+              ) : null}
+            </span>
             <span
               className={cn(
                 'max-w-full break-words text-center',
@@ -80,6 +92,7 @@ function NavItem({
 }
 
 export function TopNav(): JSX.Element {
+  useOutcomeNotificationSync()
   const user = useAuthStore((state) => state.user)
   const clearAuth = useAuthStore((state) => state.clearAuth)
   const memberId = useProfileStore((s) => s.profile.member_id)
@@ -93,6 +106,23 @@ export function TopNav(): JSX.Element {
   const isRecruiter = user?.role === 'recruiter'
   const displayName = `${firstName} ${lastName}`.trim() || user?.full_name || 'Member'
   const profilePath = `/in/${memberId || user?.member_id || 'me'}`
+
+  const notifPreview = useQuery({
+    queryKey: ['notifications', 'nav-unread', user?.member_id],
+    queryFn: () =>
+      listNotifications({
+        page: 1,
+        pageSize: 60,
+        filter: 'all',
+        viewer_member_id: user?.member_id,
+      }),
+    enabled: Boolean(user?.member_id),
+    staleTime: 15_000,
+  })
+  const unreadNotifCount = useMemo(
+    () => (notifPreview.data?.notifications ?? []).filter((n) => n.unread).length,
+    [notifPreview.data?.notifications],
+  )
   const activityPath = `${profilePath}/activity`
   const [searchQuery, setSearchQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
@@ -311,6 +341,7 @@ export function TopNav(): JSX.Element {
             label="Notifications"
             icon={<Bell aria-hidden />}
             preload={() => import('../../features/notifications/NotificationsPage')}
+            badgeCount={unreadNotifCount}
           />
 
           <Dropdown.Root>

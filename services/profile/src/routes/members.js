@@ -12,7 +12,7 @@ import { ok, ApiError } from '../util/envelope.js';
 import { getPool } from '../db/mysql.js';
 import { getOrSet, invalidate, invalidatePrefix, keys } from '../../../shared/cache.js';
 import { config } from '../config.js';
-import { maybeStoreDataUrl } from '../util/objectStore.js';
+import { maybeStoreDataUrl, mapMemberMediaRow } from '../util/objectStore.js';
 
 export const membersRouter = Router();
 
@@ -24,8 +24,8 @@ const CreateProfessorSchema = z.object({
   location: z.string().max(255).optional().nullable(),
   headline: z.string().max(500).optional().nullable(),
   about: z.string().optional().nullable(),
-  // Frontend uses base64 data URLs for local uploads; accept any string.
-  profile_photo_url: z.string().max(2000).optional().nullable(),
+  // Data URLs when object store is off can be large; MEDIUMTEXT on DB holds up to 16MB.
+  profile_photo_url: z.string().max(12_000_000).optional().nullable(),
   skills: z.array(z.string()).optional().default([]),
 });
 
@@ -186,27 +186,26 @@ async function handleGetMember(req, res, next) {
   try {
     const candidate = req.body?.member_id ?? req.params?.member_id;
     const { member_id } = validate(GetSchema, { member_id: candidate });
-    const key = keys.member(member_id);
 
-    const data = await getOrSet(key, config.CACHE_TTL_ENTITY_SEC, async () => {
-      const pool = getPool();
-      const [rows] = await pool.query(
-        'SELECT * FROM members WHERE member_id = :member_id LIMIT 1',
+    // Do not cache full member rows in Redis: profile photos change often and a stale
+    // snapshot (or a cache hit before invalidation) makes other users see initials forever.
+    const pool = getPool();
+    const [rows] = await pool.query('SELECT * FROM members WHERE member_id = :member_id LIMIT 1', { member_id });
+    let data;
+    if (rows.length === 0) {
+      // Allow viewing recruiter profiles via the same `/members/get` route.
+      // Frontend uses `/in/:memberId` everywhere (messaging, network, etc.) and recruiters
+      // authenticate with member_id=recruiter_id, so treat recruiter ids as profile ids.
+      const [recRows] = await pool.query(
+        'SELECT recruiter_id, company_id, name, email, phone, company_name, company_industry, company_size, created_at FROM recruiters WHERE recruiter_id = :member_id LIMIT 1',
         { member_id },
       );
-      if (rows.length === 0) {
-        // Allow viewing recruiter profiles via the same `/members/get` route.
-        // Frontend uses `/in/:memberId` everywhere (messaging, network, etc.) and recruiters
-        // authenticate with member_id=recruiter_id, so treat recruiter ids as profile ids.
-        const [recRows] = await pool.query(
-          'SELECT recruiter_id, company_id, name, email, phone, company_name, company_industry, company_size, created_at FROM recruiters WHERE recruiter_id = :member_id LIMIT 1',
-          { member_id },
-        );
-        if (recRows.length === 0) return null;
+      if (recRows.length === 0) data = null;
+      else {
         const r = recRows[0];
         const full = String(r.name || 'Recruiter').trim();
         const [first, ...rest] = full.split(/\s+/);
-        return {
+        data = {
           member_id: r.recruiter_id,
           first_name: first || full,
           last_name: rest.join(' ') || '',
@@ -230,16 +229,16 @@ async function handleGetMember(req, res, next) {
           },
         };
       }
-      const [skills] = await pool.query(
-        'SELECT skill FROM member_skills WHERE member_id = :member_id',
-        { member_id },
-      );
-      return { ...rows[0], skills: skills.map((s) => s.skill) };
-    });
+    } else {
+      const [skills] = await pool.query('SELECT skill FROM member_skills WHERE member_id = :member_id', {
+        member_id,
+      });
+      data = { ...rows[0], skills: skills.map((s) => s.skill) };
+    }
 
     if (!data) throw new ApiError(404, 'MEMBER_NOT_FOUND', `Member ${member_id} not found`);
 
-    return res.json(ok(data, req.traceId));
+    return res.json(ok(mapMemberMediaRow(data), req.traceId));
   } catch (err) {
     next(coerceNotFoundCode(err));
   }
@@ -256,8 +255,8 @@ const UpdateSchema = z.object({
   location: z.string().max(255).nullable().optional(),
   headline: z.string().max(500).nullable().optional(),
   about: z.string().nullable().optional(),
-  // Frontend uses base64 data URLs for local uploads; accept any string.
-  profile_photo_url: z.string().max(2000).nullable().optional(),
+  profile_photo_url: z.string().max(12_000_000).nullable().optional(),
+  cover_photo_url: z.string().max(12_000_000).nullable().optional(),
   skills: z.array(z.string().min(1).max(100)).optional(),
 });
 
@@ -265,6 +264,12 @@ async function handleUpdateMember(req, res, next) {
   try {
     const candidate = req.body?.member_id ?? req.params?.member_id;
     const { member_id, ...fields } = validate(UpdateSchema, { ...req.body, member_id: candidate });
+    if (fields.profile_photo_url !== undefined && String(fields.profile_photo_url).startsWith('blob:')) {
+      throw new ApiError(400, 'INVALID_PHOTO_URL', 'blob: URLs only work in one browser tab; re-upload the image from the profile editor.');
+    }
+    if (fields.cover_photo_url !== undefined && String(fields.cover_photo_url).startsWith('blob:')) {
+      throw new ApiError(400, 'INVALID_PHOTO_URL', 'blob: URLs only work in one browser tab; re-upload the image from the profile editor.');
+    }
     if (fields.profile_photo_url && String(fields.profile_photo_url).startsWith('data:')) {
       const stored = await maybeStoreDataUrl({
         kind: 'profile-photo',
@@ -272,6 +277,14 @@ async function handleUpdateMember(req, res, next) {
         dataUrl: fields.profile_photo_url,
       });
       fields.profile_photo_url = stored.url;
+    }
+    if (fields.cover_photo_url && String(fields.cover_photo_url).startsWith('data:')) {
+      const stored = await maybeStoreDataUrl({
+        kind: 'cover-photo',
+        memberId: member_id,
+        dataUrl: fields.cover_photo_url,
+      });
+      fields.cover_photo_url = stored.url;
     }
     const entries = Object.entries(fields).filter(([, v]) => v !== undefined);
     if (entries.length === 0) {
@@ -334,7 +347,9 @@ async function handleUpdateMember(req, res, next) {
       'SELECT skill FROM member_skills WHERE member_id = :member_id',
       { member_id },
     );
-    return res.json(ok({ ...rows[0], skills: skillRows.map((r) => r.skill) }, req.traceId));
+    return res.json(
+      ok(mapMemberMediaRow({ ...rows[0], skills: skillRows.map((r) => r.skill) }), req.traceId),
+    );
   } catch (err) {
     next(coerceNotFoundCode(err));
   }
@@ -449,9 +464,11 @@ async function handleSearchMembers(req, res, next) {
     // Pytest expects either a list response OR an object with an `items` list.
     // Our legacy search returns `{ results, total, page, page_size }`.
     if (isGet) {
-      return res.json(ok({ items: data.results || [] }, req.traceId));
+      return res.json(ok({ items: (data.results || []).map(mapMemberMediaRow) }, req.traceId));
     }
-    return res.json(ok(data, req.traceId));
+    return res.json(
+      ok({ ...data, results: (data.results || []).map(mapMemberMediaRow) }, req.traceId),
+    );
   } catch (err) {
     next(err);
   }
@@ -487,7 +504,9 @@ membersRouter.get('/members', async (req, res, next) => {
       'SELECT COUNT(*) AS total FROM members',
     );
 
-    return res.json(ok({ items: rows, total: Number(total), page: safePage, limit: safeLimit }, req.traceId));
+    return res.json(
+      ok({ items: rows.map(mapMemberMediaRow), total: Number(total), page: safePage, limit: safeLimit }, req.traceId),
+    );
   } catch (err) {
     next(err);
   }

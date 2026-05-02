@@ -7,7 +7,7 @@ import httpProxy from 'http-proxy';
 const app = express();
 app.disable('x-powered-by');
 app.use(cors());
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '15mb' }));
 
 // Explicitly handle CORS preflight so OPTIONS doesn't get proxied upstream.
 // Without this, browsers preflight POSTs (e.g. with Authorization header),
@@ -23,6 +23,10 @@ const CONNECTION_URL = process.env.CONNECTION_URL || 'http://connection:8005';
 const ANALYTICS_URL = process.env.ANALYTICS_URL || 'http://analytics:8006';
 const AI_URL = process.env.AI_URL || 'http://ai-agent:8007';
 const POSTS_URL = process.env.POSTS_URL || 'http://posts:8008';
+
+/** MinIO/S3 API endpoint (Docker service name OK — gateway runs on backend network). */
+const S3_ENDPOINT = (process.env.S3_ENDPOINT || 'http://minio:9000').replace(/\/$/, '');
+const S3_BUCKET = process.env.S3_BUCKET || 'linkedinclone-media';
 
 function pickUpstream(path) {
   if (path.startsWith('/members') || path.startsWith('/auth')) return PROFILE_URL;
@@ -159,6 +163,37 @@ app.post('/applications/byMember', async (req, res) => {
     });
   } catch (err) {
     return res.status(500).json({ message: 'Gateway error', details: String(err?.message || err) });
+  }
+});
+
+// Proxy public bucket objects so browsers never load http://127.0.0.1:9000/... (that is each
+// client's own machine, not the host where MinIO runs). Profile photos use this path.
+app.use('/media', async (req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    return next();
+  }
+  const rel = req.path.replace(/^\//, '');
+  if (!rel || rel.includes('..')) {
+    return res.status(400).end();
+  }
+  if (!rel.startsWith(`${S3_BUCKET}/`)) {
+    return res.status(403).end();
+  }
+  const objectPath = rel.split('/').map(encodeURIComponent).join('/');
+  const upstreamUrl = `${S3_ENDPOINT}/${objectPath}`;
+  try {
+    const upstream = await fetch(upstreamUrl, { method: req.method });
+    const ct = upstream.headers.get('content-type');
+    if (ct) res.setHeader('Content-Type', ct);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.status(upstream.status);
+    if (req.method === 'HEAD') {
+      return res.end();
+    }
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    return res.end(buf);
+  } catch (err) {
+    return res.status(502).json({ message: 'Media proxy error', details: String(err?.message || err) });
   }
 });
 

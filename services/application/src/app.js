@@ -16,7 +16,8 @@ const VALID_TRANSITIONS = {
   reviewing: new Set(['interview', 'rejected']),
   interview: new Set(['offer', 'rejected']),
   offer: new Set(),
-  rejected: new Set()
+  // Recruiter may undo a mistaken rejection: return candidate to the pipeline (then invite to interview).
+  rejected: new Set(['reviewing'])
 };
 const VALID_APPLICATION_STATUSES = new Set(Object.keys(VALID_TRANSITIONS));
 

@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { validate } from '../util/validator.js';
 import { ok, ApiError } from '../util/envelope.js';
 import { getPool } from '../db/mysql.js';
+import { mapMemberMediaRow } from '../util/objectStore.js';
 
 export const authRouter = Router();
 
@@ -30,11 +31,11 @@ authRouter.post('/auth/login', async (req, res, next) => {
     if (memberRows.length) {
       const m = memberRows[0];
       const token = `dev-token-${uuidv4()}`;
-      const user = {
+      const user = mapMemberMediaRow({
         ...m,
         full_name: `${m.first_name} ${m.last_name}`.trim(),
         role: 'member',
-      };
+      });
       return res.json(ok({ token, user }, req.traceId));
     }
 
@@ -121,7 +122,7 @@ authRouter.post('/auth/google', async (req, res, next) => {
     if (memberRows.length) {
       const m = memberRows[0];
       const token = `dev-token-${uuidv4()}`;
-      const user = { ...m, full_name: `${m.first_name} ${m.last_name}`.trim(), role: 'member' };
+      const user = mapMemberMediaRow({ ...m, full_name: `${m.first_name} ${m.last_name}`.trim(), role: 'member' });
       return res.json(ok({ token, user }, req.traceId));
     }
 
@@ -153,7 +154,7 @@ authRouter.post('/auth/google', async (req, res, next) => {
         if (rows.length) {
           const m = rows[0];
           const token = `dev-token-${uuidv4()}`;
-          const user = { ...m, full_name: `${m.first_name} ${m.last_name}`.trim(), role: 'member' };
+          const user = mapMemberMediaRow({ ...m, full_name: `${m.first_name} ${m.last_name}`.trim(), role: 'member' });
           return res.json(ok({ token, user }, req.traceId));
         }
       }

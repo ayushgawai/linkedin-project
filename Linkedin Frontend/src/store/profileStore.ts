@@ -56,6 +56,8 @@ export type Project = {
   description: string
   skills: string[]
   media: Array<{ id: string; image: string; title: string; url: string }>
+  /** Public project or repo URL (e.g. GitHub). */
+  project_url?: string | null
 }
 
 export interface ProfileData {
@@ -103,6 +105,8 @@ export interface ProfileStore {
   completionCardDismissed: boolean
   followedCompanyIds: string[]
   initializeProfile: (fields?: Partial<ProfileData>) => void
+  /** Align local profile with backend after login/signup so photos match what others see via getMember. */
+  hydrateFromAuthMember: (m: Member) => void
   patchProfile: (fields: Partial<ProfileData>) => void
   updateBasicInfo: (
     fields: Partial<Pick<ProfileData, 'first_name' | 'last_name' | 'headline' | 'location' | 'email' | 'phone' | 'pronouns'>>,
@@ -302,6 +306,23 @@ export const useProfileStore = create<ProfileStore>()(
         set((state) => ({
           profile: createEmptyProfile({ ...state.profile, ...fields }),
         })),
+      hydrateFromAuthMember: (m) => {
+        const parts = (m.full_name ?? '').trim().split(/\s+/).filter(Boolean)
+        set((state) => ({
+          profile: {
+            ...state.profile,
+            member_id: m.member_id,
+            email: m.email,
+            first_name: parts[0] ?? state.profile.first_name,
+            last_name: parts.slice(1).join(' ') || state.profile.last_name,
+            headline: (m.headline ?? state.profile.headline) || '',
+            location: (m.location ?? state.profile.location) || '',
+            about: (m.bio ?? m.about ?? state.profile.about) || '',
+            profile_photo_url: m.profile_photo_url ?? '',
+            cover_photo_url: m.cover_photo_url ?? '',
+          },
+        }))
+      },
       patchProfile: (fields) => set((state) => ({ profile: { ...state.profile, ...fields } })),
       updateBasicInfo: (fields) => set((state) => ({ profile: { ...state.profile, ...fields } })),
       updateAbout: (about) => set((state) => ({ profile: { ...state.profile, about } })),

@@ -1,19 +1,13 @@
-import { CheckCircle2, MoreHorizontal, Pencil, Plus, XCircle } from 'lucide-react'
-import { useState } from 'react'
+import { CheckCircle2, MoreHorizontal, Pencil, Plus } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { ingestEvent } from '../../api/analytics'
-import { updateMemberApplicationStatus } from '../../api/applications'
 import { companyColorClass, companyInitials } from '../../lib/companyAvatarStyle'
 import { timeAgoShort } from '../../lib/formatters'
-import { useAuthStore } from '../../store/authStore'
+import { getStatusColor, getStatusLabel } from '../../lib/statusUtils'
 import { useTrackerHiddenStore } from '../../store/trackerHiddenStore'
 import { useTrackerNotesStore } from '../../store/trackerNotesStore'
 import { cn } from '../../lib/cn'
 import type { MemberApplication, MemberApplicationTab } from '../../types/tracker'
 import { Dropdown, useToast } from '../../components/ui'
-import { useActionToast } from '../../hooks/useActionToast'
-import { ConfirmModal } from '../../components/ui/ConfirmModal'
 
 export const JOB_TRACKER_PAGE_SIZE = 25
 
@@ -46,159 +40,14 @@ function workModeLabel(m: string): string {
 }
 
 export function JobTrackerRow({ app, tab, onOpenNote, onOpenApplication, layout }: JobTrackerRowProps): JSX.Element {
-  const user = useAuthStore((s) => s.user)
   const { toast } = useToast()
-  const actionToast = useActionToast()
-  const qc = useQueryClient()
   const navigate = useNavigate()
   const note = useTrackerNotesStore((s) => s.notes[app.application_id] ?? '')
   const hide = useTrackerHiddenStore((s) => s.hide)
-  const [confirmInterview, setConfirmInterview] = useState(false)
-  const [confirmOffer, setConfirmOffer] = useState(false)
-  const [confirmReject, setConfirmReject] = useState(false)
-  const [rejectReason, setRejectReason] = useState('')
-
-  const moveMutation = useMutation({
-    mutationFn: async () => {
-      if (!user) {
-        throw new Error('Sign in required')
-      }
-      await updateMemberApplicationStatus(app.application_id, 'interview', undefined, user.member_id)
-      try {
-        await ingestEvent({
-          event_type: 'application.status.changed',
-          trace_id: crypto.randomUUID(),
-          timestamp: new Date().toISOString(),
-          actor_id: user.member_id,
-          entity: { entity_type: 'application', entity_id: app.application_id },
-          idempotency_key: crypto.randomUUID(),
-          metadata: { from_status: app.status, to_status: 'interview', changed_by: 'member' },
-        })
-      } catch {
-        // analytics optional in local demo
-      }
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['my-applications', user?.member_id] })
-      actionToast.interview(job.title)
-      setConfirmInterview(false)
-    },
-    onError: () => {
-      toast({ variant: 'error', title: 'Could not update status' })
-    },
-  })
-
-  const rejectMutation = useMutation({
-    mutationFn: async (reason: string) => {
-      if (!user) {
-        throw new Error('Sign in required')
-      }
-      const from = app.status
-      await updateMemberApplicationStatus(app.application_id, 'rejected', reason || undefined, user.member_id)
-      try {
-        await ingestEvent({
-          event_type: 'application.status.changed',
-          trace_id: crypto.randomUUID(),
-          timestamp: new Date().toISOString(),
-          actor_id: user.member_id,
-          entity: { entity_type: 'application', entity_id: app.application_id },
-          idempotency_key: crypto.randomUUID(),
-          metadata: { from_status: from, to_status: 'rejected', changed_by: 'member' },
-        })
-      } catch {
-        // optional
-      }
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['my-applications', user?.member_id] })
-      actionToast.rejected(job.title)
-      setConfirmReject(false)
-      setRejectReason('')
-    },
-    onError: () => {
-      toast({ variant: 'error', title: 'Could not update status' })
-    },
-  })
-
-  const offerMutation = useMutation({
-    mutationFn: async () => {
-      if (!user) {
-        throw new Error('Sign in required')
-      }
-      await updateMemberApplicationStatus(app.application_id, 'offer', undefined, user.member_id)
-      try {
-        await ingestEvent({
-          event_type: 'application.status.changed',
-          trace_id: crypto.randomUUID(),
-          timestamp: new Date().toISOString(),
-          actor_id: user.member_id,
-          entity: { entity_type: 'application', entity_id: app.application_id },
-          idempotency_key: crypto.randomUUID(),
-          metadata: { from_status: app.status, to_status: 'offer', changed_by: 'member' },
-        })
-      } catch {
-        // analytics optional in local demo
-      }
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['my-applications', user?.member_id] })
-      toast({ variant: 'success', title: `${job.title} moved to Offer` })
-      setConfirmOffer(false)
-    },
-    onError: () => {
-      toast({ variant: 'error', title: 'Could not update status' })
-    },
-  })
 
   const job = app.job
   const isVerifiedClosed = job.listing_status === 'closed'
   const offer = app.status === 'offer'
-
-  const modals = (
-    <>
-      <ConfirmModal
-        isOpen={confirmInterview}
-        onClose={() => setConfirmInterview(false)}
-        title="Move to Interview"
-        message="Move this application to the Interview stage?"
-        confirmLabel="Confirm"
-        confirmVariant="primary"
-        loading={moveMutation.isPending}
-        onConfirm={() => moveMutation.mutate()}
-      />
-      <ConfirmModal
-        isOpen={confirmOffer}
-        onClose={() => setConfirmOffer(false)}
-        title="Move to Offer"
-        message="Move this application to the Offer stage?"
-        confirmLabel="Confirm"
-        confirmVariant="primary"
-        loading={offerMutation.isPending}
-        onConfirm={() => offerMutation.mutate()}
-      />
-      <ConfirmModal
-        isOpen={confirmReject}
-        onClose={() => setConfirmReject(false)}
-        title="Mark as rejected"
-        message="Mark this application as rejected?"
-        confirmLabel="Confirm"
-        confirmVariant="destructive"
-        loading={rejectMutation.isPending}
-        onConfirm={() => void rejectMutation.mutateAsync(rejectReason)}
-      >
-        <label className="block text-xs text-text-secondary" htmlFor={`rej-${app.application_id}`}>
-          Optional reason
-        </label>
-        <textarea
-          id={`rej-${app.application_id}`}
-          className="mt-1 w-full rounded-md border border-border p-2 text-sm"
-          rows={3}
-          value={rejectReason}
-          onChange={(e) => setRejectReason(e.target.value)}
-        />
-      </ConfirmModal>
-    </>
-  )
 
   const jobCol = (
     <div className="flex min-w-0 items-start gap-3">
@@ -329,77 +178,19 @@ export function JobTrackerRow({ app, tab, onOpenNote, onOpenApplication, layout 
 
   const statusBlock = (
     <div className="flex flex-col items-end justify-center gap-1">
-      {tab === 'applied' ? (
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <button
-            type="button"
-            className="text-sm font-semibold text-brand-primary hover:underline"
-            onClick={() => setConfirmInterview(true)}
-          >
-            Move to Interview
-          </button>
-          <button
-            type="button"
-            className="rounded-full p-1 text-text-tertiary transition hover:text-danger"
-            title="Mark as rejected"
-            aria-label="Mark as rejected"
-            onClick={() => setConfirmReject(true)}
-          >
-            <XCircle className="h-4 w-4" />
-          </button>
-          {moreMenuFull}
-        </div>
-      ) : null}
-      {tab === 'interview' ? (
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <span className="text-sm font-semibold text-success">In Interview</span>
-          <button
-            type="button"
-            className="text-sm font-semibold text-brand-primary hover:underline"
-            onClick={() => setConfirmOffer(true)}
-          >
-            Move to Offer
-          </button>
-          <button
-            type="button"
-            className="rounded-full p-1 text-text-tertiary transition hover:text-danger"
-            title="Mark as rejected"
-            aria-label="Mark as rejected"
-            onClick={() => setConfirmReject(true)}
-          >
-            <XCircle className="h-4 w-4" />
-          </button>
-          {moreMenuFull}
-        </div>
-      ) : null}
-      {tab === 'rejected' ? (
-        <div className="flex items-center justify-end gap-2">
-          <div className="text-right">
+      <div className="flex max-w-[14rem] flex-col items-end gap-0.5 text-right">
+        {tab === 'rejected' ? (
+          <>
             <span className="inline-block rounded-full bg-danger/10 px-2 py-0.5 text-xs font-semibold text-danger">Rejected</span>
-            <p className="text-xs text-text-tertiary">
-              from {app.rejected_from === 'interview' ? 'Interview' : 'Applied'}
-            </p>
-          </div>
-          {moreMenuRejected}
-        </div>
-      ) : null}
-      {tab === 'offer' ? (
-        <div className="flex items-center justify-end gap-2">
-          <div className="text-right">
-            <span className="inline-block rounded-full bg-success/15 px-2 py-0.5 text-xs font-semibold text-success">Offer</span>
-          </div>
-          <button
-            type="button"
-            className="rounded-full p-1 text-text-tertiary transition hover:text-danger"
-            title="Mark as rejected"
-            aria-label="Mark as rejected"
-            onClick={() => setConfirmReject(true)}
-          >
-            <XCircle className="h-4 w-4" />
-          </button>
-          {moreMenuFull}
-        </div>
-      ) : null}
+            <p className="text-xs text-text-tertiary">from {app.rejected_from === 'interview' ? 'Interview' : 'Applied'}</p>
+          </>
+        ) : tab === 'offer' ? (
+          <span className="inline-block rounded-full bg-success/15 px-2 py-0.5 text-xs font-semibold text-success">Offer</span>
+        ) : (
+          <span className={cn('text-sm font-semibold', getStatusColor(app.status))}>{getStatusLabel(app.status)}</span>
+        )}
+      </div>
+      <div className="flex justify-end">{tab === 'rejected' ? moreMenuRejected : moreMenuFull}</div>
     </div>
   )
 
@@ -409,20 +200,16 @@ export function JobTrackerRow({ app, tab, onOpenNote, onOpenApplication, layout 
         {jobCol}
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">{statusBlock}</div>
         <div className="mt-2 border-t border-border pt-2">{notesBlock}</div>
-        {modals}
       </div>
     )
   }
 
   return (
-    <>
-      <div className="grid grid-cols-12 gap-y-2 border-b border-border py-4 transition last:border-b-0 hover:bg-black/[0.02] lg:gap-x-2 lg:gap-y-0">
-        <div className="col-span-12 lg:col-span-5">{jobCol}</div>
-        <div className="col-span-12 hidden items-center lg:col-span-2 lg:flex">{avatars}</div>
-        <div className="col-span-12 md:col-span-6 lg:col-span-2 lg:flex lg:items-center">{notesBlock}</div>
-        <div className="col-span-12 flex items-center justify-end md:col-span-6 lg:col-span-3">{statusBlock}</div>
-      </div>
-      {modals}
-    </>
+    <div className="grid grid-cols-12 gap-y-2 border-b border-border py-4 transition last:border-b-0 hover:bg-black/[0.02] lg:gap-x-2 lg:gap-y-0">
+      <div className="col-span-12 lg:col-span-5">{jobCol}</div>
+      <div className="col-span-12 hidden items-center lg:col-span-2 lg:flex">{avatars}</div>
+      <div className="col-span-12 md:col-span-6 lg:col-span-2 lg:flex lg:items-center">{notesBlock}</div>
+      <div className="col-span-12 flex items-center justify-end md:col-span-6 lg:col-span-3">{statusBlock}</div>
+    </div>
   )
 }
