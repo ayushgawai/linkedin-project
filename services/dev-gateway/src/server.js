@@ -2,6 +2,8 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 
+import { authorizeRequest, registerSuccessfulAuthPayload } from './sessionAuthz.js';
+
 const app = express();
 app.disable('x-powered-by');
 app.use(cors());
@@ -89,6 +91,14 @@ app.all('*', async (req, res) => {
   }
 
   try {
+    const gate = await authorizeRequest(req, {
+      jobUrl: JOB_URL,
+      applicationUrl: APPLICATION_URL,
+    });
+    if (!gate.ok) {
+      return res.status(gate.status).json({ message: gate.message, success: false });
+    }
+
     const url = `${upstream}${req.path}`;
     const headers = {
       'content-type': 'application/json',
@@ -122,8 +132,14 @@ app.all('*', async (req, res) => {
     }
 
     // If a job was created, register it with application memory service.
-    if (req.path === '/jobs/create') {
-      await bestEffortRegisterJobWithApplicationService(unwrapped);
+    if (req.path === '/jobs' || req.path === '/jobs/create') {
+      if (req.method === 'POST') {
+        await bestEffortRegisterJobWithApplicationService(unwrapped);
+      }
+    }
+
+    if (unwrapped?.token && unwrapped?.user) {
+      registerSuccessfulAuthPayload(unwrapped);
     }
 
     return res.status(upstreamResp.status).json(unwrapped);

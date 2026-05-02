@@ -13,6 +13,7 @@ import requests
 PROFILE_URL     = "http://localhost:8001"
 JOB_URL         = "http://localhost:8002"
 APPLICATION_URL = "http://localhost:8003"
+GATEWAY_URL     = "http://localhost:8000"
 MESSAGING_URL   = "http://localhost:8004"
 CONNECTION_URL  = "http://localhost:8005"
 ANALYTICS_URL   = "http://localhost:8006"
