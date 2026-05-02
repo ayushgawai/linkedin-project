@@ -6,11 +6,17 @@ import { connectMongo } from '../db/mongo.js';
 const TOPICS = [
   'job.viewed',
   'job.saved',
+  'job.created',
+  'job.closed',
   'application.submitted',
   'application.status.updated',
   'connection.accepted',
   'connection.requested',
+  'connection.rejected',
   'message.sent',
+  'member.created',
+  'member.updated',
+  'member.deleted',
 ];
 
 let kafka = null;

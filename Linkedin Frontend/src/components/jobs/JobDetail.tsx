@@ -2,7 +2,6 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { Share2, MoreHorizontal } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { ingestEvent } from '../../api/analytics'
 import { closeJob, incrementJobViews } from '../../api/jobs'
 import type { JobRecord } from '../../types/jobs'
 import { useAuthStore } from '../../store/authStore'
@@ -61,16 +60,8 @@ export function JobDetail({ job, emitViewed = false }: JobDetailProps): JSX.Elem
 
   useEffect(() => {
     if (!emitViewed || !user) return
-    void incrementJobViews(job.job_id)
+    void incrementJobViews(job.job_id, user.member_id)
     setLocalViews((prev) => prev + 1)
-    void ingestEvent({
-      event_type: 'job.viewed',
-      trace_id: crypto.randomUUID(),
-      timestamp: new Date().toISOString(),
-      actor_id: user.member_id,
-      entity: { entity_type: 'job', entity_id: job.job_id },
-      idempotency_key: `job-viewed-${user.member_id}-${job.job_id}`,
-    })
   }, [emitViewed, job.job_id, user])
 
   const [expanded, setExpanded] = useState(false)

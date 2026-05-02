@@ -138,13 +138,25 @@ export async function listJobsByRecruiter(recruiter_id: string): Promise<JobReco
   return response.data
 }
 
-export async function incrementJobViews(job_id: string): Promise<void> {
+export async function incrementJobViews(job_id: string, viewer_id?: string | null): Promise<void> {
   if (USE_MOCKS) {
     await mockDelay(80)
     mockJobs = getMockJobs().map((job) => (job.job_id === job_id ? { ...job, views_count: job.views_count + 1 } : job))
     return
   }
-  await apiClient.post('/jobs/incrementViews', { job_id })
+  await apiClient.post('/jobs/incrementViews', {
+    job_id,
+    ...(viewer_id != null && viewer_id !== '' ? { viewer_id } : {}),
+  })
+}
+
+/** Emits `job.saved` via Job Service → Kafka (analytics consumer persists to Mongo). */
+export async function recordJobSave(job_id: string, member_id: string): Promise<void> {
+  if (USE_MOCKS) {
+    await mockDelay(80)
+    return
+  }
+  await apiClient.post('/jobs/recordSave', { job_id, member_id })
 }
 
 export async function incrementJobApplicants(job_id: string): Promise<void> {

@@ -18,11 +18,17 @@ KAFKA_BROKER = "localhost:9092"
 TOPICS = [
     ("job.viewed",                    3, 1),
     ("job.saved",                     3, 1),
+    ("job.created",                   3, 1),
+    ("job.closed",                    3, 1),
     ("application.submitted",         6, 1),
     ("application.status.updated",    3, 1),
     ("message.sent",                  6, 1),
-    ("connection.requested",          3, 1),
+    ("connection.requested",        3, 1),
     ("connection.accepted",           3, 1),
+    ("connection.rejected",         3, 1),
+    ("member.created",               3, 1),
+    ("member.updated",               3, 1),
+    ("member.deleted",               3, 1),
     ("ai.requests",                   3, 1),
     ("ai.results",                    3, 1),
     # Dead Letter Queues
@@ -32,9 +38,23 @@ TOPICS = [
 
 # Consumer groups (documented here for reference — they self-register on first consume)
 CONSUMER_GROUPS = {
-    "analytics-consumer-group":   ["job.viewed", "job.saved", "application.submitted"],
+    "analytics-consumer-group":   [
+        "job.viewed",
+        "job.saved",
+        "job.created",
+        "job.closed",
+        "application.submitted",
+        "application.status.updated",
+        "connection.requested",
+        "connection.accepted",
+        "connection.rejected",
+        "message.sent",
+        "member.created",
+        "member.updated",
+        "member.deleted",
+    ],
     "messaging-consumer-group":   ["message.sent"],
-    "connection-consumer-group":  ["connection.requested", "connection.accepted"],
+    "connection-consumer-group":  ["connection.requested", "connection.accepted", "connection.rejected"],
     "ai-supervisor-group":        ["ai.requests"],
     "ai-results-group":           ["ai.results"],
 }

@@ -2,8 +2,7 @@ import { useInfiniteQuery, useMutation } from '@tanstack/react-query'
 import { useCallback, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ChevronRight, Target } from 'lucide-react'
-import { listJobs } from '../../api/jobs'
-import { ingestEvent } from '../../api/analytics'
+import { listJobs, recordJobSave } from '../../api/jobs'
 import { JobListItem } from '../../components/jobs'
 import { RailFooter } from '../../components/layout/RailFooter'
 import { Card, Skeleton } from '../../components/ui'
@@ -31,14 +30,7 @@ export default function JobsDiscoveryPage(): JSX.Element {
   const saveMutation = useMutation({
     mutationFn: async (jobId: string) => {
       if (!user) return
-      await ingestEvent({
-        event_type: 'job.saved',
-        trace_id: crypto.randomUUID(),
-        timestamp: new Date().toISOString(),
-        actor_id: user.member_id,
-        entity: { entity_type: 'job', entity_id: jobId },
-        idempotency_key: `job-saved-${user.member_id}-${jobId}`,
-      })
+      await recordJobSave(jobId, user.member_id)
     },
   })
 
