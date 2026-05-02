@@ -7,7 +7,8 @@ Connects to: MySQL and MongoDB via .env
 
 Features:
   - Idempotent: safe to run multiple times (INSERT IGNORE / upsert)
-  - Batch size: 500 rows per insert
+  - Batch size: configurable via SEED_MYSQL_BATCH (default 100); commits after each batch
+    to avoid MySQL 2013 "Lost connection" on large TEXT payloads (jobs, applications).
   - Progress logging with row counts
   - Final SELECT COUNT(*) for every table and collection
 
@@ -16,10 +17,13 @@ Usage:
     python3 data/seed_loader.py
 """
 
+from __future__ import annotations
+
 import json
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 import mysql.connector
 from pymongo import MongoClient, InsertOne
@@ -39,7 +43,9 @@ DB_NAME   = os.getenv("DB_NAME", "linkedinclone")
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 
 SEEDS = Path(__file__).parent / "seeds"
-BATCH = 500
+# Small default: jobs/applications rows include large TEXT; one huge txn often triggers 2013.
+BATCH = max(25, int(os.getenv("SEED_MYSQL_BATCH", "100")))
+MONGO_BATCH = max(50, int(os.getenv("SEED_MONGO_BATCH", "500")))
 
 
 # ── Utilities ──────────────────────────────────────────────────────────────────
@@ -58,18 +64,19 @@ def batch_iter(lst: list, size: int):
         yield lst[i : i + size]
 
 
-def mysql_insert_ignore(cursor, table: str, rows: list, columns: list) -> int:
-    """INSERT IGNORE batch into table. Returns rows inserted."""
+def mysql_insert_ignore(conn, cursor, table: str, rows: list, columns: list, batch_size: int) -> int:
+    """INSERT IGNORE in batches; commit after each batch to limit packet/txn size (avoids error 2013)."""
     if not rows:
         return 0
     placeholders = ", ".join(["%s"] * len(columns))
     col_list = ", ".join(f"`{c}`" for c in columns)
     sql = f"INSERT IGNORE INTO `{table}` ({col_list}) VALUES ({placeholders})"
     total = 0
-    for batch in batch_iter(rows, BATCH):
+    for batch in batch_iter(rows, batch_size):
         values = [tuple(row.get(c) for c in columns) for row in batch]
         cursor.executemany(sql, values)
         total += cursor.rowcount
+        conn.commit()
     return total
 
 
@@ -79,22 +86,41 @@ def load_mysql():
     print("\n" + "=" * 60)
     print("Connecting to MySQL...")
     conn = mysql.connector.connect(
-        host=DB_HOST, port=DB_PORT,
-        user=DB_USER, password=DB_PASS,
+        host=DB_HOST,
+        port=DB_PORT,
+        user=DB_USER,
+        password=DB_PASS,
         database=DB_NAME,
         allow_local_infile=True,
+        connection_timeout=120,
+        autocommit=False,
     )
     cur = conn.cursor()
+    # Reduce dropped connections on long bulk loads (Docker MySQL defaults can be tight).
+    for stmt in (
+        "SET SESSION net_read_timeout = 600",
+        "SET SESSION net_write_timeout = 600",
+        "SET SESSION wait_timeout = 600",
+        "SET SESSION interactive_timeout = 600",
+        "SET SESSION max_allowed_packet = 67108864",
+    ):
+        try:
+            cur.execute(stmt)
+        except mysql.connector.Error:
+            pass  # some managed instances restrict SESSION max_allowed_packet
+    conn.commit()
+
     # Disable FK checks for bulk load, re-enable after
     cur.execute("SET FOREIGN_KEY_CHECKS = 0;")
     cur.execute("SET UNIQUE_CHECKS = 0;")
+    conn.commit()
 
-    def insert(table, filename, columns):
+    def insert(table, filename, columns, batch_size: Optional[int] = None):
         rows = load_json(filename)
         if not rows:
             return
-        inserted = mysql_insert_ignore(cur, table, rows, columns)
-        conn.commit()
+        bs = batch_size if batch_size is not None else BATCH
+        inserted = mysql_insert_ignore(conn, cur, table, rows, columns, bs)
         print(f"  {table:<25} {len(rows):>8,} in file   {inserted:>8,} inserted")
 
     print("Loading tables...")
@@ -111,18 +137,28 @@ def load_mysql():
         "role", "access_level", "created_at",
     ])
 
-    insert("jobs", "jobs.json", [
-        "job_id", "company_id", "recruiter_id", "title", "description",
-        "seniority_level", "employment_type", "location", "remote_type",
-        "salary_range", "status", "posted_datetime", "views_count", "applicants_count",
-    ])
+    insert(
+        "jobs",
+        "jobs.json",
+        [
+            "job_id", "company_id", "recruiter_id", "title", "description",
+            "seniority_level", "employment_type", "location", "remote_type",
+            "salary_range", "status", "posted_datetime", "views_count", "applicants_count",
+        ],
+        batch_size=max(25, BATCH // 2),
+    )
 
     insert("job_skills", "job_skills.json", ["job_id", "skill"])
 
-    insert("applications", "applications.json", [
-        "application_id", "job_id", "member_id", "resume_url",
-        "resume_text", "cover_letter", "application_datetime", "status",
-    ])
+    insert(
+        "applications",
+        "applications.json",
+        [
+            "application_id", "job_id", "member_id", "resume_url",
+            "resume_text", "cover_letter", "application_datetime", "status",
+        ],
+        batch_size=max(25, BATCH // 2),
+    )
 
     insert("member_skills", "member_skills.json", ["member_id", "skill"])
 
@@ -212,7 +248,7 @@ def load_mongo():
     if events:
         inserted_total = 0
         skipped_total = 0
-        for batch in batch_iter(events, BATCH):
+        for batch in batch_iter(events, MONGO_BATCH):
             ops = [InsertOne(doc) for doc in batch]
             try:
                 result = db.events.bulk_write(ops, ordered=False)

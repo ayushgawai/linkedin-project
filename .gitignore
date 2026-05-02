@@ -1,4 +1,4 @@
-# Dependencies
+# Node
 node_modules/
 
 # Env files
@@ -12,8 +12,10 @@ dist/
 build/
 coverage/
 
-# OS
+# OS files
 .DS_Store
+Thumbs.db
+~$*
 
 # Personal workspace (never commit)
 personal/
@@ -24,10 +26,10 @@ linkedin/
 __pycache__/
 *.pyc
 *.pyo
-.venv/
-venv/
+.venv*/
+venv*/
 
-# JMeter / performance artifacts
+# JMeter results (large CSVs, regenerated on each run)
 *.jtl
 infra/perf/results/
 infra/perf/logs/
@@ -40,24 +42,25 @@ infra/perf/data/
 *.swp
 .cursor/
 
-# OS junk
-Thumbs.db
-~$*
-
-# Local reference docs / working copies kept outside version control.
-# The spec lives in docs/submission/ — keep these copies untracked so the
-# repo root stays clean. Remove the pattern if you ever want to commit them.
-LinkedInClone_*.docx
-LinkedInClone_*.txt
-
-*.egg-info/
-
-# Data pipeline — raw CSVs and generated seeds are local-only
+# Dataset raw files (too large for repo)
 data/raw/
 data/seeds/
 
 # Local dataset drop (do not commit)
 Data_2/
 
+# Redis/Kafka local data
+data/redis/
+data/kafka/
+data/zookeeper/
+
 # Test coverage output
 tests/coverage/
+
+# Local reference docs / working copies kept outside version control.
+# Report deliverables live in docs/submission/ (tracked). Patterns below
+# are optional root-level copies only.
+LinkedInClone_*.docx
+LinkedInClone_*.txt
+
+*.egg-info/

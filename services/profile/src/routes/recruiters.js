@@ -43,6 +43,25 @@ recruitersRouter.post('/recruiters/create', async (req, res, next) => {
           company_size: body.company_size || null,
         },
       );
+      const parts = body.full_name.trim().split(/\s+/).filter(Boolean);
+      const first_name = parts[0] || 'Recruiter';
+      const last_name = parts.slice(1).join(' ') || '';
+      const headline =
+        body.headline?.trim() || `Recruiter at ${companyName}`;
+      await pool.query(
+        `INSERT INTO members
+           (member_id, first_name, last_name, email, phone, location, headline, about, profile_photo_url, cover_photo_url)
+         VALUES
+           (:member_id, :first_name, :last_name, :email, NULL, :location, :headline, NULL, NULL, NULL)`,
+        {
+          member_id: recruiterId,
+          first_name,
+          last_name,
+          email: body.email,
+          location: body.location ?? null,
+          headline,
+        },
+      );
     } catch (err) {
       if (err.code === 'ER_DUP_ENTRY') {
         throw new ApiError(409, 'DUPLICATE_EMAIL', 'A recruiter with that email already exists');

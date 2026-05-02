@@ -18,6 +18,7 @@ import { useTrackerHiddenStore } from '../../store/trackerHiddenStore'
 import { useTrackerNotesStore } from '../../store/trackerNotesStore'
 import { cn } from '../../lib/cn'
 import type { MemberApplication, MemberApplicationTab } from '../../types/tracker'
+import { SavedJobsHighlight } from '../../components/jobs'
 import { Card, EmptyState, Skeleton } from '../../components/ui'
 import { ApplicationDetailModal } from './ApplicationDetailModal'
 import { DatePostedFilter } from './DatePostedFilter'
@@ -144,6 +145,10 @@ export default function JobTrackerPage(): JSX.Element {
       <p className="mb-3 max-w-2xl text-sm text-text-secondary">
         Status updates when the hiring team advances your application. You do not need to move yourself between stages here.
       </p>
+      <div className="mb-4">
+        <SavedJobsHighlight maxItems={5} />
+      </div>
+
       <div className="mb-6 mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap gap-2" role="tablist" aria-label="Application status">
           {(

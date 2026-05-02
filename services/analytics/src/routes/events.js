@@ -2,11 +2,12 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { validate } from '../util/validator.js';
-import { ok } from '../util/envelope.js';
 import { ingestEnvelope } from '../kafka/consumer.js';
 
 const EntitySchema = z.object({
-  entity_type: z.enum(['job', 'application', 'thread', 'connection', 'ai_task', 'member']),
+  // Frontend emits values beyond backend's historical enum (e.g. post,
+  // connection_request), so accept any non-empty string.
+  entity_type: z.string().min(1),
   entity_id: z.string().min(1),
 });
 
@@ -15,11 +16,12 @@ const EnvelopeSchema = z.object({
   event_type: z.string().min(1),
   trace_id: z.string().uuid().optional(),
   timestamp: z.string().datetime().optional(),
-  actor_id: z.string().min(1),
+  actor_id: z.string().min(1).optional(),
   entity: EntitySchema.optional(),
   entity_type: z.string().optional(),
   entity_id: z.string().optional(),
   payload: z.record(z.any()).default({}),
+  metadata: z.record(z.any()).optional(),
   idempotency_key: z.string().min(1).optional(),
 });
 
@@ -41,24 +43,22 @@ eventsRouter.post('/events/ingest', async (req, res, next) => {
       event_type: body.event_type,
       trace_id: body.trace_id || req.traceId || uuidv4(),
       timestamp: body.timestamp || new Date().toISOString(),
-      actor_id: body.actor_id,
+      actor_id: body.actor_id || 'unknown',
       entity,
-      payload: body.payload,
+      payload: { ...body.payload, ...(body.metadata || {}) },
       idempotency_key: body.idempotency_key || `${body.event_type}:${uuidv4()}`,
     };
 
     const result = await ingestEnvelope(envelope, { source: 'http' });
 
-    return res.status(202).json(
-      ok(
-        {
-          accepted: true,
-          duplicate: result.duplicate,
-          idempotency_key: envelope.idempotency_key,
-        },
-        envelope.trace_id,
-      ),
-    );
+    // Frontend analytics.ts expects a raw object from response.data.
+    return res.status(202).json({
+      success: true,
+      accepted: true,
+      duplicate: result.duplicate,
+      idempotency_key: envelope.idempotency_key,
+      trace_id: envelope.trace_id,
+    });
   } catch (err) {
     next(err);
   }

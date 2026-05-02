@@ -11,8 +11,24 @@ import { ok, ApiError } from '../util/envelope.js';
 import { getPool } from '../db/mysql.js';
 import { getOrSet, invalidate, invalidatePrefix, keys } from '../../../shared/cache.js';
 import { config } from '../config.js';
+import { publishOrOutbox } from '../../../shared/src/outbox.js';
+import { buildEnvelope } from '../../../shared/src/kafka.js';
 
 export const jobsRouter = Router();
+
+function emitJobLifecycle(req, topic, eventType, actorId, jobId, payload = {}) {
+  publishOrOutbox(
+    topic,
+    buildEnvelope({
+      eventType,
+      actorId: actorId || 'system',
+      entityType: 'job',
+      entityId: jobId,
+      payload: { job_id: jobId, ...payload },
+      traceId: req.traceId,
+    }),
+  ).catch(() => {});
+}
 
 const SENIORITY = ['internship', 'entry', 'associate', 'mid', 'senior', 'director', 'executive'];
 const EMPLOYMENT = ['full_time', 'part_time', 'contract', 'temporary', 'volunteer', 'internship'];
@@ -167,6 +183,48 @@ jobsRouter.post('/recruiters', async (req, res, next) => {
   }
 });
 
+jobsRouter.get('/recruiters', async (req, res, next) => {
+  try {
+    const page = Math.max(1, Number(req.query?.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(req.query?.limit) || 20));
+    const offset = (page - 1) * limit;
+    const pool = getPool();
+    const [rows] = await pool.query(
+      `SELECT recruiter_id, company_id, name, email, company_name,
+              company_industry, company_size, created_at
+         FROM recruiters
+        ORDER BY created_at DESC
+        LIMIT :limit OFFSET :offset`,
+      { limit, offset },
+    );
+    const [[{ total }]] = await pool.query('SELECT COUNT(*) AS total FROM recruiters');
+    return res.json(ok({ items: rows, total: Number(total), page, limit }, req.traceId));
+  } catch (err) {
+    next(err);
+  }
+});
+
+jobsRouter.get('/recruiters/:recruiter_id', async (req, res, next) => {
+  try {
+    const { recruiter_id } = req.params;
+    const pool = getPool();
+    const [rows] = await pool.query(
+      `SELECT recruiter_id, company_id, name, email, company_name,
+              company_industry, company_size, created_at
+         FROM recruiters
+        WHERE recruiter_id = :recruiter_id
+        LIMIT 1`,
+      { recruiter_id },
+    );
+    if (!rows?.length) {
+      throw new ApiError(404, 'NOT_FOUND', `Recruiter ${recruiter_id} not found`);
+    }
+    return res.json(ok(rows[0], req.traceId));
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /jobs (pytest)
 jobsRouter.post('/jobs', async (req, res, next) => {
   try {
@@ -228,6 +286,9 @@ jobsRouter.post('/jobs', async (req, res, next) => {
     }
 
     await invalidatePrefix('job:search:');
+    emitJobLifecycle(req, 'job.created', 'job.created', body.recruiter_id, jobId, {
+      title: body.title,
+    });
 
     return res.status(201).json(ok({ job_id: jobId, status: body.status ?? 'open', ...body }, req.traceId));
   } catch (err) {
@@ -295,6 +356,9 @@ jobsRouter.post('/jobs/create', async (req, res, next) => {
     }
 
     await invalidatePrefix('job:search:');
+    emitJobLifecycle(req, 'job.created', 'job.created', body.recruiter_id, jobId, {
+      title: body.title,
+    });
 
     return res.status(201).json(ok({ job_id: jobId, ...body }, req.traceId));
   } catch (err) {
@@ -324,15 +388,54 @@ jobsRouter.post('/jobs/get', async (req, res, next) => {
   }
 });
 
+const IncrementViewsSchema = z.object({
+  job_id: z.string().min(1),
+  viewer_id: z.string().max(128).optional(),
+});
+
 jobsRouter.post('/jobs/incrementViews', async (req, res, next) => {
   try {
-    const { job_id } = validate(GetSchema, req.body);
-    const [result] = await getPool().query(
+    const { job_id, viewer_id } = validate(IncrementViewsSchema, req.body);
+    const pool = getPool();
+    const [result] = await pool.query(
       'UPDATE jobs SET views_count = views_count + 1 WHERE job_id = :job_id',
       { job_id },
     );
     if (result.affectedRows === 0) throw new ApiError(404, 'JOB_NOT_FOUND', `Job ${job_id} not found`);
+    const [[row]] = await pool.query(
+      'SELECT title FROM jobs WHERE job_id = :job_id LIMIT 1',
+      { job_id },
+    );
     await invalidate(keys.job(job_id));
+    const actor = viewer_id && String(viewer_id).trim() ? String(viewer_id).trim() : 'anonymous';
+    emitJobLifecycle(req, 'job.viewed', 'job.viewed', actor, job_id, {
+      title: row?.title ?? '',
+    });
+    return res.json(ok({ success: true }, req.traceId));
+  } catch (err) {
+    next(err);
+  }
+});
+
+const RecordSaveSchema = z.object({
+  job_id: z.string().min(1),
+  member_id: z.string().min(1),
+});
+
+/** Publishes `job.saved` to Kafka (analytics consumer → Mongo) for bookmark actions. */
+jobsRouter.post('/jobs/recordSave', async (req, res, next) => {
+  try {
+    const { job_id, member_id } = validate(RecordSaveSchema, req.body);
+    const envelope = buildEnvelope({
+      eventType: 'job.saved',
+      actorId: member_id,
+      entityType: 'job',
+      entityId: job_id,
+      payload: { job_id },
+      traceId: req.traceId,
+    });
+    envelope.idempotency_key = `job-saved-${member_id}-${job_id}`;
+    publishOrOutbox('job.saved', envelope).catch(() => {});
     return res.json(ok({ success: true }, req.traceId));
   } catch (err) {
     next(err);
@@ -416,7 +519,7 @@ jobsRouter.post('/jobs/close', async (req, res, next) => {
     const pool = getPool();
 
     const [[existing]] = await pool.query(
-      'SELECT status FROM jobs WHERE job_id = :job_id LIMIT 1',
+      'SELECT status, recruiter_id, title FROM jobs WHERE job_id = :job_id LIMIT 1',
       { job_id },
     );
     if (!existing) throw new ApiError(404, 'JOB_NOT_FOUND', `Job ${job_id} not found`);
@@ -428,6 +531,9 @@ jobsRouter.post('/jobs/close', async (req, res, next) => {
 
     await invalidate(keys.job(job_id));
     await invalidatePrefix('job:search:');
+    emitJobLifecycle(req, 'job.closed', 'job.closed', existing.recruiter_id, job_id, {
+      title: existing.title ?? '',
+    });
 
     return res.json(ok({ job_id, status: 'closed' }, req.traceId));
   } catch (err) {
@@ -461,9 +567,12 @@ jobsRouter.post('/jobs/search', async (req, res, next) => {
       const where = ["j.status = 'open'"];
       const params = { page_size, offset };
 
-      if (filters.keyword) {
+      if (filters.keyword && filters.keyword.length >= 3) {
         where.push('MATCH(title, description, location) AGAINST (:kw IN NATURAL LANGUAGE MODE)');
         params.kw = filters.keyword;
+      } else if (filters.keyword) {
+        where.push('(title LIKE :kw_like OR description LIKE :kw_like OR location LIKE :kw_like)');
+        params.kw_like = `%${filters.keyword}%`;
       }
       if (filters.location) {
         where.push('j.location LIKE :loc');

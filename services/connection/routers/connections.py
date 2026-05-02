@@ -114,6 +114,27 @@ def _delete_edge_from_mongo(conn: Connection) -> None:
         log.warning("mongo delete failed for connection %s: %s", getattr(conn, "connection_id", "?"), exc)
 
 
+def _rejecting_actor(conn: Connection) -> str:
+    """Addressee (non-requester) is treated as the actor for a reject event."""
+    rb = conn.requested_by or conn.user_a
+    return conn.user_b if rb == conn.user_a else conn.user_a
+
+
+def _produce_connection_rejected(conn: Connection) -> None:
+    envelope = build_envelope(
+        event_type="connection.rejected",
+        actor_id=_rejecting_actor(conn),
+        entity_type="connection",
+        entity_id=conn.connection_id,
+        payload={
+            "connection_id": conn.connection_id,
+            "user_a": conn.user_a,
+            "user_b": conn.user_b,
+        },
+    )
+    kafka_producer.produce("connection.rejected", envelope)
+
+
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @router.post("/request")
@@ -251,6 +272,7 @@ def reject_connection_rest(connection_id: str, req: Request, db: Session = Depen
     db.commit()
     db.refresh(conn)
     _delete_edge_from_mongo(conn)
+    _produce_connection_rejected(conn)
     return ok({"connection_id": conn.connection_id, "status": "rejected"}, req, status=200)
 
 
@@ -334,6 +356,7 @@ def reject_connection(body: ActionRequestBody, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(conn)
     _delete_edge_from_mongo(conn)
+    _produce_connection_rejected(conn)
 
     log.info(f"Connection {body.request_id} rejected.")
     return {"success": True}

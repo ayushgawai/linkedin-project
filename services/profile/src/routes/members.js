@@ -13,8 +13,24 @@ import { getPool } from '../db/mysql.js';
 import { getOrSet, invalidate, invalidatePrefix, keys } from '../../../shared/cache.js';
 import { config } from '../config.js';
 import { maybeStoreDataUrl, mapMemberMediaRow } from '../util/objectStore.js';
+import { publishOrOutbox } from '../../../shared/src/outbox.js';
+import { buildEnvelope } from '../../../shared/src/kafka.js';
 
 export const membersRouter = Router();
+
+function emitMemberLifecycle(req, topic, eventType, memberId, payload = {}) {
+  publishOrOutbox(
+    topic,
+    buildEnvelope({
+      eventType,
+      actorId: memberId,
+      entityType: 'member',
+      entityId: memberId,
+      payload: { member_id: memberId, ...payload },
+      traceId: req.traceId,
+    }),
+  ).catch(() => {});
+}
 
 const CreateProfessorSchema = z.object({
   first_name: z.string().min(1).max(100),
@@ -93,6 +109,7 @@ async function handleCreateMember(req, res, next) {
       }
 
       await invalidatePrefix('member:search:');
+      emitMemberLifecycle(req, 'member.created', 'member.created', memberId, { email: raw.email });
       const token = `dev-token-${uuidv4()}`;
       const user = {
         member_id: memberId,
@@ -154,6 +171,7 @@ async function handleCreateMember(req, res, next) {
     }
 
     await invalidatePrefix('member:search:');
+    emitMemberLifecycle(req, 'member.created', 'member.created', memberId);
 
     return res.status(201).json(ok({ member_id: memberId, ...body }, req.traceId));
   } catch (err) {
@@ -260,6 +278,41 @@ const UpdateSchema = z.object({
   skills: z.array(z.string().min(1).max(100)).optional(),
 });
 
+/** Recruiters authenticate with member_id === recruiter_id but may only exist in `recruiters`. Materialize a mirror `members` row so POST /members/update can persist headline/photos/skills. */
+async function ensureMemberRowForRecruiter(conn, member_id) {
+  const [memRows] = await conn.query('SELECT member_id FROM members WHERE member_id = :member_id LIMIT 1', {
+    member_id,
+  });
+  if (memRows.length > 0) return true;
+
+  const [recRows] = await conn.query(
+    `SELECT recruiter_id, name, email, phone, company_name
+       FROM recruiters WHERE recruiter_id = :member_id LIMIT 1`,
+    { member_id },
+  );
+  if (recRows.length === 0) return false;
+
+  const r = recRows[0];
+  const full = String(r.name || 'Recruiter').trim();
+  const [first, ...rest] = full.split(/\s+/);
+  const headline = `Recruiter at ${r.company_name || 'Company'}`;
+  await conn.query(
+    `INSERT INTO members
+       (member_id, first_name, last_name, email, phone, location, headline, about, profile_photo_url, cover_photo_url)
+     VALUES
+       (:member_id, :first_name, :last_name, :email, :phone, NULL, :headline, NULL, NULL, NULL)`,
+    {
+      member_id,
+      first_name: first || full,
+      last_name: rest.join(' ') || '',
+      email: r.email,
+      phone: r.phone ?? null,
+      headline,
+    },
+  );
+  return true;
+}
+
 async function handleUpdateMember(req, res, next) {
   try {
     const candidate = req.body?.member_id ?? req.params?.member_id;
@@ -298,6 +351,11 @@ async function handleUpdateMember(req, res, next) {
     try {
       await conn.beginTransaction();
 
+      const ensured = await ensureMemberRowForRecruiter(conn, member_id);
+      if (!ensured) {
+        throw new ApiError(404, 'MEMBER_NOT_FOUND', `Member ${member_id} not found`);
+      }
+
       if (scalarEntries.length) {
         const setClause = scalarEntries.map(([k]) => `${k} = :${k}`).join(', ');
         const params = { member_id, ...Object.fromEntries(scalarEntries) };
@@ -309,7 +367,6 @@ async function handleUpdateMember(req, res, next) {
           throw new ApiError(404, 'MEMBER_NOT_FOUND', `Member ${member_id} not found`);
         }
       } else {
-        // If only skills are being updated, still validate the member exists.
         const [exists] = await conn.query('SELECT member_id FROM members WHERE member_id = :member_id LIMIT 1', { member_id });
         if (!exists.length) {
           throw new ApiError(404, 'MEMBER_NOT_FOUND', `Member ${member_id} not found`);
@@ -334,6 +391,7 @@ async function handleUpdateMember(req, res, next) {
 
     await invalidate(keys.member(member_id));
     await invalidatePrefix('member:search:');
+    emitMemberLifecycle(req, 'member.updated', 'member.updated', member_id);
 
     // Return the updated member shape (pytest expects updated fields like headline/about).
     const [rows] = await pool.query(
@@ -387,6 +445,7 @@ async function handleDeleteMember(req, res, next) {
 
     await invalidate(keys.member(member_id));
     await invalidatePrefix('member:search:');
+    emitMemberLifecycle(req, 'member.deleted', 'member.deleted', member_id);
 
     return res.json(ok({ deleted: true, member_id }, req.traceId));
   } catch (err) {

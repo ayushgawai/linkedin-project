@@ -2,9 +2,8 @@ import { useInfiniteQuery, useMutation } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { ChevronRight, LocateFixed, Target, X } from 'lucide-react'
-import { listJobs } from '../../api/jobs'
-import { ingestEvent } from '../../api/analytics'
-import { JobListItem } from '../../components/jobs'
+import { listJobs, recordJobSave } from '../../api/jobs'
+import { JobListItem, SavedJobsHighlight } from '../../components/jobs'
 import { RailFooter } from '../../components/layout/RailFooter'
 import { Button, Card, Input, Skeleton } from '../../components/ui'
 import { useActionToast } from '../../hooks/useActionToast'
@@ -57,14 +56,7 @@ export default function JobsDiscoveryPage(): JSX.Element {
   const saveMutation = useMutation({
     mutationFn: async (jobId: string) => {
       if (!user) return
-      await ingestEvent({
-        event_type: 'job.saved',
-        trace_id: crypto.randomUUID(),
-        timestamp: new Date().toISOString(),
-        actor_id: user.member_id,
-        entity: { entity_type: 'job', entity_id: jobId },
-        idempotency_key: `job-saved-${user.member_id}-${jobId}`,
-      })
+      await recordJobSave(jobId, user.member_id)
     },
   })
 
@@ -139,6 +131,7 @@ export default function JobsDiscoveryPage(): JSX.Element {
           </div>
         ) : null}
 
+        <SavedJobsHighlight maxItems={5} />
         <Card>
           <Card.Header className="space-y-3">
             <div className="flex flex-wrap items-start justify-between gap-2">

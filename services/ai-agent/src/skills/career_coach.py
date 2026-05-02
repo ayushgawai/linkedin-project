@@ -65,7 +65,7 @@ def _resume_improvements(
 
     if len(missing_skills) >= 4:
         improvements.append(
-            "Create a dedicated \"Relevant Skills\" block near the top so "
+            "Create a dedicated Relevant Skills section near the top so "
             f"{len(missing_skills)} missing keywords surface in recruiter "
             "and ATS screens."
         )
@@ -82,7 +82,7 @@ def _resume_improvements(
     # Experience-bullet style tip — independent of content.
     improvements.append(
         "Rework experience bullets to start with a strong verb + artifact + "
-        "metric (e.g. \"Shipped X serving Y QPS, cutting p95 by Z ms\")."
+        "metric (e.g. Shipped X serving Y QPS, cutting p95 by Z ms)."
     )
 
     if job_description:
@@ -158,7 +158,7 @@ async def generate_coaching(
     if not resume_improvements:
         resume_improvements = [
             "Rework experience bullets to start with a strong verb + artifact + "
-            "metric (e.g. \"Shipped X serving Y QPS, cutting p95 by Z ms\")."
+            "metric (e.g. Shipped X serving Y QPS, cutting p95 by Z ms)."
         ]
 
     if job_skills:
@@ -167,13 +167,13 @@ async def generate_coaching(
         if missing_skills:
             rationale = (
                 f"Candidate covers {coverage}/{total} ({match_score}%) of the "
-                f"required skills for \"{job_title or target_job_id}\". "
+                f"required skills for {job_title or target_job_id}. "
                 f"Biggest gaps: {', '.join(missing_skills[:3])}."
             )
         else:
             rationale = (
                 f"Candidate already covers all {total} required skills for "
-                f"\"{job_title or target_job_id}\" — focus on impact/metrics "
+                f"{job_title or target_job_id} — focus on impact/metrics "
                 "rather than adding more skills."
             )
     else:

@@ -15,7 +15,7 @@
 // ============================================
 
 import { isAxiosError } from 'axios'
-import { apiClient, mockDelay, USE_MOCKS } from './client'
+import { apiClient, mockDelay, USE_MOCKS, unwrapApiData } from './client'
 import { MOCK_JOBS } from '../lib/jobsMockData'
 import { generateMockMemberApplications } from '../lib/memberApplicationsMock'
 import type { ApiError, Application } from '../types'
@@ -141,7 +141,7 @@ export async function listMemberApplications(member_id: string): Promise<MemberA
     page: 1,
     page_size: 100,
   })
-  const data: any = unwrapApplicationPayload(response.data)
+  const data: any = unwrapApiData(response.data) as any
   const rows = Array.isArray(data) ? data : data && Array.isArray(data.results) ? data.results : data && Array.isArray(data.applications) ? data.applications : []
   if (Array.isArray(rows)) {
     return rows.map((row: any) => ({
@@ -211,7 +211,7 @@ export async function submitApplication(payload: SubmitApplicationPayload): Prom
     return app
   }
   const response = await apiClient.post<Application>('/applications/submit', payload)
-  return response.data
+  return unwrapApiData(response.data) as Application
 }
 
 export async function listApplicationsByJob(job_id: string): Promise<JobApplicantRow[]> {

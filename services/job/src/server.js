@@ -3,6 +3,8 @@ import { config } from './config.js';
 import { logger } from './util/logger.js';
 import { getPool, closeMySQL } from './db/mysql.js';
 import { setMetricSink, closeCache } from '../../shared/cache.js';
+import { connectProducer } from '../../shared/src/kafka.js';
+import { startOutboxPoller } from '../../shared/src/outbox.js';
 
 async function main() {
   getPool();
@@ -14,6 +16,9 @@ async function main() {
       { port: config.PORT, service: config.SERVICE_NAME, env: config.NODE_ENV },
       'job service listening',
     );
+    connectProducer()
+      .then(() => startOutboxPoller())
+      .catch(() => {});
   });
 
   const shutdown = async (signal) => {

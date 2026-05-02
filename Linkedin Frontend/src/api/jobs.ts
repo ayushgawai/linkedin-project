@@ -2,34 +2,31 @@
 // All endpoints POST with JSON body. Base URL from VITE_API_BASE_URL.
 // Analytics events fire on: job.viewed, job.saved, application.submitted
 
-import { USE_MOCKS, apiClient, mockDelay } from './client'
+import { USE_MOCKS, apiClient, mockDelay, unwrapApiData } from './client'
 import { MOCK_JOBS } from '../lib/jobsMockData'
+import { timeAgoShort } from '../lib/formatters'
 import type { CreateJobPayload, JobRecord, JobSearchFilters, JobSearchResponse, UpdateJobPayload } from '../types/jobs'
 
 let mockJobs: JobRecord[] = [...MOCK_JOBS]
 
-/** Turn MySQL DATETIME / ISO strings into short relative labels for cards. */
-function postedTimeFromSqlDatetime(raw: unknown): string | undefined {
-  if (typeof raw !== 'string') return undefined
-  const d = new Date(raw)
-  if (Number.isNaN(d.getTime())) return undefined
-  const diffMs = Date.now() - d.getTime()
-  if (diffMs < 0) return 'Just now'
-  const mins = Math.floor(diffMs / 60_000)
-  if (mins < 1) return 'Just now'
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.floor(mins / 60)
-  if (hours < 48) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  if (days < 14) return `${days}d ago`
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+function looksLikeIsoDateString(s: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}/.test(s) || (s.includes('T') && (s.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(s)))
 }
 
-function unwrapJobEnvelope<T>(body: unknown): T {
-  if (body && typeof body === 'object' && (body as { success?: boolean }).success === true && 'data' in body) {
-    return (body as { data: T }).data
+/** Backend sends ISO datetimes; UI shows relative time (same idea as JobTrackerRow). */
+function derivePostedTimeLabel(raw: any): string {
+  const candidates = [raw?.posted_time_ago, raw?.posted_at, raw?.posted_datetime, raw?.created_at]
+  for (const c of candidates) {
+    if (typeof c !== 'string' || !c.trim()) continue
+    const t = c.trim()
+    if (t === 'Just now' || t === 'Recently') return t
+    if (t === 'now') return 'Just now'
+    if (/\bago\b/i.test(t)) return t
+    if (looksLikeIsoDateString(t)) return timeAgoShort(t)
+    if (/^\d+[smhd]$/i.test(t)) return `${t} ago`
+    return t
   }
-  return body as T
+  return 'Recently'
 }
 
 function normalizeJobRecord(raw: any): JobRecord {
@@ -46,11 +43,7 @@ function normalizeJobRecord(raw: any): JobRecord {
     title: typeof raw?.title === 'string' && raw.title.trim() ? raw.title : 'Job',
     location: typeof raw?.location === 'string' && raw.location.trim() ? raw.location : '',
     description: typeof raw?.description === 'string' ? raw.description : '',
-    posted_time_ago:
-      (typeof raw?.posted_time_ago === 'string' && raw.posted_time_ago.trim() && raw.posted_time_ago) ||
-      (typeof raw?.posted_at === 'string' && raw.posted_at.trim() && raw.posted_at) ||
-      postedTimeFromSqlDatetime(raw?.posted_datetime) ||
-      'Recently',
+    posted_time_ago: derivePostedTimeLabel(raw),
     company_logo_url: raw?.company_logo_url ?? null,
     applicants_count: Number(raw?.applicants_count ?? 0),
     views_count: Number(raw?.views_count ?? 0),
@@ -107,7 +100,7 @@ export async function listJobs(filters: JobSearchFilters): Promise<JobSearchResp
       total: filtered.length,
     }
   }
-  const response = await apiClient.post<JobSearchResponse>('/jobs/search', {
+  const response = await apiClient.post<JobSearchResponse | Record<string, unknown>>('/jobs/search', {
     keyword: filters.keyword ?? '',
     location: filters.location ?? '',
     type: filters.type ?? '',
@@ -116,7 +109,7 @@ export async function listJobs(filters: JobSearchFilters): Promise<JobSearchResp
     page: filters.page ?? 1,
     pageSize: filters.pageSize ?? 20,
   })
-  const data: any = response.data as any
+  const data: any = unwrapApiData(response.data) as any
   // Backend returns { results, total, page, page_size }, mock expects { jobs, has_more }.
   if (data && Array.isArray(data.results)) {
     const page = Number(data.page || filters.page || 1)
@@ -139,7 +132,7 @@ export async function getJob(job_id: string): Promise<JobRecord> {
     return jobs.find((job) => job.job_id === job_id) ?? jobs[0]
   }
   const response = await apiClient.post<unknown>('/jobs/get', { job_id })
-  return normalizeJobRecord(unwrapJobEnvelope(response.data))
+  return normalizeJobRecord(unwrapApiData(response.data) as any)
 }
 
 export async function closeJob(job_id: string): Promise<{ success: boolean }> {
@@ -193,7 +186,7 @@ export async function createJob(payload: CreateJobPayload): Promise<JobRecord> {
   }
   // Gateway/job-service supports RESTful create at POST /jobs
   const response = await apiClient.post<unknown>('/jobs', payload)
-  return normalizeJobRecord(unwrapJobEnvelope(response.data))
+  return normalizeJobRecord(unwrapApiData(response.data) as any)
 }
 
 export async function updateJob(payload: UpdateJobPayload): Promise<JobRecord> {
@@ -210,7 +203,7 @@ export async function updateJob(payload: UpdateJobPayload): Promise<JobRecord> {
     return updated
   }
   const response = await apiClient.post<unknown>('/jobs/update', payload)
-  return normalizeJobRecord(unwrapJobEnvelope(response.data))
+  return normalizeJobRecord(unwrapApiData(response.data) as any)
 }
 
 export type ListJobsByRecruiterOptions = {
@@ -228,20 +221,32 @@ export async function listJobsByRecruiter(recruiter_id: string, opts?: ListJobsB
     page: opts?.page ?? 1,
     page_size: opts?.page_size ?? 100,
   })
-  const data: any = unwrapJobEnvelope(response.data) as any
+  const data: any = unwrapApiData(response.data) as any
   if (Array.isArray(data)) return (data as any[]).map(normalizeJobRecord)
   if (data && Array.isArray(data.results)) return (data.results as any[]).map(normalizeJobRecord)
   if (data && Array.isArray(data.jobs)) return (data.jobs as any[]).map(normalizeJobRecord)
   return []
 }
 
-export async function incrementJobViews(job_id: string): Promise<void> {
+export async function incrementJobViews(job_id: string, viewer_id?: string | null): Promise<void> {
   if (USE_MOCKS) {
     await mockDelay(80)
     mockJobs = getMockJobs().map((job) => (job.job_id === job_id ? { ...job, views_count: job.views_count + 1 } : job))
     return
   }
-  await apiClient.post('/jobs/incrementViews', { job_id })
+  await apiClient.post('/jobs/incrementViews', {
+    job_id,
+    ...(viewer_id != null && viewer_id !== '' ? { viewer_id } : {}),
+  })
+}
+
+/** Emits `job.saved` via Job Service → Kafka (analytics consumer persists to Mongo). */
+export async function recordJobSave(job_id: string, member_id: string): Promise<void> {
+  if (USE_MOCKS) {
+    await mockDelay(80)
+    return
+  }
+  await apiClient.post('/jobs/recordSave', { job_id, member_id })
 }
 
 export async function incrementJobApplicants(job_id: string): Promise<void> {

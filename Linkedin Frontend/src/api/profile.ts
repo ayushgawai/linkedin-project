@@ -11,7 +11,7 @@
 // ============================================
 
 import { rewriteMinioUrlForApiGateway } from '../lib/mediaUrl'
-import { USE_MOCKS, apiClient, mockDelay } from './client'
+import { USE_MOCKS, apiClient, mockDelay, unwrapApiData } from './client'
 import { delay, seedDemoData } from '../lib/mockData'
 import { DIRECTORY_MEMBERS, getDirectoryMember } from '../lib/profileDirectory'
 import { clearLocalCredentials, getLocalCredentials, saveLocalCredentials } from '../lib/localProfileAuth'
@@ -176,7 +176,7 @@ export async function login(email: string, password: string): Promise<AuthRespon
     }
   }
   const response = await apiClient.post<unknown>('/auth/login', { email, password })
-  return normalizeAuthResponse(response.data)
+  return normalizeAuthResponse(unwrapApiData(response.data))
 }
 
 export async function signup(payload: SignupPayload): Promise<AuthResponse> {
@@ -216,7 +216,7 @@ export async function signup(payload: SignupPayload): Promise<AuthResponse> {
   // Members support both POST /members and /members/create; keep legacy endpoint.
   const endpoint = payload.role === 'recruiter' ? '/recruiters/create' : '/members/create'
   const response = await apiClient.post<unknown>(endpoint, payload)
-  return normalizeAuthResponse(response.data)
+  return normalizeAuthResponse(unwrapApiData(response.data))
 }
 
 export async function getMember(member_id: string): Promise<Member> {
@@ -233,7 +233,7 @@ export async function getMember(member_id: string): Promise<Member> {
     return Promise.reject({ status: 404, message: 'Profile not found' })
   }
   const response = await apiClient.post<unknown>('/members/get', { member_id })
-  return normalizeMember(unwrapProfileResponse(response.data) as any)
+  return normalizeMember(unwrapApiData(response.data) as any)
 }
 
 export async function updateMember(member_id: string, fields: Partial<Member>): Promise<Member> {
@@ -243,7 +243,7 @@ export async function updateMember(member_id: string, fields: Partial<Member>): 
     return toMemberProfile(useProfileStore.getState().profile)
   }
   const response = await apiClient.post<unknown>('/members/update', { member_id, ...fields })
-  const next = normalizeMember(unwrapProfileResponse(response.data) as any)
+  const next = normalizeMember(unwrapApiData(response.data) as any)
   applyMemberFieldsToProfile(member_id, {
     profile_photo_url: next.profile_photo_url,
     cover_photo_url: next.cover_photo_url,
@@ -280,7 +280,7 @@ export async function searchMembers(filters: SearchMembersFilters): Promise<Memb
     skill: Array.isArray(filters.skills) && filters.skills.length > 0 ? filters.skills[0] : undefined,
   }
   const response = await apiClient.post<unknown>('/members/search', payload)
-  const data: any = unwrapProfileResponse(response.data) as any
+  const data: any = unwrapApiData(response.data) as any
   if (Array.isArray(data)) return (data as any[]).map(normalizeMember)
   if (data && Array.isArray(data.results)) return (data.results as any[]).map(normalizeMember)
   return []

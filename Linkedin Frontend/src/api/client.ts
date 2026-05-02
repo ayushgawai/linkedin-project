@@ -25,6 +25,20 @@ export const apiClient = axios.create({
   },
 })
 
+/** Services return `{ success, data }`. The API Gateway often forwards only `data`. Support both. */
+export function unwrapApiData<T>(body: unknown): T {
+  if (
+    body !== null &&
+    typeof body === 'object' &&
+    'success' in body &&
+    (body as { success?: boolean }).success === true &&
+    'data' in body
+  ) {
+    return (body as { data: T }).data
+  }
+  return body as T
+}
+
 apiClient.interceptors.request.use((config) => {
   const token = useAuthStore.getState().token
   if (token) {

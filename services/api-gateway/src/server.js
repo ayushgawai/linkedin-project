@@ -204,7 +204,8 @@ app.all('*', async (req, res) => {
   }
 
   try {
-    const url = `${upstream}${req.path}`;
+    const qs = new URLSearchParams(req.query).toString();
+    const url = `${upstream}${req.path}${qs ? `?${qs}` : ''}`;
     const headers = { 'content-type': 'application/json' };
     const auth = req.header('authorization');
     if (auth) headers.authorization = auth;
