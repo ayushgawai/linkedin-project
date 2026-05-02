@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { ChevronRight, Target } from 'lucide-react'
 import { listJobs } from '../../api/jobs'
 import { ingestEvent } from '../../api/analytics'
-import { JobListItem } from '../../components/jobs'
+import { JobListItem, SavedJobsHighlight } from '../../components/jobs'
 import { RailFooter } from '../../components/layout/RailFooter'
 import { Card, Skeleton } from '../../components/ui'
 import { useActionToast } from '../../hooks/useActionToast'
@@ -65,6 +65,7 @@ export default function JobsDiscoveryPage(): JSX.Element {
   return (
     <div className="grid grid-cols-12 gap-4 pb-6">
       <div className="col-span-12 space-y-3 lg:col-span-8">
+        <SavedJobsHighlight maxItems={5} />
         <Card>
           <Card.Header><h2 className="text-lg font-semibold">More jobs for you</h2></Card.Header>
           <Card.Body className="space-y-2">

@@ -18,6 +18,7 @@ import { useTrackerHiddenStore } from '../../store/trackerHiddenStore'
 import { useTrackerNotesStore } from '../../store/trackerNotesStore'
 import { cn } from '../../lib/cn'
 import type { MemberApplication, MemberApplicationTab } from '../../types/tracker'
+import { SavedJobsHighlight } from '../../components/jobs'
 import { Card, EmptyState, Skeleton } from '../../components/ui'
 import { ApplicationDetailModal } from './ApplicationDetailModal'
 import { DatePostedFilter } from './DatePostedFilter'
@@ -121,6 +122,10 @@ export default function JobTrackerPage(): JSX.Element {
           <ArrowLeft className="h-5 w-5" strokeWidth={2} aria-hidden />
         </Link>
         <h1 className="text-xl font-semibold tracking-tight text-text-primary">Job tracker</h1>
+      </div>
+
+      <div className="mb-4">
+        <SavedJobsHighlight maxItems={5} />
       </div>
 
       <div className="mb-6 mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
