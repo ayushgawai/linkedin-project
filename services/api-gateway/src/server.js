@@ -22,6 +22,7 @@ const MESSAGING_URL = process.env.MESSAGING_URL || 'http://messaging:8004';
 const CONNECTION_URL = process.env.CONNECTION_URL || 'http://connection:8005';
 const ANALYTICS_URL = process.env.ANALYTICS_URL || 'http://analytics:8006';
 const AI_URL = process.env.AI_URL || 'http://ai-agent:8007';
+const POSTS_URL = process.env.POSTS_URL || 'http://posts:8008';
 
 function pickUpstream(path) {
   if (path.startsWith('/members') || path.startsWith('/auth')) return PROFILE_URL;
@@ -34,6 +35,7 @@ function pickUpstream(path) {
   if (path.startsWith('/threads') || path.startsWith('/messages')) return MESSAGING_URL;
   if (path.startsWith('/connections')) return CONNECTION_URL;
   if (path.startsWith('/events') || path.startsWith('/analytics')) return ANALYTICS_URL;
+  if (path.startsWith('/posts')) return POSTS_URL;
   if (path.startsWith('/ai')) return AI_URL;
   return null;
 }

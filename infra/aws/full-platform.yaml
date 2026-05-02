@@ -1,0 +1,797 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LinkedInClone full stack on ECS Fargate (services + Kafka/Redis/Mongo) with RDS MySQL.
+
+Parameters:
+  VpcCidr: { Type: String, Default: 10.50.0.0/16 }
+  PublicSubnet1Cidr: { Type: String, Default: 10.50.1.0/24 }
+  PublicSubnet2Cidr: { Type: String, Default: 10.50.2.0/24 }
+  AdminCidr:
+    Type: String
+    Description: CIDR allowed to connect to RDS MySQL (schema/seed).
+
+  DbName: { Type: String, Default: linkedinclone }
+  DbUser: { Type: String, Default: admin }
+  DbPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+  DbInstanceClass: { Type: String, Default: db.t3.micro }
+  DbEngineVersion: { Type: String, Default: '8.0.45' }
+
+  ApiGatewayImageUri: { Type: String }
+  ProfileImageUri: { Type: String }
+  JobImageUri: { Type: String }
+  ApplicationImageUri: { Type: String }
+  MessagingImageUri: { Type: String }
+  ConnectionImageUri: { Type: String }
+  AnalyticsImageUri: { Type: String }
+  AiAgentImageUri: { Type: String }
+
+  OpenAiApiKey:
+    Type: String
+    NoEcho: true
+    Default: ''
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Ref PublicSubnet1Cidr
+      MapPublicIpOnLaunch: true
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Ref PublicSubnet2Cidr
+      MapPublicIpOnLaunch: true
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties: { VpcId: !Ref Vpc }
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP traffic to the stack entrypoint (api-gateway)
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0 }
+
+  ServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow internal service-to-service traffic
+      VpcId: !Ref Vpc
+
+  ServiceSecurityGroupSelfIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ServiceSecurityGroup
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref ServiceSecurityGroup
+
+  AlbToServiceSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ServiceSecurityGroup
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref AlbSecurityGroup
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow ECS services to reach MySQL
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 3306, ToPort: 3306, SourceSecurityGroupId: !Ref ServiceSecurityGroup }
+        - { IpProtocol: tcp, FromPort: 3306, ToPort: 3306, CidrIp: !Ref AdminCidr }
+
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: MySQL subnet group
+      SubnetIds: [!Ref PublicSubnet1, !Ref PublicSubnet2]
+
+  Database:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: 20
+      DBName: !Ref DbName
+      DBInstanceClass: !Ref DbInstanceClass
+      Engine: mysql
+      EngineVersion: !Ref DbEngineVersion
+      MasterUsername: !Ref DbUser
+      MasterUserPassword: !Ref DbPassword
+      PubliclyAccessible: true
+      VPCSecurityGroups: [!Ref DatabaseSecurityGroup]
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      BackupRetentionPeriod: 0
+      MultiAZ: false
+      StorageType: gp2
+      DeletionProtection: false
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: linkedinclone-full-cluster
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  Namespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: linkedinclone.local
+      Vpc: !Ref Vpc
+
+  # --- Service discovery registrations
+  MongoDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: mongodb
+      NamespaceId: !Ref Namespace
+      DnsConfig:
+        DnsRecords: [{ Type: A, TTL: 10 }]
+
+  RedisDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: redis
+      NamespaceId: !Ref Namespace
+      DnsConfig:
+        DnsRecords: [{ Type: A, TTL: 10 }]
+
+  KafkaDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: kafka
+      NamespaceId: !Ref Namespace
+      DnsConfig:
+        DnsRecords: [{ Type: A, TTL: 10 }]
+
+  # --- Supporting infra containers (Mongo / Redis / Kafka)
+  MongoTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: linkedinclone-mongodb
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: mongodb
+          Image: mongo:7
+          PortMappings: [{ ContainerPort: 27017 }]
+          Essential: true
+
+  MongoService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref Cluster
+      DesiredCount: 1
+      LaunchType: FARGATE
+      TaskDefinition: !Ref MongoTask
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: [!Ref ServiceSecurityGroup]
+          Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
+      ServiceRegistries:
+        - RegistryArn: !GetAtt MongoDiscovery.Arn
+          ContainerName: mongodb
+          ContainerPort: 27017
+
+  RedisTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: linkedinclone-redis
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: redis
+          Image: redis:7-alpine
+          PortMappings: [{ ContainerPort: 6379 }]
+          Essential: true
+
+  RedisService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref Cluster
+      DesiredCount: 1
+      LaunchType: FARGATE
+      TaskDefinition: !Ref RedisTask
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: [!Ref ServiceSecurityGroup]
+          Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
+      ServiceRegistries:
+        - RegistryArn: !GetAtt RedisDiscovery.Arn
+          ContainerName: redis
+          ContainerPort: 6379
+
+  KafkaTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: linkedinclone-kafka
+      Cpu: 512
+      Memory: 1024
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: kafka
+          Image: bitnami/kafka:3.7
+          PortMappings: [{ ContainerPort: 9092 }]
+          Essential: true
+          Environment:
+            - { Name: KAFKA_CFG_NODE_ID, Value: '1' }
+            - { Name: KAFKA_CFG_PROCESS_ROLES, Value: 'broker,controller' }
+            - { Name: KAFKA_CFG_CONTROLLER_QUORUM_VOTERS, Value: '1@kafka.linkedinclone.local:9093' }
+            - { Name: KAFKA_CFG_LISTENERS, Value: 'PLAINTEXT://:9092,CONTROLLER://:9093' }
+            - { Name: KAFKA_CFG_ADVERTISED_LISTENERS, Value: 'PLAINTEXT://kafka.linkedinclone.local:9092' }
+            - { Name: KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP, Value: 'PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT' }
+            - { Name: KAFKA_CFG_CONTROLLER_LISTENER_NAMES, Value: 'CONTROLLER' }
+            - { Name: KAFKA_CFG_INTER_BROKER_LISTENER_NAME, Value: 'PLAINTEXT' }
+            - { Name: KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE, Value: 'true' }
+            - { Name: ALLOW_PLAINTEXT_LISTENER, Value: 'yes' }
+
+  KafkaService:
+    Type: AWS::ECS::Service
+    DependsOn: KafkaDiscovery
+    Properties:
+      Cluster: !Ref Cluster
+      DesiredCount: 1
+      LaunchType: FARGATE
+      TaskDefinition: !Ref KafkaTask
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: [!Ref ServiceSecurityGroup]
+          Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
+      ServiceRegistries:
+        - RegistryArn: !GetAtt KafkaDiscovery.Arn
+          ContainerName: kafka
+          ContainerPort: 9092
+
+  # --- Public entrypoint: ALB -> api-gateway only
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: linkedinclone-full-alb
+      Scheme: internet-facing
+      SecurityGroups: [!Ref AlbSecurityGroup]
+      Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
+
+  ApiGatewayTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 8000
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref Vpc
+      HealthCheckPath: /health
+
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ApiGatewayTargetGroup
+
+  ApiGatewayLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/linkedinclone/api-gateway
+      RetentionInDays: 7
+
+  ApiGatewayTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: linkedinclone-api-gateway
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: api-gateway
+          Image: !Ref ApiGatewayImageUri
+          PortMappings: [{ ContainerPort: 8000 }]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ApiGatewayLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          Environment:
+            - { Name: PORT, Value: '8000' }
+            - { Name: PROFILE_URL, Value: 'http://profile.linkedinclone.local:8001' }
+            - { Name: JOB_URL, Value: 'http://job.linkedinclone.local:8002' }
+            - { Name: APPLICATION_URL, Value: 'http://application.linkedinclone.local:8003' }
+            - { Name: MESSAGING_URL, Value: 'http://messaging.linkedinclone.local:8004' }
+            - { Name: CONNECTION_URL, Value: 'http://connection.linkedinclone.local:8005' }
+            - { Name: ANALYTICS_URL, Value: 'http://analytics.linkedinclone.local:8006' }
+            - { Name: AI_URL, Value: 'http://ai-agent.linkedinclone.local:8007' }
+
+  ApiGatewayService:
+    Type: AWS::ECS::Service
+    DependsOn: HttpListener
+    Properties:
+      Cluster: !Ref Cluster
+      DesiredCount: 1
+      LaunchType: FARGATE
+      TaskDefinition: !Ref ApiGatewayTask
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: [!Ref ServiceSecurityGroup]
+          Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
+      LoadBalancers:
+        - ContainerName: api-gateway
+          ContainerPort: 8000
+          TargetGroupArn: !Ref ApiGatewayTargetGroup
+
+  # --- App services (internal only via CloudMap DNS)
+  ProfileDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: profile
+      NamespaceId: !Ref Namespace
+      DnsConfig: { DnsRecords: [{ Type: A, TTL: 10 }] }
+
+  JobDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: job
+      NamespaceId: !Ref Namespace
+      DnsConfig: { DnsRecords: [{ Type: A, TTL: 10 }] }
+
+  ApplicationDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: application
+      NamespaceId: !Ref Namespace
+      DnsConfig: { DnsRecords: [{ Type: A, TTL: 10 }] }
+
+  MessagingDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: messaging
+      NamespaceId: !Ref Namespace
+      DnsConfig: { DnsRecords: [{ Type: A, TTL: 10 }] }
+
+  ConnectionDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: connection
+      NamespaceId: !Ref Namespace
+      DnsConfig: { DnsRecords: [{ Type: A, TTL: 10 }] }
+
+  AnalyticsDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: analytics
+      NamespaceId: !Ref Namespace
+      DnsConfig: { DnsRecords: [{ Type: A, TTL: 10 }] }
+
+  AiAgentDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: ai-agent
+      NamespaceId: !Ref Namespace
+      DnsConfig: { DnsRecords: [{ Type: A, TTL: 10 }] }
+
+  ProfileLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: /ecs/linkedinclone/profile, RetentionInDays: 7 }
+  JobLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: /ecs/linkedinclone/job, RetentionInDays: 7 }
+  ApplicationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: /ecs/linkedinclone/application, RetentionInDays: 7 }
+  MessagingLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: /ecs/linkedinclone/messaging, RetentionInDays: 7 }
+  ConnectionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: /ecs/linkedinclone/connection, RetentionInDays: 7 }
+  AnalyticsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: /ecs/linkedinclone/analytics, RetentionInDays: 7 }
+  AiAgentLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: /ecs/linkedinclone/ai-agent, RetentionInDays: 7 }
+
+  ProfileTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: linkedinclone-profile
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: profile
+          Image: !Ref ProfileImageUri
+          PortMappings: [{ ContainerPort: 8001 }]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ProfileLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          Environment:
+            - { Name: PORT, Value: '8001' }
+            - { Name: DB_HOST, Value: !GetAtt Database.Endpoint.Address }
+            - { Name: DB_PORT, Value: '3306' }
+            - { Name: DB_USER, Value: !Ref DbUser }
+            - { Name: DB_PASS, Value: !Ref DbPassword }
+            - { Name: DB_NAME, Value: !Ref DbName }
+            - { Name: KAFKA_BROKERS, Value: 'kafka.linkedinclone.local:9092' }
+
+  ProfileService:
+    Type: AWS::ECS::Service
+    DependsOn: [MongoService, RedisService, KafkaService]
+    Properties:
+      Cluster: !Ref Cluster
+      DesiredCount: 1
+      LaunchType: FARGATE
+      TaskDefinition: !Ref ProfileTask
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: [!Ref ServiceSecurityGroup]
+          Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
+      ServiceRegistries:
+        - RegistryArn: !GetAtt ProfileDiscovery.Arn
+          ContainerName: profile
+          ContainerPort: 8001
+
+  JobTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: linkedinclone-job
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: job
+          Image: !Ref JobImageUri
+          PortMappings: [{ ContainerPort: 8002 }]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref JobLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          Environment:
+            - { Name: PORT, Value: '8002' }
+            - { Name: DB_HOST, Value: !GetAtt Database.Endpoint.Address }
+            - { Name: DB_PORT, Value: '3306' }
+            - { Name: DB_USER, Value: !Ref DbUser }
+            - { Name: DB_PASS, Value: !Ref DbPassword }
+            - { Name: DB_NAME, Value: !Ref DbName }
+            - { Name: REDIS_URL, Value: 'redis://redis.linkedinclone.local:6379' }
+            - { Name: KAFKA_BROKERS, Value: 'kafka.linkedinclone.local:9092' }
+
+  JobService:
+    Type: AWS::ECS::Service
+    DependsOn: [MongoService, RedisService, KafkaService]
+    Properties:
+      Cluster: !Ref Cluster
+      DesiredCount: 1
+      LaunchType: FARGATE
+      TaskDefinition: !Ref JobTask
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: [!Ref ServiceSecurityGroup]
+          Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
+      ServiceRegistries:
+        - RegistryArn: !GetAtt JobDiscovery.Arn
+          ContainerName: job
+          ContainerPort: 8002
+
+  ApplicationTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: linkedinclone-application
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: application
+          Image: !Ref ApplicationImageUri
+          PortMappings: [{ ContainerPort: 8003 }]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ApplicationLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          Environment:
+            - { Name: PORT, Value: '8003' }
+            - { Name: DB_HOST, Value: !GetAtt Database.Endpoint.Address }
+            - { Name: DB_PORT, Value: '3306' }
+            - { Name: DB_USER, Value: !Ref DbUser }
+            - { Name: DB_PASS, Value: !Ref DbPassword }
+            - { Name: DB_NAME, Value: !Ref DbName }
+            - { Name: KAFKA_BROKERS, Value: 'kafka.linkedinclone.local:9092' }
+
+  ApplicationService:
+    Type: AWS::ECS::Service
+    DependsOn: [MongoService, RedisService, KafkaService]
+    Properties:
+      Cluster: !Ref Cluster
+      DesiredCount: 1
+      LaunchType: FARGATE
+      TaskDefinition: !Ref ApplicationTask
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: [!Ref ServiceSecurityGroup]
+          Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
+      ServiceRegistries:
+        - RegistryArn: !GetAtt ApplicationDiscovery.Arn
+          ContainerName: application
+          ContainerPort: 8003
+
+  MessagingTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: linkedinclone-messaging
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: messaging
+          Image: !Ref MessagingImageUri
+          PortMappings: [{ ContainerPort: 8004 }]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref MessagingLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          Environment:
+            - { Name: DB_HOST, Value: !GetAtt Database.Endpoint.Address }
+            - { Name: DB_PORT, Value: '3306' }
+            - { Name: DB_USER, Value: !Ref DbUser }
+            - { Name: DB_PASS, Value: !Ref DbPassword }
+            - { Name: DB_NAME, Value: !Ref DbName }
+            - { Name: KAFKA_BROKERS, Value: 'kafka.linkedinclone.local:9092' }
+            - { Name: ANALYTICS_SERVICE_URL, Value: 'http://analytics.linkedinclone.local:8006' }
+
+  MessagingService:
+    Type: AWS::ECS::Service
+    DependsOn: [MongoService, RedisService, KafkaService]
+    Properties:
+      Cluster: !Ref Cluster
+      DesiredCount: 1
+      LaunchType: FARGATE
+      TaskDefinition: !Ref MessagingTask
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: [!Ref ServiceSecurityGroup]
+          Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
+      ServiceRegistries:
+        - RegistryArn: !GetAtt MessagingDiscovery.Arn
+          ContainerName: messaging
+          ContainerPort: 8004
+
+  ConnectionTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: linkedinclone-connection
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: connection
+          Image: !Ref ConnectionImageUri
+          PortMappings: [{ ContainerPort: 8005 }]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ConnectionLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          Environment:
+            - { Name: DB_HOST, Value: !GetAtt Database.Endpoint.Address }
+            - { Name: DB_PORT, Value: '3306' }
+            - { Name: DB_USER, Value: !Ref DbUser }
+            - { Name: DB_PASS, Value: !Ref DbPassword }
+            - { Name: DB_NAME, Value: !Ref DbName }
+            - { Name: KAFKA_BROKERS, Value: 'kafka.linkedinclone.local:9092' }
+            - { Name: ANALYTICS_SERVICE_URL, Value: 'http://analytics.linkedinclone.local:8006' }
+            - { Name: MONGO_URI, Value: 'mongodb://mongodb.linkedinclone.local:27017' }
+            - { Name: MONGO_DB, Value: !Ref DbName }
+
+  ConnectionService:
+    Type: AWS::ECS::Service
+    DependsOn: [MongoService, RedisService, KafkaService]
+    Properties:
+      Cluster: !Ref Cluster
+      DesiredCount: 1
+      LaunchType: FARGATE
+      TaskDefinition: !Ref ConnectionTask
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: [!Ref ServiceSecurityGroup]
+          Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
+      ServiceRegistries:
+        - RegistryArn: !GetAtt ConnectionDiscovery.Arn
+          ContainerName: connection
+          ContainerPort: 8005
+
+  AnalyticsTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: linkedinclone-analytics
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: analytics
+          Image: !Ref AnalyticsImageUri
+          PortMappings: [{ ContainerPort: 8006 }]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref AnalyticsLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          Environment:
+            - { Name: PORT, Value: '8006' }
+            - { Name: DB_HOST, Value: !GetAtt Database.Endpoint.Address }
+            - { Name: DB_PORT, Value: '3306' }
+            - { Name: DB_USER, Value: !Ref DbUser }
+            - { Name: DB_PASS, Value: !Ref DbPassword }
+            - { Name: DB_NAME, Value: !Ref DbName }
+            - { Name: MONGO_URI, Value: 'mongodb://mongodb.linkedinclone.local:27017' }
+            - { Name: REDIS_URL, Value: 'redis://redis.linkedinclone.local:6379' }
+            - { Name: KAFKA_BROKERS, Value: 'kafka.linkedinclone.local:9092' }
+            - { Name: BENCH_ADMIN_TOKEN, Value: 'dev-only' }
+
+  AnalyticsService:
+    Type: AWS::ECS::Service
+    DependsOn: [MongoService, RedisService, KafkaService]
+    Properties:
+      Cluster: !Ref Cluster
+      DesiredCount: 1
+      LaunchType: FARGATE
+      TaskDefinition: !Ref AnalyticsTask
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: [!Ref ServiceSecurityGroup]
+          Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
+      ServiceRegistries:
+        - RegistryArn: !GetAtt AnalyticsDiscovery.Arn
+          ContainerName: analytics
+          ContainerPort: 8006
+
+  AiAgentTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: linkedinclone-ai-agent
+      Cpu: 512
+      Memory: 1024
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: ai-agent
+          Image: !Ref AiAgentImageUri
+          PortMappings: [{ ContainerPort: 8007 }]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref AiAgentLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          Environment:
+            - { Name: PORT, Value: '8007' }
+            - { Name: DB_HOST, Value: !GetAtt Database.Endpoint.Address }
+            - { Name: DB_PORT, Value: '3306' }
+            - { Name: DB_USER, Value: !Ref DbUser }
+            - { Name: DB_PASS, Value: !Ref DbPassword }
+            - { Name: DB_NAME, Value: !Ref DbName }
+            - { Name: MONGO_URI, Value: 'mongodb://mongodb.linkedinclone.local:27017' }
+            - { Name: KAFKA_BROKERS, Value: 'kafka.linkedinclone.local:9092' }
+            - { Name: OPENAI_API_KEY, Value: !Ref OpenAiApiKey }
+
+  AiAgentService:
+    Type: AWS::ECS::Service
+    DependsOn: [MongoService, RedisService, KafkaService]
+    Properties:
+      Cluster: !Ref Cluster
+      DesiredCount: 1
+      LaunchType: FARGATE
+      TaskDefinition: !Ref AiAgentTask
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: [!Ref ServiceSecurityGroup]
+          Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
+      ServiceRegistries:
+        - RegistryArn: !GetAtt AiAgentDiscovery.Arn
+          ContainerName: ai-agent
+          ContainerPort: 8007
+
+Outputs:
+  AlbDnsName: { Value: !GetAtt LoadBalancer.DNSName }
+  DatabaseEndpoint: { Value: !GetAtt Database.Endpoint.Address }
+  ServiceNamespace: { Value: linkedinclone.local }
+

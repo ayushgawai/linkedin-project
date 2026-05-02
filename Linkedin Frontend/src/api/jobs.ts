@@ -2,11 +2,32 @@
 // All endpoints POST with JSON body. Base URL from VITE_API_BASE_URL.
 // Analytics events fire on: job.viewed, job.saved, application.submitted
 
-import { USE_MOCKS, apiClient, mockDelay } from './client'
+import { USE_MOCKS, apiClient, mockDelay, unwrapApiData } from './client'
 import { MOCK_JOBS } from '../lib/jobsMockData'
+import { timeAgoShort } from '../lib/formatters'
 import type { CreateJobPayload, JobRecord, JobSearchFilters, JobSearchResponse, UpdateJobPayload } from '../types/jobs'
 
 let mockJobs: JobRecord[] = [...MOCK_JOBS]
+
+function looksLikeIsoDateString(s: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}/.test(s) || (s.includes('T') && (s.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(s)))
+}
+
+/** Backend sends ISO datetimes; UI shows relative time (same idea as JobTrackerRow). */
+function derivePostedTimeLabel(raw: any): string {
+  const candidates = [raw?.posted_time_ago, raw?.posted_at, raw?.posted_datetime, raw?.created_at]
+  for (const c of candidates) {
+    if (typeof c !== 'string' || !c.trim()) continue
+    const t = c.trim()
+    if (t === 'Just now' || t === 'Recently') return t
+    if (t === 'now') return 'Just now'
+    if (/\bago\b/i.test(t)) return t
+    if (looksLikeIsoDateString(t)) return timeAgoShort(t)
+    if (/^\d+[smhd]$/i.test(t)) return `${t} ago`
+    return t
+  }
+  return 'Recently'
+}
 
 function normalizeJobRecord(raw: any): JobRecord {
   const companyName = typeof raw?.company_name === 'string' && raw.company_name.trim() ? raw.company_name : 'Company'
@@ -16,7 +37,7 @@ function normalizeJobRecord(raw: any): JobRecord {
     title: typeof raw?.title === 'string' && raw.title.trim() ? raw.title : 'Job',
     location: typeof raw?.location === 'string' && raw.location.trim() ? raw.location : '',
     description: typeof raw?.description === 'string' ? raw.description : '',
-    posted_time_ago: raw?.posted_time_ago ?? raw?.posted_at ?? raw?.posted_datetime ?? 'Recently',
+    posted_time_ago: derivePostedTimeLabel(raw),
     company_logo_url: raw?.company_logo_url ?? null,
     applicants_count: Number(raw?.applicants_count ?? 0),
     views_count: Number(raw?.views_count ?? 0),
@@ -70,7 +91,7 @@ export async function listJobs(filters: JobSearchFilters): Promise<JobSearchResp
       total: filtered.length,
     }
   }
-  const response = await apiClient.post<JobSearchResponse>('/jobs/search', {
+  const response = await apiClient.post<JobSearchResponse | Record<string, unknown>>('/jobs/search', {
     keyword: filters.keyword ?? '',
     location: filters.location ?? '',
     type: filters.type ?? '',
@@ -79,7 +100,7 @@ export async function listJobs(filters: JobSearchFilters): Promise<JobSearchResp
     page: filters.page ?? 1,
     pageSize: filters.pageSize ?? 20,
   })
-  const data: any = response.data as any
+  const data: any = unwrapApiData(response.data) as any
   // Backend returns { results, total, page, page_size }, mock expects { jobs, has_more }.
   if (data && Array.isArray(data.results)) {
     const page = Number(data.page || filters.page || 1)
@@ -102,7 +123,7 @@ export async function getJob(job_id: string): Promise<JobRecord> {
     return jobs.find((job) => job.job_id === job_id) ?? jobs[0]
   }
   const response = await apiClient.post<JobRecord>('/jobs/get', { job_id })
-  return normalizeJobRecord(response.data as any)
+  return normalizeJobRecord(unwrapApiData(response.data) as any)
 }
 
 export async function closeJob(job_id: string): Promise<{ success: boolean }> {
@@ -181,7 +202,7 @@ export async function listJobsByRecruiter(recruiter_id: string): Promise<JobReco
     return getMockJobs().filter((job) => job.recruiter_id === recruiter_id)
   }
   const response = await apiClient.post<unknown>('/jobs/byRecruiter', { recruiter_id })
-  const data: any = response.data as any
+  const data: any = unwrapApiData(response.data) as any
   if (Array.isArray(data)) return (data as any[]).map(normalizeJobRecord)
   if (data && Array.isArray(data.results)) return (data.results as any[]).map(normalizeJobRecord)
   if (data && Array.isArray(data.jobs)) return (data.jobs as any[]).map(normalizeJobRecord)

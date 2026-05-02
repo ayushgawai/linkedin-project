@@ -202,7 +202,17 @@ async def get_job(job_id: str) -> dict[str, Any]:
                 "remote_type": "hybrid",
             },
         ]
-        idx = abs(hash(job_id)) % len(mock_jobs)
+        # Deterministic mapping: job_id "j1" → backend role, "j2" → frontend,
+        # "j3" → ML. Falls back to a stable hash for unknown ids so we never
+        # pick a different mock across Python interpreter restarts.
+        digits = "".join(ch for ch in job_id if ch.isdigit())
+        if digits:
+            try:
+                idx = (int(digits) - 1) % len(mock_jobs)
+            except ValueError:
+                idx = abs(hash(job_id)) % len(mock_jobs)
+        else:
+            idx = abs(hash(job_id)) % len(mock_jobs)
         return mock_jobs[idx]
 
     url = f"{settings.job_service_url}/jobs/get"
@@ -227,9 +237,85 @@ async def get_member_profile(member_id: str) -> dict[str, Any]:
     settings = get_settings()
 
     if settings.use_mock_services:
-        # Use a stable index derived from the member_id string
-        idx = abs(hash(member_id)) % len(_MOCK_NAMES)
-        logger.debug("Using mock profile for member_id={}", member_id)
+        # ---- Deterministic demo identities for the AI test contract ------
+        # The Frontend Testing Assignment (tests 7 & 8) requires a member
+        # with skills that produce a low match score (<30) and another
+        # whose skills produce a high match score (>60) against backend
+        # job j1. We hand-craft two canonical IDs so the result is stable
+        # across runs and across machines. These take precedence over the
+        # generic numeric mapping below.
+        canonical: dict[str, dict[str, Any]] = {
+            "demo-high-match": {
+                "member_id": "demo-high-match",
+                "first_name": "Highmatch",
+                "last_name": "Demo",
+                "email": "high.match@example.com",
+                "headline": "Backend Engineer | Python, FastAPI, Kafka",
+                "about": (
+                    "Backend engineer with deep experience shipping production "
+                    "Python services on Kafka and MongoDB inside Docker."
+                ),
+                "skills": ["python", "fastapi", "kafka", "mongodb", "docker"],
+                "location": "San Jose, CA",
+                "experience": [{
+                    "title": "Senior Backend Engineer",
+                    "company": "Tech Corp",
+                    "start_year": 2020,
+                    "end_year": None,
+                    "description": "Built FastAPI services on Kafka + MongoDB.",
+                }],
+                "education": [{
+                    "institution": "SJSU",
+                    "degree": "B.S. Computer Science",
+                    "year": 2020,
+                }],
+            },
+            "demo-low-match": {
+                "member_id": "demo-low-match",
+                "first_name": "Lowmatch",
+                "last_name": "Demo",
+                "email": "low.match@example.com",
+                "headline": "Marketing Specialist",
+                "about": (
+                    "Marketing professional focused on brand campaigns and "
+                    "customer outreach. No backend engineering experience."
+                ),
+                "skills": ["marketing", "copywriting", "seo", "social media", "branding"],
+                "location": "San Jose, CA",
+                "experience": [{
+                    "title": "Marketing Specialist",
+                    "company": "BrandCo",
+                    "start_year": 2021,
+                    "end_year": None,
+                    "description": "Led campaigns and customer outreach.",
+                }],
+                "education": [{
+                    "institution": "SJSU",
+                    "degree": "B.A. Communications",
+                    "year": 2021,
+                }],
+            },
+        }
+        if member_id in canonical:
+            logger.debug("Using canonical demo profile for member_id={}", member_id)
+            return canonical[member_id]
+
+        # ---- Deterministic numeric mapping for mock-member-NNN ----------
+        # Extract the trailing digits so member_id "mock-member-001" maps
+        # to skills pool index 0 (backend) → predictable high match against
+        # job j1. This replaces the previous hash-based lookup which gave
+        # different skills on every Python interpreter restart.
+        idx = 0
+        digits = "".join(ch for ch in member_id if ch.isdigit())
+        if digits:
+            try:
+                idx = (int(digits) - 1) % len(_MOCK_SKILLS_POOL)
+            except ValueError:
+                idx = 0
+        else:
+            # Fallback for non-numeric IDs — stable but arbitrary.
+            idx = abs(hash(member_id)) % len(_MOCK_SKILLS_POOL)
+        logger.debug("Using mock profile for member_id={} (idx={})", member_id, idx)
         return _make_mock_profile(member_id, idx)
 
     url = f"{settings.profile_service_url}/members/get"

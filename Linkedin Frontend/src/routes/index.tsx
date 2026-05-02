@@ -81,10 +81,31 @@ export const router = createBrowserRouter([
           { path: 'news', element: <LazyPage component={NewsPage} /> },
           { path: 'jobs', element: <LazyPage component={JobsDiscoveryPage} /> },
           { path: 'jobs/tracker', element: <LazyPage component={JobTrackerPage} /> },
-          { path: 'jobs/post', element: <LazyPage component={RecruiterJobFormPage} /> },
-          { path: 'jobs/post/:jobId/edit', element: <LazyPage component={RecruiterJobFormPage} /> },
+          {
+            path: 'jobs/post',
+            element: (
+              <RecruiterRouteGuard>
+                <LazyPage component={RecruiterJobFormPage} />
+              </RecruiterRouteGuard>
+            ),
+          },
+          {
+            path: 'jobs/post/:jobId/edit',
+            element: (
+              <RecruiterRouteGuard>
+                <LazyPage component={RecruiterJobFormPage} />
+              </RecruiterRouteGuard>
+            ),
+          },
           { path: 'jobs/search', element: <LazyPage component={JobsSearchPage} /> },
-          { path: 'jobs/:jobId/applicants', element: <LazyPage component={RecruiterApplicantsPage} /> },
+          {
+            path: 'jobs/:jobId/applicants',
+            element: (
+              <RecruiterRouteGuard>
+                <LazyPage component={RecruiterApplicantsPage} />
+              </RecruiterRouteGuard>
+            ),
+          },
           { path: 'jobs/:jobId', element: <LazyPage component={JobDetailPage} /> },
           { path: 'saved', element: <LazyPage component={SavedPage} /> },
           { path: 'premium', element: <LazyPage component={PremiumPage} /> },
@@ -136,7 +157,14 @@ export const router = createBrowserRouter([
         element: <AppShell protectedRoute leftRail={null} rightRail={null} mainColumnClassName="md:col-span-12 lg:col-span-12" />,
         errorElement: <RouteErrorFallback />,
         children: [
-          { path: 'job-posting-activity', element: <LazyPage component={JobPostingActivityPage} /> },
+          {
+            path: 'job-posting-activity',
+            element: (
+              <RecruiterRouteGuard>
+                <LazyPage component={JobPostingActivityPage} />
+              </RecruiterRouteGuard>
+            ),
+          },
           { path: 'recruiter/job-posting-activity', element: <Navigate to="/job-posting-activity" replace /> },
           { path: 'messaging', element: <LazyPage component={MessagingPage} /> },
           { path: 'messaging/:threadId', element: <LazyPage component={MessagingPage} /> },

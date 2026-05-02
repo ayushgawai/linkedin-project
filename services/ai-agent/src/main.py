@@ -476,6 +476,130 @@ def ai_request(body: AIRequestBody) -> JSONResponse:
 
 
 # ---------------------------------------------------------------------------
+# POST /ai/retry/{task_id}
+# ---------------------------------------------------------------------------
+
+
+@app.post("/ai/retry/{task_id}", tags=["AI Workflow"])
+def ai_retry(task_id: str) -> JSONResponse:
+    """
+    Retry a failed or timed-out AI task.
+
+    Looks up the original task in MongoDB, copies its inputs (task_type,
+    job_id, member_id, target_job_id, resume_text, recruiter_id) into a
+    fresh task with a new ``task_id`` and ``trace_id``, and re-publishes
+    to ``ai.requests``. The new task carries a ``retry_of`` field linking
+    it back to the original so traces stay correlated for debugging.
+
+    Returns:
+      202 Accepted with the NEW task_id and trace_id on success.
+      404 if the original task does not exist.
+      409 if the original task is not in a retryable state (already running
+          or completed without failure).
+      503 if Kafka is unavailable (task is persisted; outbox poller will retry).
+    """
+    try:
+        original = get_ai_traces().find_one({"task_id": task_id}, {"_id": 0})
+    except Exception as exc:  # noqa: BLE001
+        logger.error("MongoDB query failed for ai/retry: {}", exc)
+        return JSONResponse(
+            status_code=500,
+            content=_err("DB_ERROR", "Failed to read original task"),
+        )
+
+    if not original:
+        return JSONResponse(
+            status_code=404,
+            content=_err("NOT_FOUND", f"Task {task_id} not found"),
+        )
+
+    original_status = original.get("status")
+    if original_status not in ("failed", "timed_out"):
+        return JSONResponse(
+            status_code=409,
+            content=_err(
+                "NOT_RETRYABLE",
+                f"Task {task_id} is in state '{original_status}'. Only failed/timed_out tasks can be retried.",
+            ),
+        )
+
+    new_trace_id = str(uuid.uuid4())
+    new_task_id = str(uuid.uuid4())
+    idempotency_key = f"ai-task-{new_task_id}"
+
+    doc: dict[str, Any] = {
+        "task_id": new_task_id,
+        "trace_id": new_trace_id,
+        "recruiter_id": original.get("recruiter_id", ""),
+        "task_type": original.get("task_type", "shortlist"),
+        "status": TaskStatus.PENDING.value,
+        "steps": [],
+        "result": None,
+        "idempotency_key": idempotency_key,
+        "approvals": [],
+        "retry_of": task_id,  # link back to the failed task for trace correlation
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow(),
+    }
+    for k in ("job_id", "member_id", "target_job_id", "resume_text"):
+        if original.get(k) is not None:
+            doc[k] = original[k]
+
+    try:
+        get_ai_traces().insert_one(doc)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("MongoDB insert failed for ai/retry: {}", exc)
+        return JSONResponse(
+            status_code=500,
+            content=_err("DB_ERROR", "Failed to persist retry task", trace_id=new_trace_id),
+        )
+
+    payload: dict[str, Any] = {
+        "task_id": new_task_id,
+        "recruiter_id": original.get("recruiter_id", ""),
+        "task_type": original.get("task_type", "shortlist"),
+        "retry_of": task_id,
+    }
+    for k in ("job_id", "member_id", "target_job_id", "resume_text"):
+        if original.get(k) is not None:
+            payload[k] = original[k]
+
+    envelope = build_request_envelope(
+        task_id=new_task_id,
+        trace_id=new_trace_id,
+        actor_id=original.get("recruiter_id", "ai-retry"),
+        payload=payload,
+        idempotency_key=idempotency_key,
+    )
+
+    producer = _get_producer()
+    ok = producer.produce(settings.kafka_topic_requests, envelope.model_dump(), key=new_task_id)
+    if not ok:
+        logger.warning("Kafka produce failed for retry task_id={}", new_task_id)
+        return JSONResponse(
+            status_code=503,
+            content=_err(
+                "KAFKA_UNAVAILABLE",
+                "Retry task persisted but could not be queued; will retry",
+                {"task_id": new_task_id, "trace_id": new_trace_id, "retry_of": task_id},
+                trace_id=new_trace_id,
+            ),
+        )
+
+    logger.info(
+        "AI task retried: original={} new_task_id={} type={}",
+        task_id, new_task_id, original.get("task_type"),
+    )
+    return JSONResponse(
+        status_code=202,
+        content=_ok(
+            {"task_id": new_task_id, "trace_id": new_trace_id, "retry_of": task_id},
+            new_trace_id,
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # POST /ai/status
 # ---------------------------------------------------------------------------
 
@@ -834,14 +958,31 @@ async def ai_stream(websocket: WebSocket, task_id: str) -> None:
         # Send catch-up: current task state from MongoDB
         doc = get_ai_traces().find_one({"task_id": task_id}, {"_id": 0})
         if doc:
-            catchup = {
+            current_status = doc.get("status", "pending")
+            result = doc.get("result")
+            # Map task-level status → UI status. Shortlist tasks that have a
+            # result containing "shortlist" are presented as waiting_approval.
+            if current_status == "completed" and isinstance(result, dict) and "shortlist" in result:
+                ui_status = "waiting_approval"
+            elif current_status in ("completed", "failed", "running", "pending"):
+                ui_status = current_status
+            else:
+                ui_status = "running"
+
+            catchup: dict[str, Any] = {
                 "task_id": task_id,
                 "trace_id": doc.get("trace_id", ""),
                 "step": "catchup",
-                "status": doc.get("status", "pending"),
-                "partial_result": doc.get("result"),
+                "status": ui_status,
+                "step_status": "",
+                "message": "Reconnected — restoring task state",
+                "progress": 100 if ui_status in ("completed", "waiting_approval") else 0,
+                "partial_result": result,
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
+            if ui_status == "failed":
+                catchup["error"] = doc.get("error") or "Task failed"
+                catchup["retryable"] = True
             await websocket.send_json(catchup)
 
         # Keep the connection alive until client disconnects

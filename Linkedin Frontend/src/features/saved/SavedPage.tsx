@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Card } from '../../components/ui'
 import { isArticleEntry, useSavedPostsStore } from '../../store/savedPostsStore'
 import { useSavedJobsStore } from '../../store/savedJobsStore'
@@ -14,10 +14,37 @@ const pillIdle = 'border-border bg-white text-text-primary hover:bg-black/[0.03]
 
 type FilterTab = 'all' | 'posts' | 'jobs' | 'articles'
 
+const VALID_VIEWS: readonly FilterTab[] = ['all', 'posts', 'jobs', 'articles']
+
+function parseViewParam(raw: string | null): FilterTab | null {
+  if (!raw) return null
+  const v = raw.toLowerCase()
+  return VALID_VIEWS.includes(v as FilterTab) ? (v as FilterTab) : null
+}
+
 export default function SavedPage(): JSX.Element {
+  const [searchParams, setSearchParams] = useSearchParams()
   const postEntries = useSavedPostsStore((s) => s.entries)
   const jobEntries = useSavedJobsStore((s) => s.entries)
-  const [filter, setFilter] = useState<FilterTab>('all')
+  const [filter, setFilter] = useState<FilterTab>(() => parseViewParam(searchParams.get('view')) ?? 'all')
+
+  useEffect(() => {
+    const next = parseViewParam(searchParams.get('view')) ?? 'all'
+    setFilter(next)
+  }, [searchParams])
+
+  const applyFilter = (tab: FilterTab): void => {
+    setFilter(tab)
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (tab === 'all') next.delete('view')
+        else next.set('view', tab)
+        return next
+      },
+      { replace: true }
+    )
+  }
 
   const hasArticleSaves = useMemo(() => postEntries.some(isArticleEntry), [postEntries])
 
@@ -50,7 +77,7 @@ export default function SavedPage(): JSX.Element {
                 role="tab"
                 aria-selected={filter === 'all'}
                 className={cn(pillBase, filter === 'all' ? pillActive : pillIdle)}
-                onClick={() => setFilter('all')}
+                onClick={() => applyFilter('all')}
               >
                 All
               </button>
@@ -59,7 +86,7 @@ export default function SavedPage(): JSX.Element {
                 role="tab"
                 aria-selected={filter === 'posts'}
                 className={cn(pillBase, filter === 'posts' ? pillActive : pillIdle)}
-                onClick={() => setFilter('posts')}
+                onClick={() => applyFilter('posts')}
               >
                 Posts
               </button>
@@ -68,7 +95,7 @@ export default function SavedPage(): JSX.Element {
                 role="tab"
                 aria-selected={filter === 'jobs'}
                 className={cn(pillBase, filter === 'jobs' ? pillActive : pillIdle)}
-                onClick={() => setFilter('jobs')}
+                onClick={() => applyFilter('jobs')}
               >
                 Jobs
               </button>
@@ -78,7 +105,7 @@ export default function SavedPage(): JSX.Element {
                   role="tab"
                   aria-selected={filter === 'articles'}
                   className={cn(pillBase, filter === 'articles' ? pillActive : pillIdle)}
-                  onClick={() => setFilter('articles')}
+                  onClick={() => applyFilter('articles')}
                 >
                   Articles
                 </button>

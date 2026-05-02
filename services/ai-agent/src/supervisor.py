@@ -678,7 +678,9 @@ class HiringAssistantSupervisor:
         await self._emit_progress(
             task_id, trace_id, "coach", "completed",
             {
-                "skills_to_add_count": len(coach_dict.get("skills_to_add", [])),
+                "match_score": coach_dict.get("match_score", 0),
+                "matching_skills_count": len(coach_dict.get("matching_skills", [])),
+                "missing_skills_count": len(coach_dict.get("missing_skills", [])),
                 "improvements_count": len(coach_dict.get("resume_improvements", [])),
             },
         )
@@ -687,7 +689,8 @@ class HiringAssistantSupervisor:
         )
         await self._update_task_status(task_id, TaskStatus.COMPLETED, coach_dict)
         logger.info(
-            "Coach complete — task_id={} trace_id={} member={} gaps={}",
+            "Coach complete — task_id={} trace_id={} member={} score={} gaps={}",
             task_id, trace_id, member_id,
-            len(coach_dict.get("skills_to_add", [])),
+            coach_dict.get("match_score", 0),
+            len(coach_dict.get("missing_skills", [])),
         )

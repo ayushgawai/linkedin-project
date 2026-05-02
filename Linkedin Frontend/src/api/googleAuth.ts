@@ -12,7 +12,7 @@
 // Auth: returned token should be persisted by authStore
 // ============================================
 
-import { USE_MOCKS, apiClient, mockDelay } from './client'
+import { USE_MOCKS, apiClient, mockDelay, unwrapApiData } from './client'
 import { requestGoogleAccessToken } from '../lib/googleIdentity'
 import { createEmptyProfile, useProfileStore } from '../store/profileStore'
 import type { Member } from '../types'
@@ -109,7 +109,7 @@ export async function signInWithGoogle(): Promise<AuthResponse> {
   }
 
   const { data } = await apiClient.post<AuthResponse>('/auth/google', { access_token: accessToken })
-  return data
+  return unwrapApiData<AuthResponse>(data)
 }
 
 export { MISSING_GOOGLE_CLIENT_ID } from '../lib/googleIdentity'

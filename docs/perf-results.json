@@ -1,0 +1,32 @@
+{
+  "at": "2026-05-01T06:02:12.431Z",
+  "results": [
+    {
+      "label": "Scenario A (base; cache cold)",
+      "elapsed_ms": 1946.4,
+      "n": 500,
+      "avg_ms": 368.3,
+      "p50_ms": 213.9,
+      "p95_ms": 1777.1,
+      "p99_ms": 1920.8
+    },
+    {
+      "label": "Scenario A (cache warm)",
+      "elapsed_ms": 1641.9,
+      "n": 500,
+      "avg_ms": 308.3,
+      "p50_ms": 286.3,
+      "p95_ms": 472.6,
+      "p99_ms": 512.7
+    },
+    {
+      "label": "Scenario B (apply submit; DB + Kafka produce)",
+      "elapsed_ms": 1266.9,
+      "n": 300,
+      "avg_ms": 403.4,
+      "p50_ms": 258.2,
+      "p95_ms": 1018.4,
+      "p99_ms": 1086.4
+    }
+  ]
+}

@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { List } from 'react-window'
 import { Filter, LocateFixed } from 'lucide-react'
 import { listJobs } from '../../api/jobs'
-import { JobDetail, JobListItem } from '../../components/jobs'
+import { JobDetail, JobListItem, SavedJobsHighlight } from '../../components/jobs'
 import { Button, Card, Input, Modal, Select, Skeleton } from '../../components/ui'
 import { useSavedJobsStore } from '../../store/savedJobsStore'
 
@@ -112,9 +112,11 @@ export default function JobsSearchPage(): JSX.Element {
       <div className="lg:hidden">
         <Button variant="secondary" leftIcon={<Filter className="h-4 w-4" />} onClick={() => setMobileFiltersOpen(true)}>Filters</Button>
       </div>
+      <SavedJobsHighlight className="lg:hidden" maxItems={4} />
 
       <div className="grid grid-cols-12 gap-3">
-        <div className="hidden lg:col-span-3 lg:block">
+        <div className="hidden space-y-3 lg:col-span-3 lg:block">
+          <SavedJobsHighlight maxItems={4} />
           <FiltersPanel keyword={keyword} location={location} onKeyword={setKeyword} onLocation={setLocation} />
         </div>
 

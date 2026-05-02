@@ -8,6 +8,7 @@
     "dev": "node --watch src/server.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.878.0",
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "google-auth-library": "^9.15.1",

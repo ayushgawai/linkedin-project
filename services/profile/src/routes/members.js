@@ -12,6 +12,7 @@ import { ok, ApiError } from '../util/envelope.js';
 import { getPool } from '../db/mysql.js';
 import { getOrSet, invalidate, invalidatePrefix, keys } from '../../../shared/cache.js';
 import { config } from '../config.js';
+import { maybeStoreDataUrl } from '../util/objectStore.js';
 
 export const membersRouter = Router();
 
@@ -113,9 +114,17 @@ async function handleCreateMember(req, res, next) {
       return res.status(201).json(ok({ token, user }, req.traceId));
     }
 
-    const body = raw;
     const pool = getPool();
     const memberId = uuidv4();
+    const body = { ...raw };
+    if (body.profile_photo_url && String(body.profile_photo_url).startsWith('data:')) {
+      const stored = await maybeStoreDataUrl({
+        kind: 'profile-photo',
+        memberId,
+        dataUrl: body.profile_photo_url,
+      });
+      body.profile_photo_url = stored.url;
+    }
 
     const conn = await pool.getConnection();
     try {
@@ -256,6 +265,14 @@ async function handleUpdateMember(req, res, next) {
   try {
     const candidate = req.body?.member_id ?? req.params?.member_id;
     const { member_id, ...fields } = validate(UpdateSchema, { ...req.body, member_id: candidate });
+    if (fields.profile_photo_url && String(fields.profile_photo_url).startsWith('data:')) {
+      const stored = await maybeStoreDataUrl({
+        kind: 'profile-photo',
+        memberId: member_id,
+        dataUrl: fields.profile_photo_url,
+      });
+      fields.profile_photo_url = stored.url;
+    }
     const entries = Object.entries(fields).filter(([, v]) => v !== undefined);
     if (entries.length === 0) {
       throw new ApiError(400, 'VALIDATION_ERROR', 'No updatable fields provided');
