@@ -1,4 +1,4 @@
-import { apiClient } from './client'
+import { apiClient, unwrapApiData } from './client'
 import type { CreatePostPayload, ListFeedParams, ListFeedResponse, Post } from '../types/feed'
 import { useAuthStore } from '../store/authStore'
 
@@ -8,7 +8,7 @@ export async function listFeed(params: ListFeedParams): Promise<ListFeedResponse
     ...params,
     viewer_member_id: viewerId,
   })
-  return resp.data
+  return unwrapApiData<ListFeedResponse>(resp.data)
 }
 
 export async function createPost(payload: CreatePostPayload): Promise<Post> {
@@ -17,5 +17,5 @@ export async function createPost(payload: CreatePostPayload): Promise<Post> {
     ...payload,
     author_member_id: memberId,
   })
-  return resp.data
+  return unwrapApiData<Post>(resp.data)
 }
