@@ -364,7 +364,11 @@ def reject_connection(body: ActionRequestBody, db: Session = Depends(get_db)):
 
 @router.post("/list")
 def list_connections(body: ListConnectionsBody, db: Session = Depends(get_db)):
-    """List accepted connections for a user (MongoDB graph)."""
+    """List accepted connections for a user.
+
+    Prefer the Mongo graph when it exists, but fall back to MySQL so freshly
+    bootstrapped seed data is visible before any runtime sync events occur.
+    """
     offset = (body.page - 1) * body.page_size
     mdb = connect_mongo()
 
@@ -393,6 +397,34 @@ def list_connections(body: ListConnectionsBody, db: Session = Depends(get_db)):
                 "status": "accepted",
                 "created_at": d.get("created_at").isoformat() if d.get("created_at") else None,
                 "updated_at": d.get("updated_at").isoformat() if d.get("updated_at") else None,
+            }
+        )
+
+    if results:
+        return results
+
+    sql_rows = db.execute(
+        select(Connection)
+        .where(
+            Connection.status == "accepted",
+            ((Connection.user_a == body.user_id) | (Connection.user_b == body.user_id)),
+        )
+        .order_by(Connection.created_at.desc())
+        .offset(offset)
+        .limit(body.page_size)
+    ).scalars().all()
+
+    for row in sql_rows:
+        requester = row.requested_by or row.user_a
+        addressee = row.user_b if requester == row.user_a else row.user_a
+        results.append(
+            {
+                "connection_id": row.connection_id,
+                "requester_member_id": requester,
+                "addressee_member_id": addressee,
+                "status": row.status,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "updated_at": row.created_at.isoformat() if row.created_at else None,
             }
         )
 
