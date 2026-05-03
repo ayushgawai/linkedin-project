@@ -23,6 +23,9 @@ function effectivePublicBaseUrl() {
   if (STORAGE_ENV.publicBaseUrl) {
     return String(STORAGE_ENV.publicBaseUrl).replace(/\/+$/, '');
   }
+  if (!STORAGE_ENV.endpoint && STORAGE_ENV.bucket) {
+    return `https://${STORAGE_ENV.bucket}.s3.${STORAGE_ENV.region}.amazonaws.com`;
+  }
   const ep = STORAGE_ENV.endpoint || '';
   const m = /^https?:\/\/minio(:(\d+))?/i.exec(ep);
   if (m) {
@@ -60,20 +63,23 @@ export function mapMemberMediaRow(row) {
 function getS3() {
   if (STORAGE_ENV.provider !== 's3') return null;
   if (s3) return s3;
-  if (!STORAGE_ENV.bucket || !STORAGE_ENV.endpoint) {
+  if (!STORAGE_ENV.bucket) {
     logger.warn({ ...STORAGE_ENV, secretAccessKey: undefined }, 's3 storage misconfigured; disabling');
     return null;
   }
-  s3 = new S3Client({
+  const clientConfig = {
     region: STORAGE_ENV.region,
-    endpoint: STORAGE_ENV.endpoint,
-    forcePathStyle: true, // required for MinIO + many S3 compatibles
     credentials:
       STORAGE_ENV.accessKeyId && STORAGE_ENV.secretAccessKey
         ? { accessKeyId: STORAGE_ENV.accessKeyId, secretAccessKey: STORAGE_ENV.secretAccessKey }
         : undefined,
-  });
-  logger.info({ endpoint: STORAGE_ENV.endpoint, bucket: STORAGE_ENV.bucket }, 's3 object store ready');
+  };
+  if (STORAGE_ENV.endpoint) {
+    clientConfig.endpoint = STORAGE_ENV.endpoint;
+    clientConfig.forcePathStyle = true; // required for MinIO + many S3 compatibles
+  }
+  s3 = new S3Client(clientConfig);
+  logger.info({ endpoint: STORAGE_ENV.endpoint || 'aws-managed', bucket: STORAGE_ENV.bucket }, 's3 object store ready');
   return s3;
 }
 
@@ -121,4 +127,3 @@ export async function maybeStoreDataUrl({ kind, memberId, dataUrl }) {
   const url = `${base}/${key}`;
   return { stored: true, url };
 }
-

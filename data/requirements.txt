@@ -1,0 +1,7 @@
+pandas
+faker
+mysql-connector-python
+pymongo
+python-dotenv
+kaggle
+boto3

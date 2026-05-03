@@ -50,6 +50,12 @@ Resources:
       RepositoryName: linkedinclone-ai-agent
       ImageScanningConfiguration: { ScanOnPush: true }
 
+  DataBootstrapRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: linkedinclone-data-bootstrap
+      ImageScanningConfiguration: { ScanOnPush: true }
+
 Outputs:
   ApiGatewayRepositoryUri: { Value: !GetAtt ApiGatewayRepository.RepositoryUri }
   ProfileRepositoryUri: { Value: !GetAtt ProfileRepository.RepositoryUri }
@@ -59,4 +65,4 @@ Outputs:
   ConnectionRepositoryUri: { Value: !GetAtt ConnectionRepository.RepositoryUri }
   AnalyticsRepositoryUri: { Value: !GetAtt AnalyticsRepository.RepositoryUri }
   AiAgentRepositoryUri: { Value: !GetAtt AiAgentRepository.RepositoryUri }
-
+  DataBootstrapRepositoryUri: { Value: !GetAtt DataBootstrapRepository.RepositoryUri }

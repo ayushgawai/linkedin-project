@@ -58,8 +58,6 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
       - ../data/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
-      # Demo seed (idempotent) so fresh clones have jobs/users immediately.
-      - ../data/backend_demo_seed.sql:/docker-entrypoint-initdb.d/02-backend-demo-seed.sql:ro
     healthcheck:
       test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD']
       interval: 10s
@@ -75,7 +73,6 @@ services:
       - '${MONGO_PORT_HOST:-27017}:27017'
     volumes:
       - mongo_data:/data/db
-      - ../data/mongo_setup.js:/docker-entrypoint-initdb.d/mongo_setup.js:ro
     healthcheck:
       test: ['CMD-SHELL', "echo 'db.runCommand({ ping: 1 })' | mongosh --quiet"]
       interval: 10s
@@ -83,6 +80,37 @@ services:
       retries: 10
       start_period: 20s
     networks: [backend]
+
+  data-bootstrap:
+    build:
+      context: ..
+      dockerfile: data/Dockerfile
+    container_name: linkedinclone-data-bootstrap
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASS: ${DB_PASS:-linkedin}
+      DB_NAME: ${DB_NAME:-linkedinclone}
+      MONGO_URI: mongodb://mongodb:27017
+      RAW_DIR: /tmp/linkedinclone/raw
+      SEEDS_DIR: /tmp/linkedinclone/seeds
+      PIPELINE_SOURCE_DIR: ${PIPELINE_SOURCE_DIR:-/workspace/Data_2}
+      KAGGLE_JOBS_DATASET: ${KAGGLE_JOBS_DATASET:-rajatraj0502/linkedin-job-2023}
+      KAGGLE_RESUME_DATASET: ${KAGGLE_RESUME_DATASET:-snehaanbhawal/resume-dataset}
+      SEED_MYSQL_BATCH: ${SEED_MYSQL_BATCH:-100}
+      SEED_MONGO_BATCH: ${SEED_MONGO_BATCH:-500}
+      KAGGLE_USERNAME: ${KAGGLE_USERNAME:-}
+      KAGGLE_KEY: ${KAGGLE_KEY:-}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    volumes:
+      - ..:/workspace:ro
+    networks: [backend]
+    restart: "no"
 
   redis:
     image: redis:7-alpine
@@ -213,6 +241,8 @@ services:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
+      data-bootstrap:
+        condition: service_completed_successfully
     ports:
       - '${PROFILE_PORT_HOST:-8001}:8001'
     networks: [backend]
@@ -251,6 +281,8 @@ services:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
+      data-bootstrap:
+        condition: service_completed_successfully
     ports:
       - '${JOB_PORT_HOST:-8002}:8002'
     networks: [backend]
@@ -275,6 +307,8 @@ services:
       kafka:
         condition: service_healthy
       kafka-init:
+        condition: service_completed_successfully
+      data-bootstrap:
         condition: service_completed_successfully
     ports:
       - '${APPLICATION_PORT_HOST:-8003}:8003'
@@ -342,6 +376,8 @@ services:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
+      data-bootstrap:
+        condition: service_completed_successfully
     ports:
       - '${MESSAGING_PORT_HOST:-8004}:8004'
     networks: [backend]
@@ -366,10 +402,12 @@ services:
       mysql:
         condition: service_healthy
       mongodb:
-        condition: service_started
+        condition: service_healthy
       kafka:
         condition: service_healthy
       kafka-init:
+        condition: service_completed_successfully
+      data-bootstrap:
         condition: service_completed_successfully
     ports:
       - '${CONNECTION_PORT_HOST:-8005}:8005'
@@ -415,6 +453,8 @@ services:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
+      data-bootstrap:
+        condition: service_completed_successfully
     ports:
       - '${ANALYTICS_PORT_HOST:-8006}:8006'
     networks: [backend]
@@ -456,6 +496,8 @@ services:
         condition: service_started
       messaging:
         condition: service_started
+      data-bootstrap:
+        condition: service_completed_successfully
     ports:
       - '${AI_PORT_HOST:-8007}:8007'
     networks: [backend]
@@ -480,6 +522,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      data-bootstrap:
+        condition: service_completed_successfully
     ports:
       - '${POSTS_PORT_HOST:-8008}:8008'
     networks: [backend]

@@ -16,6 +16,8 @@ This repo includes CloudFormation templates for deploying:
 - **Kafka (ECS task)**: async workflow + AI orchestration topics
 - **Cloud Map**: service discovery under `linkedinclone.local`
 - **ALB**: public entrypoint to `api-gateway`
+- **S3**: raw dataset storage for pipeline input + media object storage
+- **Secrets Manager**: placeholder secrets for OpenAI + Kaggle credentials
 
 ### Deploy steps (CLI outline)
 
@@ -47,8 +49,19 @@ aws cloudformation deploy \
     MessagingImageUri=<ecr-uri>:latest \
     ConnectionImageUri=<ecr-uri>:latest \
     AnalyticsImageUri=<ecr-uri>:latest \
-    AiAgentImageUri=<ecr-uri>:latest
+    AiAgentImageUri=<ecr-uri>:latest \
+    DataBootstrapImageUri=<ecr-uri>:latest
 ```
 
 After deploy, the CloudFormation output `AlbDnsName` is the entrypoint for the UI/API client (via api-gateway).
 
+Additional outputs now include:
+- `RawDatasetBucketName`
+- `AppSecretsArn`
+- `KaggleSecretsArn`
+- `DataBootstrapTaskDefinitionArn`
+
+Recommended flow:
+- Upload `job_postings.csv`, `companies.csv`, and `Resume/Resume.csv` into `s3://<RawDatasetBucketName>/<DatasetS3Prefix>/`
+- Update the two Secrets Manager entries with real values
+- Run the `DataBootstrapTaskDefinitionArn` task once to seed the deployed databases

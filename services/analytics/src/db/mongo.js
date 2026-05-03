@@ -19,18 +19,32 @@ export async function connectMongo() {
 }
 
 async function ensureIndexes(db) {
+  const createIndexSafely = async (collection, spec, options = {}) => {
+    try {
+      await collection.createIndex(spec, options);
+    } catch (err) {
+      const message = String(err?.message || '');
+      const ignorable =
+        message.includes('Index already exists with a different name') ||
+        message.includes('IndexKeySpecsConflict') ||
+        message.includes('IndexOptionsConflict');
+      if (!ignorable) throw err;
+      logger.info({ collection: collection.collectionName, spec, options, err: message }, 'mongo index already satisfied');
+    }
+  };
+
   const events = db.collection('events');
-  await events.createIndex({ idempotency_key: 1 }, { unique: true });
-  await events.createIndex({ event_type: 1, timestamp: -1 });
-  await events.createIndex({ 'entity.entity_id': 1, event_type: 1, timestamp: -1 });
-  await events.createIndex({ actor_id: 1, timestamp: -1 });
+  await createIndexSafely(events, { idempotency_key: 1 }, { unique: true });
+  await createIndexSafely(events, { event_type: 1, timestamp: -1 });
+  await createIndexSafely(events, { 'entity.entity_id': 1, event_type: 1, timestamp: -1 });
+  await createIndexSafely(events, { actor_id: 1, timestamp: -1 });
 
   const profileViews = db.collection('profile_views');
-  await profileViews.createIndex({ member_id: 1, viewed_at: -1 });
+  await createIndexSafely(profileViews, { member_id: 1, viewed_at: -1 });
 
   const cacheMetrics = db.collection('cache_metrics');
-  await cacheMetrics.createIndex({ at: -1 });
-  await cacheMetrics.createIndex({ operation: 1, at: -1 });
+  await createIndexSafely(cacheMetrics, { at: -1 });
+  await createIndexSafely(cacheMetrics, { operation: 1, at: -1 });
 }
 
 export function getDb() {
