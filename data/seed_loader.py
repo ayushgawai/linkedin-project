@@ -2,8 +2,8 @@
 """
 seed_loader.py — Load seed JSON files into MySQL and MongoDB.
 
-Reads from:  data/seeds/
-Connects to: MySQL and MongoDB via .env
+Reads from:  data/seeds/ (override with SEEDS_DIR)
+Connects to: MySQL and MongoDB via .env / env vars
 
 Features:
   - Idempotent: safe to run multiple times (INSERT IGNORE / upsert)
@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -42,7 +43,7 @@ DB_PASS   = os.getenv("DB_PASS", "")
 DB_NAME   = os.getenv("DB_NAME", "linkedinclone")
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 
-SEEDS = Path(__file__).parent / "seeds"
+SEEDS = Path(os.getenv("SEEDS_DIR", str(Path(__file__).parent / "seeds")))
 # Small default: jobs/applications rows include large TEXT; one huge txn often triggers 2013.
 BATCH = max(25, int(os.getenv("SEED_MYSQL_BATCH", "100")))
 MONGO_BATCH = max(50, int(os.getenv("SEED_MONGO_BATCH", "500")))
@@ -57,6 +58,15 @@ def load_json(filename: str) -> list:
         return []
     with open(path, encoding="utf-8") as f:
         return json.load(f)
+
+
+def parse_iso_datetime(value):
+    if not value or not isinstance(value, str):
+        return value
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        return value
 
 
 def batch_iter(lst: list, size: int):
@@ -172,6 +182,12 @@ def load_mysql():
         "field", "start_year", "end_year",
     ])
 
+    insert("posts", "posts.json", [
+        "post_id", "author_member_id", "visibility", "content", "media_type",
+        "media_url", "article_title", "article_source", "poll_options",
+        "reactions_count", "comments_count", "reposts_count", "created_at",
+    ])
+
     insert("connections", "connections.json", [
         "connection_id", "user_a", "user_b", "status", "requested_by", "created_at",
     ])
@@ -193,7 +209,7 @@ def load_mysql():
     tables = [
         "members", "recruiters", "jobs", "job_skills", "applications",
         "application_notes", "member_skills", "member_experience",
-        "member_education", "connections", "threads", "thread_participants",
+        "member_education", "posts", "connections", "threads", "thread_participants",
         "messages", "processed_events", "outbox_events",
     ]
     for t in tables:
@@ -260,6 +276,32 @@ def load_mongo():
                     if err.get("code") == 11000  # duplicate key
                 ])
         print(f"  events   {len(events):>8,} in file   {inserted_total:>8,} inserted   {skipped_total:>6,} skipped (dup)")
+
+    for collection_name, filename, unique_key in (
+        ("resumes", "resumes.json", "member_id"),
+        ("profile_views", "profile_views.json", None),
+    ):
+        docs = load_json(filename)
+        if not docs:
+            continue
+        if collection_name == "resumes":
+            for doc in docs:
+                doc["updated_at"] = parse_iso_datetime(doc.get("updated_at"))
+        if collection_name == "profile_views":
+            for doc in docs:
+                doc["viewed_at"] = parse_iso_datetime(doc.get("viewed_at"))
+        collection = db[collection_name]
+        if unique_key:
+            inserted = 0
+            for doc in docs:
+                result = collection.replace_one({unique_key: doc.get(unique_key)}, doc, upsert=True)
+                inserted += 1 if result.upserted_id or result.modified_count or result.matched_count else 0
+            print(f"  {collection_name:<8} {len(docs):>8,} in file   {inserted:>8,} upserted")
+        else:
+            collection.delete_many({})
+            if docs:
+                result = collection.insert_many(docs, ordered=False)
+                print(f"  {collection_name:<8} {len(docs):>8,} in file   {len(result.inserted_ids):>8,} inserted")
 
     # Final counts
     print("\nMongoDB collection counts:")

@@ -2,8 +2,8 @@
 """
 transform.py — Transform raw Kaggle CSVs into seed JSON files.
 
-Reads from:  data/raw/
-Writes to:   data/seeds/
+Reads from:  data/raw/ (override with RAW_DIR)
+Writes to:   data/seeds/ (override with SEEDS_DIR)
 
 Targets: 10K members, 10K recruiters, 10K jobs, ~50K applications,
          100K+ MongoDB events.
@@ -12,7 +12,10 @@ Usage:
     python3 data/transform.py
 """
 
+from __future__ import annotations
+
 import json
+import os
 import re
 import random
 import uuid
@@ -24,8 +27,8 @@ from faker import Faker
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 BASE  = Path(__file__).parent
-RAW   = BASE / "raw"
-SEEDS = BASE / "seeds"
+RAW   = Path(os.getenv("RAW_DIR", str(BASE / "raw")))
+SEEDS = Path(os.getenv("SEEDS_DIR", str(BASE / "seeds")))
 SEEDS.mkdir(exist_ok=True)
 
 # ── RNG seeds (reproducible output) ───────────────────────────────────────────
@@ -39,6 +42,7 @@ N_RECRUITERS  = 10_000
 N_JOBS        = 10_000
 N_APPLICATIONS = 50_000
 N_EVENTS      = 100_000
+N_POSTS       = 2_500
 
 # ── Field-value mappings ───────────────────────────────────────────────────────
 SENIORITY_MAP = {
@@ -224,6 +228,32 @@ def ts_to_dt(ts_ms) -> str:
         return fmt_dt(fake.date_time_between(start_date="-2y", end_date="now"))
 
 
+def optional_csv(*parts: str) -> pd.DataFrame | None:
+    path = RAW.joinpath(*parts)
+    if not path.exists():
+        return None
+    return pd.read_csv(path, low_memory=False)
+
+
+def employee_count_to_bucket(count) -> str:
+    n = safe_int(count, 0)
+    if n <= 10:
+        return "1-10"
+    if n <= 50:
+        return "11-50"
+    if n <= 200:
+        return "51-200"
+    if n <= 500:
+        return "201-500"
+    if n <= 1_000:
+        return "501-1000"
+    if n <= 5_000:
+        return "1001-5000"
+    if n <= 10_000:
+        return "5001-10000"
+    return "10001+"
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # LOAD & CLEAN RAW CSVs
 # ══════════════════════════════════════════════════════════════════════════════
@@ -276,6 +306,44 @@ resumes_df = resumes_df[resumes_df["Resume_str"].str.len() > 50]  # drop near-em
 
 print(f"  resumes after dedup/clean : {len(resumes_df):>7,} rows")
 
+# ── Optional Kaggle enrichments ───────────────────────────────────────────────
+company_industries_df = optional_csv("company_industries.csv")
+employee_counts_df = optional_csv("employee_counts.csv")
+job_skills_raw_df = optional_csv("job_skills.csv")
+
+company_industry_map = {}
+if company_industries_df is not None:
+    company_industries_df["industry"] = company_industries_df["industry"].apply(clean_text)
+    company_industry_map = (
+        company_industries_df.dropna(subset=["company_id", "industry"])
+        .drop_duplicates(subset=["company_id"])
+        .set_index("company_id")["industry"]
+        .to_dict()
+    )
+
+company_employee_bucket_map = {}
+if employee_counts_df is not None:
+    employee_counts_df = employee_counts_df.dropna(subset=["company_id"])
+    employee_counts_df["time_recorded"] = pd.to_numeric(employee_counts_df["time_recorded"], errors="coerce").fillna(0)
+    employee_counts_df = employee_counts_df.sort_values(["company_id", "time_recorded"])
+    latest_employee_counts = employee_counts_df.groupby("company_id").tail(1)
+    company_employee_bucket_map = {
+        row["company_id"]: employee_count_to_bucket(row.get("employee_count"))
+        for _, row in latest_employee_counts.iterrows()
+    }
+
+job_skill_map: dict[int, list[str]] = {}
+if job_skills_raw_df is not None:
+    job_skills_raw_df = job_skills_raw_df.dropna(subset=["job_id", "skill_abr"])
+    job_skills_raw_df["skill_abr"] = job_skills_raw_df["skill_abr"].apply(clean_text)
+    for job_id, group in job_skills_raw_df.groupby("job_id"):
+        seen = []
+        for raw_skill in group["skill_abr"].tolist():
+            if raw_skill and raw_skill not in seen:
+                seen.append(raw_skill[:200])
+        if seen:
+            job_skill_map[int(job_id)] = seen[:12]
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. RECRUITERS  (from companies)
@@ -292,16 +360,15 @@ companies_sample = companies_df.sample(n=n_comp, random_state=42).reset_index(dr
 
 recruiters = []
 recruiter_company_pairs = []
+source_company_to_seed: dict[int, tuple[str, str]] = {}
 
 for _, row in companies_sample.iterrows():
     rid = new_uuid()
     cid = new_uuid()
 
     size_raw = str(int(row["company_size"])) if pd.notna(row.get("company_size")) else ""
-    company_size = SIZE_MAP.get(size_raw, "51-200")
-
-    loc_parts = [safe_str(row.get(c)) for c in ("city", "state", "country")]
-    company_location = ", ".join(p for p in loc_parts if p)[:255] or fake.city()
+    company_size = company_employee_bucket_map.get(row.get("company_id")) or SIZE_MAP.get(size_raw, "51-200")
+    company_industry = company_industry_map.get(row.get("company_id")) or fake.bs()[:200]
 
     recruiters.append({
         "recruiter_id":    rid,
@@ -310,13 +377,16 @@ for _, row in companies_sample.iterrows():
         "email":           fake.unique.email()[:255],
         "phone":           fake.phone_number()[:20],
         "company_name":    safe_str(row["name"], maxlen=300),
-        "company_industry": fake.bs()[:200],
+        "company_industry": safe_str(company_industry, maxlen=200),
         "company_size":    company_size[:100],
         "role":            "recruiter",
         "access_level":    "recruiter",
         "created_at":      fmt_dt(fake.date_time_between(start_date="-2y", end_date="now")),
     })
     recruiter_company_pairs.append((rid, cid))
+    source_company_id = row.get("company_id")
+    if pd.notna(source_company_id):
+        source_company_to_seed[int(source_company_id)] = (rid, cid)
 
 # Pad to N_RECRUITERS
 while len(recruiters) < N_RECRUITERS:
@@ -356,6 +426,7 @@ member_skills    = []
 member_experience = []
 member_education = []
 member_resume_map = {}
+member_resume_category = {}
 
 for _, row in resumes_sample.iterrows():
     mid      = new_uuid()
@@ -378,6 +449,7 @@ for _, row in resumes_sample.iterrows():
     })
     member_ids.append(mid)
     member_resume_map[mid] = resume_text
+    member_resume_category[mid] = category
 
     # Skills — now correctly keyed to ALL-CAPS category
     for sk in skills_for_category(category, random.randint(3, 7)):
@@ -431,6 +503,7 @@ while len(members) < N_MEMBERS:
     })
     member_ids.append(mid)
     member_resume_map[mid] = ""
+    member_resume_category[mid] = "GENERAL"
 
 print(f"  Generated {len(members):,} members")
 print(f"  Generated {len(member_skills):,} member_skills  "
@@ -450,10 +523,16 @@ jobs_sample = jobs_df.sample(n=n_jobs, random_state=42).reset_index(drop=True)
 jobs_out      = []
 job_ids       = []
 job_skills_out = []
+job_source_ids: dict[str, int] = {}
 
 for _, row in jobs_sample.iterrows():
     jid = new_uuid()
-    rid, cid = random.choice(recruiter_company_pairs)
+    source_job_id = safe_int(row.get("job_id"), 0)
+    source_company_id = row.get("company_id")
+    if pd.notna(source_company_id) and int(source_company_id) in source_company_to_seed:
+        rid, cid = source_company_to_seed[int(source_company_id)]
+    else:
+        rid, cid = random.choice(recruiter_company_pairs)
 
     exp_raw   = safe_str(row.get("formatted_experience_level"))
     seniority = SENIORITY_MAP.get(exp_raw) or random.choice(list(SENIORITY_MAP.values()))
@@ -496,13 +575,22 @@ for _, row in jobs_sample.iterrows():
         "applicants_count": safe_int(row.get("applies")),
     })
     job_ids.append(jid)
+    if source_job_id:
+        job_source_ids[jid] = source_job_id
 
-    # Extract skills from skills_desc (comma-separated text)
+    # Prefer Kaggle job_skills.csv when available, then supplement from skills_desc.
+    seen_job_skills = set()
+    for sk in job_skill_map.get(source_job_id, []):
+        if sk and sk not in seen_job_skills:
+            seen_job_skills.add(sk)
+            job_skills_out.append({"job_id": jid, "skill": sk[:200]})
+
     skills_desc = safe_str(row.get("skills_desc"))
     if skills_desc:
         raw_skills = [s.strip() for s in skills_desc.split(",") if s.strip()]
         for sk in raw_skills[:10]:
-            if sk:
+            if sk and sk not in seen_job_skills:
+                seen_job_skills.add(sk)
                 job_skills_out.append({"job_id": jid, "skill": sk[:200]})
 
 print(f"  Generated {len(jobs_out):,} jobs")
@@ -544,54 +632,107 @@ while len(applications) < N_APPLICATIONS and attempts < N_APPLICATIONS * 5:
 
 print(f"  Generated {len(applications):,} applications")
 
+application_counts_by_job: dict[str, int] = {}
+for app in applications:
+    application_counts_by_job[app["job_id"]] = application_counts_by_job.get(app["job_id"], 0) + 1
+for job in jobs_out:
+    job["applicants_count"] = application_counts_by_job.get(job["job_id"], 0)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 5. MONGODB EVENTS  (100K+)
+# 5. POSTS  (feed)
 # ══════════════════════════════════════════════════════════════════════════════
-print("\n[5/7] Building 100K MongoDB events...")
+print("\n[5/8] Building feed posts...")
 
-app_ids         = [a["application_id"] for a in applications]
-thread_pool     = [new_uuid() for _ in range(2_000)]
-connection_pool = [new_uuid() for _ in range(2_000)]
-ai_task_pool    = [new_uuid() for _ in range(1_000)]
+POST_MEDIA_TYPES = ["text", "image", "article", "poll"]
+POST_MEDIA_WEIGHTS = [55, 20, 15, 10]
+POST_VISIBILITY_WEIGHTS = [80, 20]
+POST_REACTION_MAX = 250
+POST_COMMENT_MAX = 60
+POST_REPOST_MAX = 40
 
-ENTITY_CONFIG = {
-    "job.viewed":            ("job",         job_ids),
-    "job.saved":             ("job",         job_ids),
-    "application.submitted": ("application", app_ids),
-    "message.sent":          ("thread",      thread_pool),
-    "connection.requested":  ("connection",  connection_pool),
-    "ai.requested":          ("ai_task",     ai_task_pool),
-    "ai.completed":          ("ai_task",     ai_task_pool),
-}
-EVENT_WEIGHTS   = [25, 15, 20, 15, 10, 8, 7]
-all_actor_ids   = member_ids + [r["recruiter_id"] for r in recruiters]
-START_EVT       = datetime(2023, 1, 1)
-event_type_list = list(ENTITY_CONFIG.keys())
+ARTICLE_SOURCES = [
+    "TechCrunch",
+    "Harvard Business Review",
+    "MIT Technology Review",
+    "Forbes",
+    "Fast Company",
+]
 
-events = []
-for _ in range(N_EVENTS):
-    evt_type                    = random.choices(event_type_list, weights=EVENT_WEIGHTS)[0]
-    entity_type, entity_pool    = ENTITY_CONFIG[evt_type]
-    ts                          = rand_dt(START_EVT, NOW)
-    events.append({
-        "event_type":      evt_type,
-        "trace_id":        new_uuid(),
-        "timestamp":       ts.isoformat() + "Z",
-        "actor_id":        random.choice(all_actor_ids),
-        "entity":          {"entity_type": entity_type,
-                            "entity_id":   random.choice(entity_pool)},
-        "payload":         {},
-        "idempotency_key": new_uuid(),
-    })
+POLL_LABEL_SETS = [
+    ["Definitely", "Maybe", "Not now"],
+    ["Remote", "Hybrid", "On-site"],
+    ["Python", "Java", "JavaScript"],
+    ["Yes", "Need more info", "No"],
+]
 
-print(f"  Generated {len(events):,} events")
+posts = []
+seen_post_ids = set()
+for idx in range(N_POSTS):
+    author = random.choice(members)
+    created = rand_dt(START_1Y, NOW)
+    media_type = random.choices(POST_MEDIA_TYPES, weights=POST_MEDIA_WEIGHTS)[0]
+    visibility = random.choices(["anyone", "connections"], weights=POST_VISIBILITY_WEIGHTS)[0]
+    post_id = f"seed-post-{idx + 1}"
+    seen_post_ids.add(post_id)
+
+    content_parts = [
+        fake.sentence(nb_words=random.randint(8, 16)),
+        fake.paragraph(nb_sentences=random.randint(2, 4)),
+    ]
+    if random.random() < 0.35:
+        content_parts.append(f"Looking for thoughts on {fake.bs()} in {author['location']}.")
+    content = " ".join(content_parts)[:5000]
+
+    post = {
+        "post_id": post_id,
+        "author_member_id": author["member_id"],
+        "visibility": visibility,
+        "content": content,
+        "media_type": media_type,
+        "media_url": None,
+        "article_title": None,
+        "article_source": None,
+        "poll_options": None,
+        "reactions_count": random.randint(0, POST_REACTION_MAX),
+        "comments_count": random.randint(0, POST_COMMENT_MAX),
+        "reposts_count": random.randint(0, POST_REPOST_MAX),
+        "created_at": fmt_dt(created),
+    }
+
+    if media_type == "image":
+        slug = re.sub(r"[^a-z0-9]+", "-", author["first_name"].lower()).strip("-") or "member"
+        post["media_url"] = f"https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=1200&q=80&sig={slug}-{idx}"
+    elif media_type == "article":
+        post["article_title"] = fake.sentence(nb_words=random.randint(5, 10))[:500]
+        post["article_source"] = random.choice(ARTICLE_SOURCES)
+        post["media_url"] = f"https://example.com/articles/{idx + 1}"
+    elif media_type == "poll":
+        labels = random.choice(POLL_LABEL_SETS)
+        poll_options = []
+        remaining_votes = random.randint(12, 180)
+        for option_idx, label in enumerate(labels):
+            if option_idx == len(labels) - 1:
+                votes = remaining_votes
+            else:
+                votes = random.randint(0, remaining_votes)
+            remaining_votes -= votes
+            poll_options.append({
+                "id": f"poll-{idx + 1}-{option_idx + 1}",
+                "label": label,
+                "votes": votes,
+            })
+        post["poll_options"] = json.dumps(poll_options)
+
+    posts.append(post)
+
+print(f"  Generated {len(posts):,} posts")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 6. CONNECTIONS, THREADS, MESSAGES
 # ══════════════════════════════════════════════════════════════════════════════
-print("\n[6/7] Building connections, threads, messages...")
+print("\n[6/10] Building connections, threads, messages...")
 
 TARGET_CONNECTIONS = 10_000
 
@@ -687,12 +828,21 @@ threads              = []
 thread_participants  = []
 messages             = []
 
-for _ in range(2_000):
+accepted_pairs = [
+    (c["user_a"], c["user_b"])
+    for c in connections
+    if c["status"] == "accepted"
+]
+thread_pairs = accepted_pairs.copy()
+random.shuffle(thread_pairs)
+while len(thread_pairs) < 2_000:
+    thread_pairs.append(tuple(random.sample(member_ids, 2)))
+
+for participants in thread_pairs[:2_000]:
     tid     = new_uuid()
     created = rand_dt(START_1Y, NOW)
     threads.append({"thread_id": tid, "created_at": fmt_dt(created)})
 
-    participants = random.sample(member_ids, 2)
     for uid in participants:
         thread_participants.append({"thread_id": tid, "user_id": uid})
 
@@ -709,11 +859,109 @@ for _ in range(2_000):
 print(f"  Generated {len(connections):,} connections")
 print(f"  Generated {len(threads):,} threads, {len(messages):,} messages")
 
+accepted_connection_counts: dict[str, int] = {}
+for conn in connections:
+    if conn["status"] != "accepted":
+        continue
+    accepted_connection_counts[conn["user_a"]] = accepted_connection_counts.get(conn["user_a"], 0) + 1
+    accepted_connection_counts[conn["user_b"]] = accepted_connection_counts.get(conn["user_b"], 0) + 1
+for member in members:
+    member["connections_count"] = accepted_connection_counts.get(member["member_id"], 0)
+
+print("\n[8/10] Building resume docs + profile views...")
+
+resumes_docs = []
+for member in members:
+    member_id = member["member_id"]
+    resume_text = member_resume_map.get(member_id, "")
+    if not resume_text:
+        continue
+    top_skills = [row["skill"] for row in member_skills if row["member_id"] == member_id][:8]
+    resumes_docs.append({
+        "member_id": member_id,
+        "category": member_resume_category.get(member_id, "GENERAL"),
+        "resume_text": resume_text,
+        "skills": top_skills,
+        "summary": clean_text(resume_text[:600]),
+        "updated_at": rand_dt(START_1Y, NOW).isoformat() + "Z",
+    })
+
+profile_views = []
+for conn in connections:
+    if conn["status"] != "accepted":
+        continue
+    viewer_id, viewed_id = random.choice([
+        (conn["user_a"], conn["user_b"]),
+        (conn["user_b"], conn["user_a"]),
+    ])
+    for _ in range(random.randint(1, 4)):
+        profile_views.append({
+            "member_id": viewed_id,
+            "viewer_id": viewer_id,
+            "viewed_at": rand_dt(START_1Y, NOW).isoformat() + "Z",
+            "source": random.choice(["search", "feed", "connections", "jobs"]),
+        })
+
+for _ in range(max(5_000, len(members) // 2)):
+    viewer_id, viewed_id = random.sample(member_ids, 2)
+    profile_views.append({
+        "member_id": viewed_id,
+        "viewer_id": viewer_id,
+        "viewed_at": rand_dt(START_1Y, NOW).isoformat() + "Z",
+        "source": random.choice(["search", "feed", "profile_suggestion"]),
+    })
+
+print(f"  Generated {len(resumes_docs):,} resume docs")
+print(f"  Generated {len(profile_views):,} profile views")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 7. WRITE JSON SEEDS
+# 9. MONGODB EVENTS  (100K+)
 # ══════════════════════════════════════════════════════════════════════════════
-print("\n[7/7] Writing seed files to data/seeds/ ...")
+print("\n[9/10] Building 100K MongoDB events...")
+
+app_ids         = [a["application_id"] for a in applications]
+thread_pool     = [t["thread_id"] for t in threads]
+connection_pool = [c["connection_id"] for c in connections]
+ai_task_pool    = [new_uuid() for _ in range(1_000)]
+
+ENTITY_CONFIG = {
+    "job.viewed":            ("job",         job_ids),
+    "job.saved":             ("job",         job_ids),
+    "application.submitted": ("application", app_ids),
+    "message.sent":          ("thread",      thread_pool),
+    "connection.requested":  ("connection",  connection_pool),
+    "ai.requested":          ("ai_task",     ai_task_pool),
+    "ai.completed":          ("ai_task",     ai_task_pool),
+}
+EVENT_WEIGHTS   = [25, 15, 20, 15, 10, 8, 7]
+all_actor_ids   = member_ids + [r["recruiter_id"] for r in recruiters]
+START_EVT       = datetime(2023, 1, 1)
+event_type_list = list(ENTITY_CONFIG.keys())
+
+events = []
+for _ in range(N_EVENTS):
+    evt_type                    = random.choices(event_type_list, weights=EVENT_WEIGHTS)[0]
+    entity_type, entity_pool    = ENTITY_CONFIG[evt_type]
+    ts                          = rand_dt(START_EVT, NOW)
+    events.append({
+        "event_type":      evt_type,
+        "trace_id":        new_uuid(),
+        "timestamp":       ts.isoformat() + "Z",
+        "actor_id":        random.choice(all_actor_ids),
+        "entity":          {"entity_type": entity_type,
+                            "entity_id":   random.choice(entity_pool)},
+        "payload":         {},
+        "idempotency_key": new_uuid(),
+    })
+
+print(f"  Generated {len(events):,} events")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 10. WRITE JSON SEEDS
+# ══════════════════════════════════════════════════════════════════════════════
+print(f"\n[10/10] Writing seed files to {SEEDS} ...")
 
 
 def write_seed(filename: str, data: list) -> None:
@@ -731,10 +979,13 @@ write_seed("applications.json",        applications)
 write_seed("member_skills.json",       member_skills)
 write_seed("member_experience.json",   member_experience)
 write_seed("member_education.json",    member_education)
+write_seed("posts.json",               posts)
 write_seed("connections.json",         connections)
 write_seed("threads.json",             threads)
 write_seed("thread_participants.json", thread_participants)
 write_seed("messages.json",            messages)
+write_seed("resumes.json",             resumes_docs)
+write_seed("profile_views.json",       profile_views)
 write_seed("events.json",              events)
 
 print("\n" + "=" * 60)
