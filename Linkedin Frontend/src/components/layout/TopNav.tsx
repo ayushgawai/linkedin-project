@@ -13,6 +13,7 @@ import { useQuery } from '@tanstack/react-query'
 import { cloneElement, isValidElement, useMemo, useRef, useState, type ReactElement } from 'react'
 import { NavLink, Link, useLocation, useNavigate } from 'react-router-dom'
 import { listNotifications } from '../../api/notifications'
+import { searchMembers } from '../../api/profile'
 import { useOutcomeNotificationSync } from '../../hooks/useOutcomeNotificationSync'
 import { Avatar, Dropdown, Input } from '../ui'
 import { BrandMark } from './BrandMark'
@@ -129,6 +130,17 @@ export function TopNav(): JSX.Element {
   const searchWrapRef = useRef<HTMLDivElement>(null)
   useClickOutside(searchWrapRef, () => setSearchOpen(false), searchOpen)
 
+  const memberSearchQuery = useQuery({
+    queryKey: ['nav-member-search', searchQuery.trim()],
+    queryFn: async () => {
+      const q = searchQuery.trim()
+      if (!q) return []
+      return searchMembers({ query: q })
+    },
+    enabled: searchOpen && searchQuery.trim().length > 0,
+    staleTime: 30_000,
+  })
+
   const searchSuggestions = useMemo<SearchSuggestion[]>(() => {
     const q = searchQuery.trim().toLowerCase()
     if (!q) return []
@@ -138,7 +150,9 @@ export function TopNav(): JSX.Element {
       full_name: displayName,
       headline: headline || 'Add your headline',
     }
-    const people = [ownMember, ...DIRECTORY_MEMBERS]
+    const remoteMatches = memberSearchQuery.data ?? []
+    const people = [ownMember, ...remoteMatches, ...DIRECTORY_MEMBERS]
+      .filter((member, index, list) => list.findIndex((candidate) => candidate.member_id === member.member_id) === index)
       .filter((m) => `${m.full_name} ${m.headline ?? ''}`.toLowerCase().includes(q))
       .slice(0, 3)
       .map((m) => ({
@@ -187,7 +201,7 @@ export function TopNav(): JSX.Element {
       .map((n) => ({ ...n, typeLabel: 'Newsletters' as const }))
 
     return [...people, ...jobs, ...events, ...news, ...groups, ...newsletters].slice(0, 10)
-  }, [displayName, headline, memberId, searchQuery, user?.member_id])
+  }, [displayName, headline, memberId, memberSearchQuery.data, searchQuery, user?.member_id])
 
   function navigateFromSearch(item: SearchSuggestion): void {
     navigate(item.to)
@@ -262,6 +276,8 @@ export function TopNav(): JSX.Element {
                       </li>
                     ))}
                   </ul>
+                ) : memberSearchQuery.isFetching ? (
+                  <p className="px-3 py-3 text-sm text-[#666666]">Searching…</p>
                 ) : (
                   <p className="px-3 py-3 text-sm text-[#666666]">No matches found.</p>
                 )}

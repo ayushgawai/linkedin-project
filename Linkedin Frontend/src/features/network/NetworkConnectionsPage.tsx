@@ -1,14 +1,19 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Link, useNavigate } from 'react-router-dom'
 import { listConnections } from '../../api/connections'
+import { openThread } from '../../api/messaging'
 import { getMember } from '../../api/profile'
-import { Avatar, Button, Card, Input, Select, Skeleton } from '../../components/ui'
+import { Avatar, Button, Card, Input, Select, Skeleton, useToast } from '../../components/ui'
 import { useAuthStore } from '../../store/authStore'
 
 export default function NetworkConnectionsPage(): JSX.Element {
   const user = useAuthStore((s) => s.user)
+  const navigate = useNavigate()
+  const { toast } = useToast()
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('recent')
+  const [openingThreadFor, setOpeningThreadFor] = useState<string | null>(null)
 
   const connectionsQuery = useQuery({
     queryKey: ['connections', user?.member_id],
@@ -60,6 +65,23 @@ export default function NetworkConnectionsPage(): JSX.Element {
     return filtered
   }, [connectionsQuery.data, query, sort])
 
+  async function handleMessage(peerId: string): Promise<void> {
+    if (!user?.member_id) return
+    setOpeningThreadFor(peerId)
+    try {
+      const thread = await openThread([user.member_id, peerId])
+      navigate(`/messaging/${thread.thread_id}`)
+    } catch (error) {
+      const message =
+        error && typeof error === 'object' && 'message' in error
+          ? String((error as { message?: string }).message)
+          : 'Could not open the conversation'
+      toast({ variant: 'error', title: message })
+    } finally {
+      setOpeningThreadFor(null)
+    }
+  }
+
   return (
     <Card>
       <Card.Header className="space-y-3">
@@ -87,10 +109,22 @@ export default function NetworkConnectionsPage(): JSX.Element {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {cards.map((card) => (
               <article key={card.id} className="rounded-lg border border-border p-3">
-                <Avatar size="lg" name={card.name} src={card.avatar ?? undefined} />
-                <p className="mt-2 font-semibold text-text-primary">{card.name}</p>
-                <p className="text-sm text-text-secondary">{card.headline}</p>
-                <Button size="sm" variant="secondary" className="mt-3">Message</Button>
+                <Link to={`/in/${card.peerId}`} className="block">
+                  <Avatar size="lg" name={card.name} src={card.avatar ?? undefined} />
+                  <p className="mt-2 font-semibold text-text-primary hover:underline">{card.name}</p>
+                  <p className="text-sm text-text-secondary">{card.headline}</p>
+                </Link>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="mt-3"
+                  loading={openingThreadFor === card.peerId}
+                  onClick={() => {
+                    void handleMessage(card.peerId)
+                  }}
+                >
+                  Message
+                </Button>
               </article>
             ))}
           </div>

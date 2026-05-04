@@ -26,7 +26,14 @@ export function useMessagingSocket({ token, onMessageReceived, onReadReceipt, on
       return
     }
 
-    const wsUrl = `${import.meta.env.VITE_WS_BASE_URL.replace(/\/$/, '')}/messaging?token=${encodeURIComponent(token)}`
+    const wsBaseUrl = String(import.meta.env.VITE_WS_BASE_URL ?? '').replace(/\/$/, '')
+    const wsEnabled = String(import.meta.env.VITE_ENABLE_MESSAGING_WS ?? 'false').toLowerCase() === 'true'
+    if (!wsEnabled || !wsBaseUrl) {
+      onPollingFallback?.()
+      return
+    }
+
+    const wsUrl = `${wsBaseUrl}/messaging?token=${encodeURIComponent(token)}`
     try {
       const ws = new WebSocket(wsUrl)
       wsRef.current = ws

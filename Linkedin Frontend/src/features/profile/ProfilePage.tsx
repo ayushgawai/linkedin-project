@@ -715,7 +715,9 @@ export default function ProfilePage(): JSX.Element {
                 <button type="button" className="flex w-full flex-col items-center gap-2 py-8" onClick={() => openModal('featured')}>
                   <Sparkles className="h-8 w-8 text-text-tertiary" />
                   <p className="text-sm font-semibold text-text-secondary">Showcase your best work</p>
-                  <Button size="sm">Add featured</Button>
+                  <span className="inline-flex items-center justify-center rounded-full bg-brand-primary px-4 py-2 text-sm font-semibold text-white">
+                    Add featured
+                  </span>
                 </button>
               ) : (
                 <div className="flex snap-x gap-3 overflow-x-auto pb-2">
