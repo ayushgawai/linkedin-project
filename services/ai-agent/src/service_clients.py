@@ -362,7 +362,7 @@ async def send_outreach_message(
         )
         if thread_resp.status_code in (200, 201):
             body = thread_resp.json()
-            thread_id = (body.get("data") or {}).get("thread_id")
+            thread_id = body.get("thread_id") or (body.get("data") or {}).get("thread_id")
         elif thread_resp.status_code == 409:
             # Messaging Service says the thread already exists. Try to
             # pull thread_id out of the error body; if that's not
@@ -387,8 +387,9 @@ async def send_outreach_message(
                     json={"participant_ids": [recruiter_id, member_id]},
                 )
                 if lookup.status_code == 200:
-                    thread_id = (
-                        (lookup.json().get("data") or {}).get("thread_id")
+                    lookup_body = lookup.json() or {}
+                    thread_id = lookup_body.get("thread_id") or (
+                        (lookup_body.get("data") or {}).get("thread_id")
                     )
         else:
             # Any other status — let raise_for_status produce the error
@@ -406,4 +407,7 @@ async def send_outreach_message(
             json={"thread_id": thread_id, "sender_id": recruiter_id, "message_text": message_text},
         )
         msg_resp.raise_for_status()
-        return msg_resp.json().get("data", {})
+        body = msg_resp.json() or {}
+        if isinstance(body.get("data"), dict):
+            return body["data"]
+        return body

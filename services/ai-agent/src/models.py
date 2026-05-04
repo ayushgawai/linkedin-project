@@ -92,6 +92,11 @@ class AIRequestBody(BaseModel):
 
     # shortlist / match
     job_id: Optional[str] = None
+    min_match_score: Optional[float] = None
+    top_n: Optional[int] = None
+    weighted_skills: list[str] = Field(default_factory=list)
+    location_radius_miles: Optional[int] = None
+    outreach_tone: Optional[str] = None
 
     # parse
     resume_text: Optional[str] = None

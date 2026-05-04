@@ -49,6 +49,17 @@ SKILL_TIMEOUT = 30  # seconds per skill call
 MIN_OUTREACH_SCORE = 0.15  # candidates scoring below this get a "below-threshold" note instead of a draft
 
 
+def _normalize_score_threshold(value: Any) -> float:
+    """Accept either 0..1 or 0..100 UI-style thresholds."""
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return MIN_OUTREACH_SCORE
+    if numeric > 1:
+        numeric /= 100.0
+    return max(0.0, min(1.0, numeric))
+
+
 class HiringAssistantSupervisor:
     """Stateless supervisor — each task is an independent coroutine run."""
 
@@ -177,6 +188,8 @@ class HiringAssistantSupervisor:
         recruiter_id: str,
         *,
         include_outreach: bool = True,
+        top_n: int = TOP_N,
+        min_outreach_score: float = MIN_OUTREACH_SCORE,
     ) -> None:
         """Candidate pipeline for a given job.
 
@@ -362,7 +375,7 @@ class HiringAssistantSupervisor:
             {"top_score": match_result.matches[0].score if match_result.matches else 0},
         )
 
-        top_matches = match_result.matches[:TOP_N]
+        top_matches = match_result.matches[:max(1, int(top_n))]
 
         # ---- Step 6: Generate outreach drafts for top-N (shortlist only) ----
         shortlist: list[dict[str, Any]] = []
@@ -377,7 +390,7 @@ class HiringAssistantSupervisor:
                 parsed = parsed_resumes.get(match.member_id)
 
                 # Gate on minimum score — below threshold gets a note, not a draft.
-                if match.score < MIN_OUTREACH_SCORE:
+                if match.score < min_outreach_score:
                     shortlist.append({
                         "member_id": match.member_id,
                         "score": match.score,
@@ -422,6 +435,31 @@ class HiringAssistantSupervisor:
                     "outreach_draft": outreach_text,
                     "draft_status": draft_status,
                 })
+
+            if shortlist and not any(candidate.get("outreach_draft") for candidate in shortlist):
+                # Seeded classroom/demo data can score low with deterministic
+                # fallback embeddings. Still generate one draft for the
+                # strongest candidate so the human-approval step is demoable.
+                best = shortlist[0]
+                profile = profiles_by_member.get(best["member_id"], {})
+                parsed = parsed_resumes.get(best["member_id"])
+                outreach_req = OutreachDraftRequest(
+                    member_id=best["member_id"],
+                    candidate_name=f"{profile.get('first_name', '')} {profile.get('last_name', '')}".strip() or "Candidate",
+                    candidate_skills=profile.get("skills", []),
+                    candidate_summary=parsed.summary if parsed else "",
+                    job_title=job_title,
+                    job_description=job_description,
+                    company_name=company_name,
+                )
+                try:
+                    draft = await asyncio.wait_for(
+                        draft_outreach(outreach_req), timeout=SKILL_TIMEOUT
+                    )
+                    best["outreach_draft"] = draft.draft_message
+                    best["draft_status"] = "fallback_generated"
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Fallback outreach draft failed for {}: {}", best["member_id"], exc)
 
             await self._emit_progress(
                 task_id, trace_id, "drafting", "completed",
@@ -482,6 +520,8 @@ class HiringAssistantSupervisor:
         task_type = payload.get("task_type", "shortlist")
         job_id = payload.get("job_id", "")
         recruiter_id = kafka_message.get("actor_id", "")
+        top_n = payload.get("top_n", TOP_N)
+        min_outreach_score = _normalize_score_threshold(payload.get("min_match_score"))
 
         if not task_id:
             logger.error("Received ai.requests message with no task_id — skipping")
@@ -537,11 +577,23 @@ class HiringAssistantSupervisor:
         try:
             if task_type == "shortlist":
                 await self._run_shortlist(
-                    task_id, trace_id, job_id, recruiter_id, include_outreach=True,
+                    task_id,
+                    trace_id,
+                    job_id,
+                    recruiter_id,
+                    include_outreach=True,
+                    top_n=top_n,
+                    min_outreach_score=min_outreach_score,
                 )
             elif task_type == "match":
                 await self._run_shortlist(
-                    task_id, trace_id, job_id, recruiter_id, include_outreach=False,
+                    task_id,
+                    trace_id,
+                    job_id,
+                    recruiter_id,
+                    include_outreach=False,
+                    top_n=top_n,
+                    min_outreach_score=min_outreach_score,
                 )
             elif task_type == "parse":
                 await self._run_parse(task_id, trace_id, payload, recruiter_id)

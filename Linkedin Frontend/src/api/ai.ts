@@ -15,6 +15,7 @@
 // ============================================
 
 import { USE_MOCKS, apiClient, mockDelay, unwrapApiData } from './client'
+import { useAuthStore } from '../store/authStore'
 
 export type AiTaskStatus = 'running' | 'waiting_approval' | 'completed' | 'failed'
 
@@ -92,7 +93,9 @@ export async function startShortlistTask(job_id: string, params: StartShortlistP
     inMemoryTasks = [task, ...inMemoryTasks]
     return { task_id: task.task_id, trace_id: task.trace_id }
   }
-  const response = await apiClient.post<{ task_id: string; trace_id: string }>('/ai/tasks/start', { job_id, params })
+  const user = useAuthStore.getState().user
+  const recruiter_id = user?.recruiter_id || user?.member_id || 'frontend'
+  const response = await apiClient.post<{ task_id: string; trace_id: string }>('/ai/tasks/start', { job_id, params, recruiter_id })
   return response.data
 }
 

@@ -13,6 +13,7 @@ Routes:
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -192,6 +193,7 @@ class _FrontendStartParams(BaseModel):
 class _FrontendStartBody(BaseModel):
     job_id: str
     params: _FrontendStartParams
+    recruiter_id: str | None = None
 
 
 class _FrontendStatusBody(BaseModel):
@@ -241,6 +243,16 @@ def _frontend_task_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
     for idx, s in enumerate(doc.get("steps", []) or []):
         step_name = s.get("step") or f"step-{idx+1}"
         step_status = (s.get("status") or "running").lower()
+        agent_name = s.get("agent_name") or "AI Agent"
+        if agent_name == "AI Agent":
+            if "resume" in step_name or "parsing" in step_name:
+                agent_name = "Resume Parser Skill"
+            elif "match" in step_name:
+                agent_name = "Job-Candidate Matching Skill"
+            elif "draft" in step_name:
+                agent_name = "Outreach Draft Generator"
+            elif step_name in {"complete", "fetching_job", "fetching_applications", "fetching_profiles"}:
+                agent_name = "Hiring Assistant Agent (Supervisor)"
         if step_status in ("running", "pending"):
             st = step_status
         elif step_status in ("completed", "failed"):
@@ -252,7 +264,7 @@ def _frontend_task_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
                 "step_id": s.get("step_id") or f"step-{idx+1}",
                 "step_name": step_name,
                 "step_index": idx,
-                "agent_name": s.get("agent_name") or "AI Agent",
+                "agent_name": agent_name,
                 "status": st,
                 "output": (s.get("partial_result") or {}).get("message")
                 if isinstance(s.get("partial_result"), dict)
@@ -262,10 +274,48 @@ def _frontend_task_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
 
     result = doc.get("result") or {}
     final_output = None
+    approvals = doc.get("approvals") or []
     if isinstance(result, dict):
         # common in our workflow
         if "shortlist" in result:
             final_output = "shortlist_ready"
+            drafted = next(
+                (
+                    candidate
+                    for candidate in (result.get("shortlist") or [])
+                    if candidate.get("outreach_draft")
+                ),
+                None,
+            )
+            if drafted:
+                approval = next(
+                    (
+                        a for a in approvals
+                        if a.get("member_id") == drafted.get("member_id")
+                        and a.get("state") in {"approved", "edited", "rejected", "completed", "send_failed"}
+                    ),
+                    None,
+                )
+                approval_status = "waiting_approval"
+                if approval:
+                    approval_status = "approved" if approval.get("state") in {"approved", "edited", "completed"} else "rejected"
+                if approval_status == "waiting_approval":
+                    status = "waiting_approval"
+                elif approval_status == "approved":
+                    status = "completed"
+                else:
+                    status = "failed" if approval and approval.get("state") == "send_failed" else "completed"
+                steps_out.append(
+                    {
+                        "step_id": drafted.get("member_id"),
+                        "step_name": "drafting",
+                        "step_index": len(steps_out),
+                        "agent_name": "Outreach Draft Generator",
+                        "status": approval_status,
+                        "draft_content": drafted.get("outreach_draft"),
+                        "output": drafted.get("rationale"),
+                    }
+                )
         elif "matches" in result:
             final_output = "matches_ready"
 
@@ -286,7 +336,16 @@ def _frontend_task_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
 @app.post("/ai/tasks/start", tags=["AI Workflow"])
 def ai_tasks_start(body: _FrontendStartBody) -> JSONResponse:
     # Map frontend start -> professor-spec request (shortlist)
-    req = AIRequestBody(recruiter_id="frontend", task_type="shortlist", job_id=body.job_id)
+    req = AIRequestBody(
+        recruiter_id=body.recruiter_id or "frontend",
+        task_type="shortlist",
+        job_id=body.job_id,
+        min_match_score=body.params.min_match_score,
+        top_n=body.params.top_n,
+        weighted_skills=body.params.weighted_skills,
+        location_radius_miles=body.params.location_radius_miles,
+        outreach_tone=body.params.outreach_tone,
+    )
     return ai_request(req)
 
 
@@ -315,19 +374,68 @@ def ai_tasks_list(_body: _FrontendListBody) -> JSONResponse:
 
 @app.post("/ai/tasks/approve", tags=["AI Workflow"])
 async def ai_tasks_approve(body: _FrontendApproveBody) -> JSONResponse:
-    # step_id is frontend-only; map to approve/edit action
+    # Frontend only sends task_id + step_id. For shortlist approvals we use
+    # step_id as the candidate/member identifier when available and otherwise
+    # fall back to the first drafted shortlist candidate.
+    doc = get_ai_traces().find_one({"task_id": body.task_id}, {"_id": 0}) or {}
+    shortlist = ((doc.get("result") or {}).get("shortlist") or [])
+    candidate_id = body.step_id
+    if not candidate_id or candidate_id.startswith("step-"):
+        drafted = next((c for c in shortlist if c.get("outreach_draft")), None)
+        candidate_id = drafted.get("member_id") if drafted else ""
+    if not candidate_id:
+        return JSONResponse(
+            status_code=409,
+            content=_err("NO_DRAFT", "No drafted candidate is available to approve"),
+        )
     action = ApprovalAction.EDIT if body.edited_content else ApprovalAction.APPROVE
-    req = AIApproveBody(task_id=body.task_id, member_id="frontend", action=action, edited_content=body.edited_content)
-    resp = await ai_approve(req)
-    # Frontend expects { success: boolean }
-    return JSONResponse(status_code=200, content={"success": True})
+    req = AIApproveBody(task_id=body.task_id, member_id=candidate_id, action=action, edited_content=body.edited_content)
+    raw_response = await ai_approve(req)
+    raw_body = raw_response.body.decode("utf-8") if raw_response.body else "{}"
+    try:
+        payload = json.loads(raw_body)
+    except Exception:  # noqa: BLE001
+        payload = {}
+    return JSONResponse(
+        status_code=raw_response.status_code,
+        content={
+            "success": raw_response.status_code < 400 and bool(payload.get("success")),
+            "data": payload.get("data"),
+            "error": payload.get("error"),
+            "trace_id": payload.get("trace_id"),
+        },
+    )
 
 
 @app.post("/ai/tasks/reject", tags=["AI Workflow"])
 async def ai_tasks_reject(body: _FrontendRejectBody) -> JSONResponse:
-    req = AIApproveBody(task_id=body.task_id, member_id="frontend", action=ApprovalAction.REJECT, edited_content=None)
-    await ai_approve(req)
-    return JSONResponse(status_code=200, content={"success": True})
+    doc = get_ai_traces().find_one({"task_id": body.task_id}, {"_id": 0}) or {}
+    shortlist = ((doc.get("result") or {}).get("shortlist") or [])
+    candidate_id = body.step_id
+    if not candidate_id or candidate_id.startswith("step-"):
+        drafted = next((c for c in shortlist if c.get("outreach_draft")), None)
+        candidate_id = drafted.get("member_id") if drafted else ""
+    if not candidate_id:
+        return JSONResponse(
+            status_code=409,
+            content=_err("NO_DRAFT", "No drafted candidate is available to reject"),
+        )
+    req = AIApproveBody(task_id=body.task_id, member_id=candidate_id, action=ApprovalAction.REJECT, edited_content=None)
+    raw_response = await ai_approve(req)
+    raw_body = raw_response.body.decode("utf-8") if raw_response.body else "{}"
+    try:
+        payload = json.loads(raw_body)
+    except Exception:  # noqa: BLE001
+        payload = {}
+    return JSONResponse(
+        status_code=raw_response.status_code,
+        content={
+            "success": raw_response.status_code < 400 and bool(payload.get("success")),
+            "data": payload.get("data"),
+            "error": payload.get("error"),
+            "trace_id": payload.get("trace_id"),
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -414,6 +522,16 @@ def ai_request(body: AIRequestBody) -> JSONResponse:
         }
         if body.job_id is not None:
             doc["job_id"] = body.job_id
+        if body.min_match_score is not None:
+            doc["min_match_score"] = body.min_match_score
+        if body.top_n is not None:
+            doc["top_n"] = body.top_n
+        if body.weighted_skills:
+            doc["weighted_skills"] = body.weighted_skills
+        if body.location_radius_miles is not None:
+            doc["location_radius_miles"] = body.location_radius_miles
+        if body.outreach_tone is not None:
+            doc["outreach_tone"] = body.outreach_tone
         if body.member_id is not None:
             doc["member_id"] = body.member_id
         if body.target_job_id is not None:
@@ -438,6 +556,16 @@ def ai_request(body: AIRequestBody) -> JSONResponse:
     }
     if body.job_id is not None:
         payload["job_id"] = body.job_id
+    if body.min_match_score is not None:
+        payload["min_match_score"] = body.min_match_score
+    if body.top_n is not None:
+        payload["top_n"] = body.top_n
+    if body.weighted_skills:
+        payload["weighted_skills"] = body.weighted_skills
+    if body.location_radius_miles is not None:
+        payload["location_radius_miles"] = body.location_radius_miles
+    if body.outreach_tone is not None:
+        payload["outreach_tone"] = body.outreach_tone
     if body.member_id is not None:
         payload["member_id"] = body.member_id
     if body.target_job_id is not None:

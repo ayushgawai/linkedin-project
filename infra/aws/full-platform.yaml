@@ -1059,6 +1059,11 @@ Resources:
             - { Name: DB_NAME, Value: !Ref DbName }
             - { Name: MONGO_URI, Value: !Sub 'mongodb://mongodb.${AWS::StackName}.local:27017' }
             - { Name: KAFKA_BROKERS, Value: !Sub 'kafka.${AWS::StackName}.local:9092' }
+            - { Name: PROFILE_SERVICE_URL, Value: !Sub 'http://profile.${AWS::StackName}.local:8001' }
+            - { Name: JOB_SERVICE_URL, Value: !Sub 'http://job.${AWS::StackName}.local:8002' }
+            - { Name: APPLICATION_SERVICE_URL, Value: !Sub 'http://application.${AWS::StackName}.local:8003' }
+            - { Name: MESSAGING_SERVICE_URL, Value: !Sub 'http://messaging.${AWS::StackName}.local:8004' }
+            - { Name: USE_MOCK_SERVICES, Value: 'false' }
           Secrets:
             - { Name: OPENAI_API_KEY, ValueFrom: !Sub '${AppSecrets}:openai_api_key::' }
 
