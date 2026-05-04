@@ -9,8 +9,14 @@ export function rewriteMinioUrlForApiGateway(url: string | null | undefined): st
   if (!s) return null
   if (s.startsWith('data:') || s.startsWith('blob:')) return s
 
-  const api = import.meta.env.VITE_API_BASE_URL
-  if (!api || typeof api !== 'string') return s
+  const configuredApi = import.meta.env.VITE_API_BASE_URL
+  const api =
+    configuredApi && typeof configuredApi === 'string' && configuredApi.trim()
+      ? configuredApi
+      : typeof window !== 'undefined' && window.location?.origin
+        ? window.location.origin
+        : ''
+  if (!api) return s
 
   let apiOrigin: string
   try {

@@ -109,7 +109,11 @@ export default function RecruiterAiPage(): JSX.Element {
       return
     }
 
-    const wsBase = (import.meta.env.VITE_AI_WS_BASE_URL || import.meta.env.VITE_WS_BASE_URL).replace(/\/$/, '')
+    const currentOriginWsBase =
+      typeof window !== 'undefined' && window.location?.host
+        ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
+        : ''
+    const wsBase = String(import.meta.env.VITE_AI_WS_BASE_URL || import.meta.env.VITE_WS_BASE_URL || currentOriginWsBase).replace(/\/$/, '')
     const wsUrl = `${wsBase}/ai/tasks/${activeTask.task_id}?token=${encodeURIComponent(token)}`
 
     try {

@@ -18,8 +18,17 @@ export async function mockDelay(ms = 250): Promise<void> {
   await new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
+function resolveApiBaseUrl(): string {
+  const configured = String(import.meta.env.VITE_API_BASE_URL ?? '').trim()
+  if (configured) return configured
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin
+  }
+  return ''
+}
+
 export const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL,
+  baseURL: resolveApiBaseUrl(),
   headers: {
     'Content-Type': 'application/json',
   },
