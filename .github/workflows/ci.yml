@@ -39,3 +39,79 @@ jobs:
               json.load(f)
           print('Postman collection JSON is valid')
           PY
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Linkedin Frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "Linkedin Frontend/package-lock.json"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+  docker-build-smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: frontend
+            context: ./Linkedin Frontend
+            dockerfile: ./Linkedin Frontend/Dockerfile
+          - name: data-bootstrap
+            context: .
+            dockerfile: ./data/Dockerfile
+          - name: profile
+            context: .
+            dockerfile: ./services/profile/Dockerfile
+          - name: job
+            context: .
+            dockerfile: ./services/job/Dockerfile
+          - name: application
+            context: .
+            dockerfile: ./services/application/Dockerfile
+          - name: messaging
+            context: .
+            dockerfile: ./services/messaging/Dockerfile
+          - name: connection
+            context: .
+            dockerfile: ./services/connection/Dockerfile
+          - name: analytics
+            context: .
+            dockerfile: ./services/analytics/Dockerfile
+          - name: api-gateway
+            context: .
+            dockerfile: ./services/api-gateway/Dockerfile
+          - name: posts
+            context: .
+            dockerfile: ./services/posts/Dockerfile
+          - name: ai-agent
+            context: .
+            dockerfile: ./services/ai-agent/Dockerfile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.name }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: false
+          load: false
