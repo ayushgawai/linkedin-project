@@ -86,6 +86,11 @@ services:
       context: ..
       dockerfile: data/Dockerfile
     container_name: linkedinclone-data-bootstrap
+    # Compose uses infra/ as the project directory, so ${KAGGLE_*} in this file can resolve
+    # empty and override values from a repo-root .env. Load ../.env here instead of passing
+    # those keys through empty-default environment lines.
+    env_file:
+      - ../.env
     environment:
       DB_HOST: mysql
       DB_PORT: 3306
@@ -100,8 +105,6 @@ services:
       KAGGLE_RESUME_DATASET: ${KAGGLE_RESUME_DATASET:-snehaanbhawal/resume-dataset}
       SEED_MYSQL_BATCH: ${SEED_MYSQL_BATCH:-100}
       SEED_MONGO_BATCH: ${SEED_MONGO_BATCH:-500}
-      KAGGLE_USERNAME: ${KAGGLE_USERNAME:-}
-      KAGGLE_KEY: ${KAGGLE_KEY:-}
     depends_on:
       mysql:
         condition: service_healthy
