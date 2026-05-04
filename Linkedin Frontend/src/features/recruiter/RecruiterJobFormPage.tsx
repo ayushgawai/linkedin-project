@@ -7,6 +7,7 @@ import { createJob, getJob, updateJob } from '../../api/jobs'
 import { Button, Card, Input, Select, Textarea } from '../../components/ui'
 import { useToast } from '../../components/ui/Toast'
 import { cn } from '../../lib/cn'
+import { recruiterJobsApplicantsUrl } from '../../lib/recruiterPaths'
 import { useAuthStore } from '../../store/authStore'
 import { useProfileStore } from '../../store/profileStore'
 
@@ -135,8 +136,15 @@ export default function RecruiterJobFormPage(): JSX.Element {
       toast({ variant: 'success', title: 'Job posted', description: `${job.title} is live and visible in job search.` })
       navigate('/job-posting-activity')
     },
-    onError: () => {
-      toast({ variant: 'error', title: 'Could not post job', description: 'Please try again.' })
+    onError: (error: unknown) => {
+      const msg =
+        error &&
+        typeof error === 'object' &&
+        'message' in error &&
+        typeof (error as { message: string }).message === 'string'
+          ? (error as { message: string }).message
+          : 'Please try again.'
+      toast({ variant: 'error', title: 'Could not post job', description: msg })
     },
   })
 
@@ -259,7 +267,7 @@ export default function RecruiterJobFormPage(): JSX.Element {
           {isEdit && jobId ? (
             <div className="mt-4 flex justify-center">
               <Link
-                to={`/jobs/${jobId}/applicants`}
+                to={recruiterJobsApplicantsUrl(jobId)}
                 className="inline-flex items-center gap-2 rounded-full border border-[#0a66c2] bg-white px-4 py-2 text-sm font-semibold text-[#0a66c2] shadow-sm transition hover:bg-[#0a66c2]/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0a66c2] focus-visible:ring-offset-2"
               >
                 <Users className="h-4 w-4 shrink-0" aria-hidden />

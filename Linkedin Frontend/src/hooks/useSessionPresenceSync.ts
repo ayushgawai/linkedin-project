@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { postPresenceHeartbeat } from '../api/presence'
 import { postMemberPresenceHeartbeat, subscribeMemberPresence } from '../lib/memberPresenceChannel'
 import { useMemberPresenceStore } from '../store/memberPresenceStore'
 
@@ -19,7 +20,11 @@ export function useSessionPresenceSync(memberId: string | undefined): void {
   useEffect(() => {
     if (!memberId) return
     postMemberPresenceHeartbeat(memberId)
-    const interval = window.setInterval(() => postMemberPresenceHeartbeat(memberId), HEARTBEAT_MS)
+    void postPresenceHeartbeat(memberId)
+    const interval = window.setInterval(() => {
+      postMemberPresenceHeartbeat(memberId)
+      void postPresenceHeartbeat(memberId)
+    }, HEARTBEAT_MS)
     return () => window.clearInterval(interval)
   }, [memberId])
 }

@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
 
-from routers import threads, messages, health
+from routers import threads, messages, health, presence
 from database import engine, Base
 from kafka_client import kafka_producer
 
@@ -39,5 +39,6 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
+app.include_router(presence.router, prefix="/presence")
 app.include_router(threads.router, prefix="/threads")
 app.include_router(messages.router, prefix="/messages")

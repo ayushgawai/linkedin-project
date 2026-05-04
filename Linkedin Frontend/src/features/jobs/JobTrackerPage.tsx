@@ -142,7 +142,7 @@ export default function JobTrackerPage(): JSX.Element {
         <h1 className="text-xl font-semibold tracking-tight text-text-primary">Job tracker</h1>
       </div>
 
-      <p className="mb-3 max-w-2xl text-sm text-text-secondary">
+      <p className="mb-3 text-sm text-text-secondary sm:whitespace-nowrap">
         Status updates when the hiring team advances your application. You do not need to move yourself between stages here.
       </p>
       <div className="mb-4">

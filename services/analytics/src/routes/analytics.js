@@ -9,11 +9,34 @@ import { getOrSet, keys } from '../../../shared/cache.js';
 export const analyticsRouter = Router();
 const OTHER_TECHNIQUES_ANALYTICS_TTL_SEC = 30;
 
-async function getAnalyticsResult(cacheKey, loader) {
+async function getAnalyticsResult(cacheKey, loader, ttlSec = OTHER_TECHNIQUES_ANALYTICS_TTL_SEC) {
   if (!config.OTHER_TECHNIQUES_ENABLED) {
     return loader();
   }
-  return getOrSet(cacheKey, OTHER_TECHNIQUES_ANALYTICS_TTL_SEC, loader);
+  return getOrSet(cacheKey, ttlSec, loader);
+}
+
+function changePct(current, previous) {
+  if (previous <= 0) return current > 0 ? 100 : 0;
+  return Number((((current - previous) / previous) * 100).toFixed(1));
+}
+
+/** @param {Array<{ date?: string; value?: number; count?: number }>} a @param {typeof a} b */
+function mergeDailyCounts(a, b) {
+  const map = new Map();
+  const add = (arr) => {
+    for (const p of arr) {
+      const raw = typeof p.date === 'string' ? p.date : '';
+      const d = raw.includes('T') ? raw.slice(0, 10) : raw;
+      if (!d) continue;
+      map.set(d, (map.get(d) || 0) + (Number(p.value ?? p.count) || 0));
+    }
+  };
+  add(a);
+  add(b);
+  return [...map.entries()]
+    .sort((x, y) => x[0].localeCompare(y[0]))
+    .map(([date, value]) => ({ date: `${date}T00:00:00.000Z`, value }));
 }
 
 // ---------------------------------------------------------------------------
@@ -66,6 +89,7 @@ const TopJobsSchema = z.object({
   window_days: z.number().int().positive().max(365).default(30),
   limit: z.number().int().positive().max(100).default(10),
   sort: z.enum(['desc', 'asc']).default('desc'),
+  recruiter_id: z.string().min(1).optional(),
 });
 
 const METRIC_TO_EVENT = {
@@ -81,11 +105,34 @@ analyticsRouter.post('/analytics/jobs/top', async (req, res, next) => {
     const metric = parsed.metric;
     const limit = parsed.limit;
     const sort = parsed.sort;
-    const cacheKey = keys.analyticsTopJobs(metric, window_days, limit, sort);
+    const recruiterId = parsed.recruiter_id || null;
+    const cacheKey = `${keys.analyticsTopJobs(metric, window_days, limit, sort)}:rec:${recruiterId || 'all'}`;
 
     const data = await getAnalyticsResult(cacheKey, async () => {
       const eventType = METRIC_TO_EVENT[metric];
       const since = new Date(Date.now() - window_days * 86_400_000);
+
+      let jobIdMatch = {};
+      if (recruiterId) {
+        const [jobRows] = await getPool().query(
+          'SELECT job_id FROM jobs WHERE recruiter_id = ?',
+          [recruiterId],
+        );
+        const ids = jobRows.map((r) => r.job_id);
+        if (ids.length === 0) {
+          return {
+            kpis: { active_jobs: 0, total_applicants: 0, avg_time_to_review_days: 0, pending_messages: 0 },
+            top_jobs_by_applications: [],
+            clicks_per_job: [],
+            saved_jobs_trend: [],
+            saved_jobs_by_posting: [],
+            metric,
+            window_days,
+            jobs: [],
+          };
+        }
+        jobIdMatch = { 'entity.entity_id': { $in: ids } };
+      }
 
       const agg = await getDb().collection('events').aggregate([
         {
@@ -93,6 +140,7 @@ analyticsRouter.post('/analytics/jobs/top', async (req, res, next) => {
             event_type: eventType,
             'entity.entity_type': 'job',
             timestamp: { $gte: since.toISOString() },
+            ...jobIdMatch,
           },
         },
         { $group: { _id: '$entity.entity_id', count: { $sum: 1 } } },
@@ -135,7 +183,9 @@ analyticsRouter.post('/analytics/jobs/top', async (req, res, next) => {
         {
           $match: {
             event_type: 'job.saved',
+            'entity.entity_type': 'job',
             timestamp: { $gte: since.toISOString() },
+            ...jobIdMatch,
           },
         },
         {
@@ -148,12 +198,46 @@ analyticsRouter.post('/analytics/jobs/top', async (req, res, next) => {
       ]).toArray();
       const saved_jobs_trend = savedByDay.map((r) => ({ date: `${r._id}T00:00:00.000Z`, value: Number(r.count) || 0 }));
 
-      const [[kpiRow]] = await getPool().query(
-        `SELECT
+      const savedByJob = await getDb().collection('events').aggregate([
+        {
+          $match: {
+            event_type: 'job.saved',
+            'entity.entity_type': 'job',
+            timestamp: { $gte: since.toISOString() },
+            ...jobIdMatch,
+          },
+        },
+        { $group: { _id: '$entity.entity_id', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 40 },
+      ]).toArray();
+      const savedJobIds = savedByJob.map((r) => r._id).filter(Boolean);
+      let savedTitleMap = new Map();
+      if (savedJobIds.length) {
+        const placeholders = savedJobIds.map(() => '?').join(',');
+        const [srows] = await getPool().query(
+          `SELECT job_id, title FROM jobs WHERE job_id IN (${placeholders})`,
+          savedJobIds,
+        );
+        savedTitleMap = new Map(srows.map((r) => [r.job_id, r.title]));
+      }
+      const saved_jobs_by_posting = savedByJob.map((r) => ({
+        name: savedTitleMap.get(r._id) || r._id,
+        value: Number(r.count) || 0,
+      }));
+
+      const kpiSql = recruiterId
+        ? `SELECT
             COUNT(CASE WHEN status='open' THEN 1 END) AS active_jobs,
             COALESCE(SUM(applicants_count), 0) AS total_applicants
-           FROM jobs`,
-      );
+           FROM jobs WHERE recruiter_id = ?`
+        : `SELECT
+            COUNT(CASE WHEN status='open' THEN 1 END) AS active_jobs,
+            COALESCE(SUM(applicants_count), 0) AS total_applicants
+           FROM jobs`;
+      const [[kpiRow]] = recruiterId
+        ? await getPool().query(kpiSql, [recruiterId])
+        : await getPool().query(kpiSql);
 
       const kpis = {
         active_jobs: Number(kpiRow?.active_jobs || 0),
@@ -168,6 +252,7 @@ analyticsRouter.post('/analytics/jobs/top', async (req, res, next) => {
         top_jobs_by_applications,
         clicks_per_job,
         saved_jobs_trend,
+        saved_jobs_by_posting,
         // Keep old fields for backwards compatibility:
         metric,
         window_days,
@@ -336,7 +421,7 @@ analyticsRouter.post('/analytics/funnel', async (req, res, next) => {
         submit,
         rates,
       };
-    });
+    }, config.RECRUITER_AGG_CACHE_TTL_SEC);
 
     return res.json(data);
   } catch (err) {
@@ -389,15 +474,26 @@ analyticsRouter.post('/analytics/geo', async (req, res, next) => {
       const cities = await getDb().collection('events').aggregate([
         { $match: match },
         {
+          $set: {
+            _geo_city: {
+              $ifNull: [
+                '$payload.member_city',
+                { $ifNull: ['$payload.city', '$payload.location'] },
+              ],
+            },
+          },
+        },
+        {
           $group: {
             _id: {
-              city: { $ifNull: ['$payload.member_city', '$payload.city'] },
+              city: '$_geo_city',
               state: { $ifNull: ['$payload.member_state', '$payload.state'] },
             },
             count: { $sum: 1 },
           },
         },
         { $match: { '_id.city': { $ne: null } } },
+        { $match: { '_id.city': { $ne: '' } } },
         { $sort: { count: -1 } },
         { $limit: limit },
         {
@@ -418,7 +514,7 @@ analyticsRouter.post('/analytics/geo', async (req, res, next) => {
         window_days,
         cities,
       };
-    });
+    }, config.RECRUITER_AGG_CACHE_TTL_SEC);
 
     return res.json(data);
   } catch (err) {
@@ -452,11 +548,16 @@ analyticsRouter.post('/analytics/member/dashboard', async (req, res, next) => {
     const member_id = parsed.member_id;
     const window_days = resolveWindowDays(parsed);
     const cacheKey = keys.analyticsMemberDashboard(member_id, window_days);
+    const cacheTtl = config.MEMBER_DASHBOARD_CACHE_TTL_SEC;
 
-    const data = await getOrSet(cacheKey, config.ANALYTICS_CACHE_TTL_SEC, async () => {
+    const data = await getOrSet(cacheKey, cacheTtl, async () => {
+      const now = new Date();
       const since = new Date(Date.now() - window_days * 86_400_000);
+      const prevSince = new Date(since.getTime() - window_days * 86_400_000);
+      const db = getDb();
+      const events = db.collection('events');
 
-      const viewsAgg = await getDb().collection('profile_views').aggregate([
+      const viewsFromPv = await db.collection('profile_views').aggregate([
         { $match: { member_id, viewed_at: { $gte: since } } },
         {
           $group: {
@@ -468,13 +569,69 @@ analyticsRouter.post('/analytics/member/dashboard', async (req, res, next) => {
         { $project: { _id: 0, date: '$_id', count: 1 } },
       ]).toArray();
 
-      const topViewersAgg = await getDb().collection('profile_views').aggregate([
+      const viewsFromEvents = await events.aggregate([
+        {
+          $match: {
+            event_type: 'profile.viewed',
+            'entity.entity_id': member_id,
+            timestamp: { $gte: since.toISOString() },
+          },
+        },
+        {
+          $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d', date: { $toDate: '$timestamp' } } },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { _id: 1 } },
+        { $project: { _id: 0, date: '$_id', count: 1 } },
+      ]).toArray();
+
+      const profile_views_per_day = mergeDailyCounts(
+        viewsFromPv.map((r) => ({ date: r.date, value: r.count })),
+        viewsFromEvents.map((r) => ({ date: r.date, value: r.count })),
+      );
+      const profileViewsValue = profile_views_per_day.reduce((sum, p) => sum + (Number(p.value) || 0), 0);
+
+      const prevProfileViews =
+        (await db.collection('profile_views').countDocuments({
+          member_id,
+          viewed_at: { $gte: prevSince, $lt: since },
+        })) +
+        (await events.countDocuments({
+          event_type: 'profile.viewed',
+          'entity.entity_id': member_id,
+          timestamp: { $gte: prevSince.toISOString(), $lt: since.toISOString() },
+        }));
+
+      const topFromPv = await db.collection('profile_views').aggregate([
         { $match: { member_id, viewed_at: { $gte: since } } },
         { $group: { _id: '$viewer_id', count: { $sum: 1 } } },
-        { $sort: { count: -1 } },
-        { $limit: 8 },
       ]).toArray();
-      const topViewerIds = topViewersAgg.map((r) => r._id).filter(Boolean);
+      const topFromEv = await events.aggregate([
+        {
+          $match: {
+            event_type: 'profile.viewed',
+            'entity.entity_id': member_id,
+            timestamp: { $gte: since.toISOString() },
+          },
+        },
+        { $group: { _id: '$actor_id', count: { $sum: 1 } } },
+      ]).toArray();
+      const viewerMap = new Map();
+      for (const r of topFromPv) {
+        if (!r._id) continue;
+        viewerMap.set(r._id, (viewerMap.get(r._id) || 0) + r.count);
+      }
+      for (const r of topFromEv) {
+        if (!r._id) continue;
+        viewerMap.set(r._id, (viewerMap.get(r._id) || 0) + r.count);
+      }
+      const topViewerIds = [...viewerMap.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8)
+        .map(([id]) => id);
+
       let top_viewers = [];
       if (topViewerIds.length) {
         const placeholders = topViewerIds.map(() => '?').join(',');
@@ -484,11 +641,11 @@ analyticsRouter.post('/analytics/member/dashboard', async (req, res, next) => {
             WHERE member_id IN (${placeholders})`,
           topViewerIds,
         );
-        const map = new Map(rows.map((r) => [
+        const memberMap = new Map(rows.map((r) => [
           r.member_id,
           { member_id: r.member_id, full_name: `${r.first_name} ${r.last_name}`.trim(), headline: r.headline || '' },
         ]));
-        top_viewers = topViewerIds.map((id) => map.get(id)).filter(Boolean);
+        top_viewers = topViewerIds.map((id) => memberMap.get(id)).filter(Boolean);
       }
 
       const [statusRows] = await getPool().query(
@@ -509,24 +666,173 @@ analyticsRouter.post('/analytics/member/dashboard', async (req, res, next) => {
         offer: application_status_breakdown.offer || 0,
         rejected: application_status_breakdown.rejected || 0,
       };
-      const profileViewsValue = viewsAgg.reduce((sum, p) => sum + (Number(p.count) || 0), 0);
 
-      // Frontend contract expects a richer dashboard shape; fields we don't track yet are zeros/empties.
+      const engagementDaily = await events.aggregate([
+        {
+          $match: {
+            event_type: 'post.engagement',
+            'payload.target_member_id': member_id,
+            timestamp: { $gte: since.toISOString() },
+          },
+        },
+        {
+          $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d', date: { $toDate: '$timestamp' } } },
+            likes: { $sum: { $cond: [{ $eq: ['$payload.action', 'like'] }, 1, 0] } },
+            unlikes: { $sum: { $cond: [{ $eq: ['$payload.action', 'unlike'] }, 1, 0] } },
+            comments: { $sum: { $cond: [{ $eq: ['$payload.action', 'comment'] }, 1, 0] } },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            date: { $concat: ['$_id', 'T00:00:00.000Z'] },
+            value: {
+              $max: [
+                0,
+                { $add: [{ $subtract: ['$likes', '$unlikes'] }, '$comments'] },
+              ],
+            },
+          },
+        },
+        { $sort: { date: 1 } },
+      ]).toArray();
+
+      const engagementActions = async (from, toExclusive) => {
+        const rows = await events.aggregate([
+          {
+            $match: {
+              event_type: 'post.engagement',
+              'payload.target_member_id': member_id,
+              timestamp: { $gte: from.toISOString(), $lt: toExclusive.toISOString() },
+            },
+          },
+          { $group: { _id: '$payload.action', c: { $sum: 1 } } },
+        ]).toArray();
+        const m = new Map(rows.map((r) => [r._id, r.c]));
+        const likes = Number(m.get('like') || 0);
+        const unlikes = Number(m.get('unlike') || 0);
+        const comments = Number(m.get('comment') || 0);
+        const reactions = Math.max(0, likes - unlikes);
+        return { reactions, comments, postImpressions: reactions + comments };
+      };
+
+      const currEng = await engagementActions(since, now);
+      const prevEng = await engagementActions(prevSince, since);
+
+      const searchWeekly = await events.aggregate([
+        {
+          $match: {
+            event_type: 'profile.searched',
+            'entity.entity_id': member_id,
+            timestamp: { $gte: since.toISOString() },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              y: { $isoWeekYear: { $toDate: '$timestamp' } },
+              w: { $isoWeek: { $toDate: '$timestamp' } },
+            },
+            value: { $sum: 1 },
+            weekStart: { $min: { $toDate: '$timestamp' } },
+          },
+        },
+        { $sort: { weekStart: 1 } },
+        {
+          $project: {
+            _id: 0,
+            date: { $dateToString: { format: '%Y-%m-%dT00:00:00.000Z', date: '$weekStart' } },
+            value: 1,
+          },
+        },
+      ]).toArray();
+
+      const searchCount = async (from, toExclusive) =>
+        events.countDocuments({
+          event_type: 'profile.searched',
+          'entity.entity_id': member_id,
+          timestamp: { $gte: from.toISOString(), $lt: toExclusive.toISOString() },
+        });
+
+      const currSearch = await searchCount(since, now);
+      const prevSearch = await searchCount(prevSince, since);
+
+      const top_skills_searched = await events.aggregate([
+        {
+          $match: {
+            event_type: 'profile.searched',
+            'entity.entity_id': member_id,
+            timestamp: { $gte: since.toISOString() },
+            'payload.query': { $exists: true, $type: 'string', $ne: '' },
+          },
+        },
+        {
+          $group: {
+            _id: { $toLower: { $trim: { input: '$payload.query' } } },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { count: -1 } },
+        { $limit: 12 },
+        { $project: { _id: 0, skill: '$_id', count: 1 } },
+      ]).toArray();
+
+      const [[currAppRow]] = await getPool().query(
+        `SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN status IN ('interview', 'offer') THEN 1 ELSE 0 END) AS progressed
+           FROM applications
+          WHERE member_id = ?
+            AND application_datetime >= ?
+            AND application_datetime < ?`,
+        [member_id, since, now],
+      );
+      const [[prevAppRow]] = await getPool().query(
+        `SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN status IN ('interview', 'offer') THEN 1 ELSE 0 END) AS progressed
+           FROM applications
+          WHERE member_id = ?
+            AND application_datetime >= ?
+            AND application_datetime < ?`,
+        [member_id, prevSince, since],
+      );
+      const currTotal = Number(currAppRow?.total || 0);
+      const prevTotal = Number(prevAppRow?.total || 0);
+      const currRate = currTotal > 0
+        ? Number((((Number(currAppRow?.progressed || 0)) / currTotal) * 100).toFixed(1))
+        : 0;
+      const prevRate = prevTotal > 0
+        ? Number((((Number(prevAppRow?.progressed || 0)) / prevTotal) * 100).toFixed(1))
+        : 0;
+
       return {
         member_id,
         window_days,
-        profile_views_per_day: viewsAgg.map((p) => ({ date: `${p.date}T00:00:00.000Z`, value: Number(p.count) || 0 })),
-        post_impressions_per_day: [],
-        search_appearances_per_week: [],
+        profile_views_per_day,
+        post_impressions_per_day: engagementDaily,
+        search_appearances_per_week: searchWeekly,
         applications_status_breakdown: status,
-        engagement_breakdown: { reactions: 0, comments: 0, reposts: 0, shares: 0 },
-        top_skills_searched: [],
+        engagement_breakdown: {
+          reactions: currEng.reactions,
+          comments: currEng.comments,
+          reposts: 0,
+          shares: 0,
+        },
+        top_skills_searched,
         top_viewers,
         kpis: {
-          profile_views: { value: profileViewsValue, change_pct: 0 },
-          post_impressions: { value: 0, change_pct: 0 },
-          search_appearances: { value: 0, change_pct: 0 },
-          application_response_rate: { value: 0, change_pct: 0 },
+          profile_views: { value: profileViewsValue, change_pct: changePct(profileViewsValue, prevProfileViews) },
+          post_impressions: {
+            value: currEng.postImpressions,
+            change_pct: changePct(currEng.postImpressions, prevEng.postImpressions),
+          },
+          search_appearances: { value: currSearch, change_pct: changePct(currSearch, prevSearch) },
+          application_response_rate: {
+            value: currRate,
+            change_pct: changePct(currRate, prevRate),
+          },
         },
       };
     });

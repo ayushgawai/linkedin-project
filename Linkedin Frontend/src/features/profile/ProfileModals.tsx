@@ -97,8 +97,32 @@ export function ProfileModals({ active, editId, onClose }: Props): JSX.Element |
       <IntroModal
         profile={profile}
         onClose={onClose}
-        onSave={(v) => {
+        onSave={async (v) => {
           updateBasicInfo(v)
+          const memberId = authUser?.member_id || profile.member_id
+          if (!USE_MOCKS && memberId) {
+            try {
+              const full_name = [v.first_name, v.last_name]
+                .map((s) => s?.trim())
+                .filter(Boolean)
+                .join(' ')
+                .trim()
+              await updateMember(memberId, {
+                full_name: full_name || undefined,
+                headline: v.headline?.trim() || null,
+                location: v.location,
+              })
+              void queryClient.invalidateQueries({ queryKey: ['member', memberId] })
+            } catch (err: unknown) {
+              const msg =
+                err && typeof err === 'object' && 'message' in err
+                  ? String((err as { message?: string }).message)
+                  : 'Intro was not saved.'
+              toast({ variant: 'error', title: 'Could not save intro', description: msg })
+              onClose()
+              return
+            }
+          }
           actionToast.profileUpdated()
           onClose()
         }}
@@ -227,19 +251,44 @@ export function ProfileModals({ active, editId, onClose }: Props): JSX.Element |
       <ExperienceModal
         initial={existingExp}
         onClose={onClose}
-        onSave={(payload) => {
+        onSave={async (payload) => {
           if (payload.id && profile.experience.some((e) => e.id === payload.id)) {
             updateExperience(payload.id, payload)
           } else {
             addExperience({ ...payload, id: payload.id || makeId('exp') })
+          }
+          const memberId = authUser?.member_id || profile.member_id
+          if (!USE_MOCKS && memberId) {
+            try {
+              const expList = useProfileStore.getState().profile.experience
+              await updateMember(memberId, { experiences: expList })
+              void queryClient.invalidateQueries({ queryKey: ['member', memberId] })
+            } catch (err: unknown) {
+              const msg =
+                err && typeof err === 'object' && 'message' in err
+                  ? String((err as { message?: string }).message)
+                  : 'Experience was not saved.'
+              toast({ variant: 'error', title: 'Could not save experience', description: msg })
+              onClose()
+              return
+            }
           }
           actionToast.profileUpdated()
           onClose()
         }}
         onDelete={
           existingExp
-            ? () => {
+            ? async () => {
                 removeExperience(existingExp.id)
+                const memberId = authUser?.member_id || profile.member_id
+                if (!USE_MOCKS && memberId) {
+                  try {
+                    await updateMember(memberId, { experiences: useProfileStore.getState().profile.experience })
+                    void queryClient.invalidateQueries({ queryKey: ['member', memberId] })
+                  } catch {
+                    /* ignore */
+                  }
+                }
                 actionToast.profileUpdated()
                 onClose()
               }
@@ -254,19 +303,44 @@ export function ProfileModals({ active, editId, onClose }: Props): JSX.Element |
       <EducationModal
         initial={existingEdu}
         onClose={onClose}
-        onSave={(payload) => {
+        onSave={async (payload) => {
           if (payload.id && profile.education.some((e) => e.id === payload.id)) {
             updateEducation(payload.id, payload)
           } else {
             addEducation({ ...payload, id: payload.id || makeId('edu') })
+          }
+          const memberId = authUser?.member_id || profile.member_id
+          if (!USE_MOCKS && memberId) {
+            try {
+              const eduList = useProfileStore.getState().profile.education
+              await updateMember(memberId, { educations: eduList })
+              void queryClient.invalidateQueries({ queryKey: ['member', memberId] })
+            } catch (err: unknown) {
+              const msg =
+                err && typeof err === 'object' && 'message' in err
+                  ? String((err as { message?: string }).message)
+                  : 'Education was not saved.'
+              toast({ variant: 'error', title: 'Could not save education', description: msg })
+              onClose()
+              return
+            }
           }
           actionToast.profileUpdated()
           onClose()
         }}
         onDelete={
           existingEdu
-            ? () => {
+            ? async () => {
                 removeEducation(existingEdu.id)
+                const memberId = authUser?.member_id || profile.member_id
+                if (!USE_MOCKS && memberId) {
+                  try {
+                    await updateMember(memberId, { educations: useProfileStore.getState().profile.education })
+                    void queryClient.invalidateQueries({ queryKey: ['member', memberId] })
+                  } catch {
+                    /* ignore */
+                  }
+                }
                 actionToast.profileUpdated()
                 onClose()
               }
@@ -281,19 +355,43 @@ export function ProfileModals({ active, editId, onClose }: Props): JSX.Element |
       <LicenseModal
         initial={existingLic}
         onClose={onClose}
-        onSave={(payload) => {
+        onSave={async (payload) => {
           if (payload.id && profile.licenses.some((l) => l.id === payload.id)) {
             updateLicense(payload.id, payload)
           } else {
             addLicense({ ...payload, id: payload.id || makeId('lic') })
+          }
+          const memberId = authUser?.member_id || profile.member_id
+          if (!USE_MOCKS && memberId) {
+            try {
+              await updateMember(memberId, { licenses: useProfileStore.getState().profile.licenses })
+              void queryClient.invalidateQueries({ queryKey: ['member', memberId] })
+            } catch (err: unknown) {
+              const msg =
+                err && typeof err === 'object' && 'message' in err
+                  ? String((err as { message?: string }).message)
+                  : 'License was not saved.'
+              toast({ variant: 'error', title: 'Could not save license', description: msg })
+              onClose()
+              return
+            }
           }
           actionToast.profileUpdated()
           onClose()
         }}
         onDelete={
           existingLic
-            ? () => {
+            ? async () => {
                 removeLicense(existingLic.id)
+                const memberId = authUser?.member_id || profile.member_id
+                if (!USE_MOCKS && memberId) {
+                  try {
+                    await updateMember(memberId, { licenses: useProfileStore.getState().profile.licenses })
+                    void queryClient.invalidateQueries({ queryKey: ['member', memberId] })
+                  } catch {
+                    /* ignore */
+                  }
+                }
                 actionToast.profileUpdated()
                 onClose()
               }
@@ -309,19 +407,43 @@ export function ProfileModals({ active, editId, onClose }: Props): JSX.Element |
         initial={existingProj}
         education={profile.education}
         onClose={onClose}
-        onSave={(payload) => {
+        onSave={async (payload) => {
           if (payload.id && profile.projects.some((p) => p.id === payload.id)) {
             updateProject(payload.id, payload)
           } else {
             addProject({ ...payload, id: payload.id || makeId('prj') })
+          }
+          const memberId = authUser?.member_id || profile.member_id
+          if (!USE_MOCKS && memberId) {
+            try {
+              await updateMember(memberId, { projects: useProfileStore.getState().profile.projects })
+              void queryClient.invalidateQueries({ queryKey: ['member', memberId] })
+            } catch (err: unknown) {
+              const msg =
+                err && typeof err === 'object' && 'message' in err
+                  ? String((err as { message?: string }).message)
+                  : 'Project was not saved.'
+              toast({ variant: 'error', title: 'Could not save project', description: msg })
+              onClose()
+              return
+            }
           }
           actionToast.profileUpdated()
           onClose()
         }}
         onDelete={
           existingProj
-            ? () => {
+            ? async () => {
                 removeProject(existingProj.id)
+                const memberId = authUser?.member_id || profile.member_id
+                if (!USE_MOCKS && memberId) {
+                  try {
+                    await updateMember(memberId, { projects: useProfileStore.getState().profile.projects })
+                    void queryClient.invalidateQueries({ queryKey: ['member', memberId] })
+                  } catch {
+                    /* ignore */
+                  }
+                }
                 actionToast.profileUpdated()
                 onClose()
               }
@@ -344,6 +466,7 @@ export function ProfileModals({ active, editId, onClose }: Props): JSX.Element |
           const memberId = authUser?.member_id || profile.member_id
           if (!USE_MOCKS && memberId) {
             await updateMember(memberId, { skills: deduped })
+            void queryClient.invalidateQueries({ queryKey: ['member', memberId] })
           }
           actionToast.profileUpdated()
           onClose()
@@ -372,6 +495,7 @@ export function ProfileModals({ active, editId, onClose }: Props): JSX.Element |
 
           if (!USE_MOCKS && memberId) {
             await updateMember(memberId, { skills: nextSkills })
+            void queryClient.invalidateQueries({ queryKey: ['member', memberId] })
           }
         }}
         actionToast={actionToast}
@@ -384,9 +508,24 @@ export function ProfileModals({ active, editId, onClose }: Props): JSX.Element |
       <CoursesManageModal
         initialCourses={profile.courses}
         onClose={onClose}
-        onSave={(coursesList) => {
+        onSave={async (coursesList) => {
           const deduped = Array.from(new Map(coursesList.map((c) => [c.toLowerCase(), c.trim()])).values()).filter(Boolean)
           patchProfile({ courses: deduped })
+          const memberId = authUser?.member_id || profile.member_id
+          if (!USE_MOCKS && memberId) {
+            try {
+              await updateMember(memberId, { courses: deduped })
+              void queryClient.invalidateQueries({ queryKey: ['member', memberId] })
+            } catch (err: unknown) {
+              const msg =
+                err && typeof err === 'object' && 'message' in err
+                  ? String((err as { message?: string }).message)
+                  : 'Courses were not saved.'
+              toast({ variant: 'error', title: 'Could not save courses', description: msg })
+              onClose()
+              return
+            }
+          }
           actionToast.profileUpdated()
           onClose()
         }}
@@ -395,7 +534,31 @@ export function ProfileModals({ active, editId, onClose }: Props): JSX.Element |
   }
 
   if (active === 'course') {
-    return <CourseModal onClose={onClose} onSave={(c) => addCourse(c)} actionToast={actionToast} />
+    return (
+      <CourseModal
+        onClose={onClose}
+        onSave={async (c) => {
+          addCourse(c)
+          const memberId = authUser?.member_id || profile.member_id
+          if (!USE_MOCKS && memberId) {
+            try {
+              await updateMember(memberId, { courses: useProfileStore.getState().profile.courses })
+              void queryClient.invalidateQueries({ queryKey: ['member', memberId] })
+            } catch (err: unknown) {
+              const msg =
+                err && typeof err === 'object' && 'message' in err
+                  ? String((err as { message?: string }).message)
+                  : 'Course was not saved.'
+              toast({ variant: 'error', title: 'Could not save course', description: msg })
+              onClose()
+              return
+            }
+          }
+          actionToast.profileUpdated()
+          onClose()
+        }}
+      />
+    )
   }
 
   if (active === 'featured') {
@@ -407,7 +570,30 @@ export function ProfileModals({ active, editId, onClose }: Props): JSX.Element |
   }
 
   if (active === 'contact') {
-    return <ContactModal profile={profile} onClose={onClose} onSave={updateBasicInfo} actionToast={actionToast} />
+    return (
+      <ContactModal
+        profile={profile}
+        onClose={onClose}
+        onSave={updateBasicInfo}
+        actionToast={actionToast}
+        persistPhone={async (phone) => {
+          const memberId = authUser?.member_id || profile.member_id
+          if (!USE_MOCKS && memberId) {
+            try {
+              await updateMember(memberId, { phone: phone.trim() || null })
+              void queryClient.invalidateQueries({ queryKey: ['member', memberId] })
+            } catch (err: unknown) {
+              const msg =
+                err && typeof err === 'object' && 'message' in err
+                  ? String((err as { message?: string }).message)
+                  : 'Phone was not saved.'
+              toast({ variant: 'error', title: 'Could not save contact info', description: msg })
+              throw err
+            }
+          }
+        }}
+      />
+    )
   }
 
   if (active === 'interest') {
@@ -443,7 +629,7 @@ function IntroModal({
 }: {
   profile: ReturnType<typeof useProfileStore.getState>['profile']
   onClose: () => void
-  onSave: (v: z.infer<typeof introSchema>) => void
+  onSave: (v: z.infer<typeof introSchema>) => void | Promise<void>
 }): JSX.Element {
   const form = useForm<z.infer<typeof introSchema>>({
     resolver: zodResolver(introSchema),
@@ -838,8 +1024,8 @@ function LicenseModal({
 }: {
   initial?: License
   onClose: () => void
-  onSave: (p: License) => void
-  onDelete?: () => void
+  onSave: (p: License) => void | Promise<void>
+  onDelete?: () => void | Promise<void>
 }): JSX.Element {
   const [name, setName] = useState(initial?.name ?? '')
   const [org, setOrg] = useState(initial?.org ?? '')
@@ -849,7 +1035,7 @@ function LicenseModal({
 
   const save = (): void => {
     if (!name.trim() || !org.trim()) return
-    onSave({
+    void onSave({
       id: initial?.id ?? makeId('lic'),
       name: name.trim(),
       org: org.trim(),
@@ -913,8 +1099,8 @@ function ProjectModal({
   initial?: Project
   education: Education[]
   onClose: () => void
-  onSave: (p: Project) => void
-  onDelete?: () => void
+  onSave: (p: Project) => void | Promise<void>
+  onDelete?: () => void | Promise<void>
 }): JSX.Element {
   const [name, setName] = useState(initial?.name ?? '')
   const [start_date, setStart] = useState(initial?.start_date ?? '')
@@ -928,7 +1114,7 @@ function ProjectModal({
   const save = (): void => {
     if (!name.trim()) return
     const trimmedUrl = project_url.trim()
-    onSave({
+    void onSave({
       id: initial?.id ?? makeId('prj'),
       name: name.trim(),
       start_date: start_date.trim(),
@@ -1082,16 +1268,16 @@ function CoursesManageModal({
 }: {
   initialCourses: string[]
   onClose: () => void
-  onSave: (courses: string[]) => void
+  onSave: (courses: string[]) => void | Promise<void>
 }): JSX.Element {
   const [courses, setCourses] = useState<string[]>(initialCourses)
   useEffect(() => {
     setCourses(initialCourses)
   }, [initialCourses])
 
-  const save = (): void => {
+  const save = async (): Promise<void> => {
     const normalized = Array.from(new Map(courses.map((c) => [c.trim().toLowerCase(), c.trim()])).values()).filter(Boolean)
-    onSave(normalized)
+    await onSave(normalized)
   }
 
   return (
@@ -1099,8 +1285,7 @@ function CoursesManageModal({
       <Modal.Header>Edit courses</Modal.Header>
       <Modal.Body>
         <p className="mb-3 text-xs text-text-secondary">
-          Courses are shown on your profile locally. Profile service persists skills and core fields; edit this list here to
-          add or remove displayed courses without using the quick-add modal.
+          Courses are saved with your profile via <code className="rounded bg-black/5 px-1 py-0.5 text-[11px]">POST /members/update</code>.
         </p>
         <ChipInput value={courses} onChange={setCourses} max={24} suggestions={[]} />
       </Modal.Body>
@@ -1108,7 +1293,7 @@ function CoursesManageModal({
         <Button variant="tertiary" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={save}>Save</Button>
+        <Button onClick={() => void save()}>Save</Button>
       </Modal.Footer>
     </Modal>
   )
@@ -1120,7 +1305,7 @@ function SkillModal({
   actionToast,
 }: {
   onClose: () => void
-  onSave: (name: string) => void
+  onSave: (name: string) => void | Promise<void>
   actionToast: ReturnType<typeof useActionToast>
 }): JSX.Element {
   const [name, setName] = useState('')
@@ -1144,11 +1329,13 @@ function SkillModal({
         </Button>
         <Button
           onClick={() => {
-            const t = name.trim()
-            if (!t) return
-            onSave(t)
-            actionToast.profileUpdated()
-            onClose()
+            void (async () => {
+              const t = name.trim()
+              if (!t) return
+              await onSave(t)
+              actionToast.profileUpdated()
+              onClose()
+            })()
           }}
         >
           Save
@@ -1161,11 +1348,9 @@ function SkillModal({
 function CourseModal({
   onClose,
   onSave,
-  actionToast,
 }: {
   onClose: () => void
-  onSave: (c: string) => void
-  actionToast: ReturnType<typeof useActionToast>
+  onSave: (c: string) => void | Promise<void>
 }): JSX.Element {
   const [course, setCourse] = useState('')
   return (
@@ -1180,10 +1365,10 @@ function CourseModal({
         </Button>
         <Button
           onClick={() => {
-            if (!course.trim()) return
-            onSave(course.trim())
-            actionToast.profileUpdated()
-            onClose()
+            void (async () => {
+              if (!course.trim()) return
+              await onSave(course.trim())
+            })()
           }}
         >
           Save
@@ -1334,11 +1519,13 @@ function ContactModal({
   onClose,
   onSave,
   actionToast,
+  persistPhone,
 }: {
   profile: ReturnType<typeof useProfileStore.getState>['profile']
   onClose: () => void
   onSave: ReturnType<typeof useProfileStore.getState>['updateBasicInfo']
   actionToast: ReturnType<typeof useActionToast>
+  persistPhone?: (phone: string) => Promise<void>
 }): JSX.Element {
   const form = useForm<z.infer<typeof contactSchema>>({
     resolver: zodResolver(contactSchema),
@@ -1365,8 +1552,16 @@ function ContactModal({
           Cancel
         </Button>
         <Button
-          onClick={form.handleSubmit((v) => {
+          onClick={form.handleSubmit(async (v) => {
             onSave({ email: v.email, phone: v.phone ?? '' })
+            if (persistPhone) {
+              try {
+                await persistPhone(v.phone ?? '')
+              } catch {
+                onClose()
+                return
+              }
+            }
             actionToast.profileUpdated()
             onClose()
           })}

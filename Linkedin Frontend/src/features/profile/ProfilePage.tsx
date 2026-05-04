@@ -8,43 +8,47 @@ import {
   Eye,
   ExternalLink,
   FolderOpen,
-  Globe2,
-  MessageCircle,
   Pencil,
   Plus,
-  Repeat2,
   Search,
-  Send,
   Sparkles,
   Target,
-  ThumbsUp,
   Users,
   X,
 } from 'lucide-react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
-import { createPost } from '../../api/posts'
+import { createPost, listPostsByAuthor } from '../../api/posts'
 import { ingestEvent } from '../../api/analytics'
 import { getMember } from '../../api/profile'
 import { listConnections, requestConnection } from '../../api/connections'
 import { openThread } from '../../api/messaging'
 import { BrandMark } from '../../components/layout/BrandMark'
+import { ActivityFeedPost } from '../../components/feed/ActivityFeedPost'
 import { FEED_QUERY_KEY } from '../../components/feed/PostFeed'
-import { PostOptionsMenu } from '../../components/feed/PostOptionsMenu'
-import { Avatar, Button, Card, Dropdown, Input, Modal, Skeleton, Textarea } from '../../components/ui'
+import { Avatar, Button, Card, Dropdown, Input, Modal, Skeleton, Textarea, useToast } from '../../components/ui'
 import { cn } from '../../lib/cn'
 import { useAuthStore } from '../../store/authStore'
 import { useProfileStore } from '../../store/profileStore'
 import { useGroupsStore } from '../../store/groupsStore'
 import { useNewslettersStore } from '../../store/newslettersStore'
-import type { Member } from '../../types'
+import type { ApiError, Member } from '../../types'
 import type { ListFeedResponse, Post } from '../../types/feed'
-import { ProfileHiringAlertsCard } from './ProfileHiringAlertsCard'
 import { ProfileModals, type ProfileModalKey } from './ProfileModals'
 
 const CreatePostModal = lazy(async () => {
   const m = await import('../../components/feed/CreatePostModal')
   return { default: m.CreatePostModal }
 })
+
+function toActivityPost(post: Post): { id: string; text: string; image?: string | null; reactions: number; comments: number } {
+  return {
+    id: post.post_id,
+    text: post.content,
+    image: post.media_type === 'image' ? (post.media_url ?? null) : null,
+    reactions: post.reactions_count,
+    comments: post.comments_count,
+  }
+}
 
 function initials(name: string): string {
   return name
@@ -113,6 +117,7 @@ export default function ProfilePage(): JSX.Element {
   const { memberId = '' } = useParams<{ memberId: string }>()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+  const { toast } = useToast()
   const authUser = useAuthStore((s) => s.user)
   const profile = useProfileStore((s) => s.profile)
   const completionPct = useProfileStore((s) => s.completionPercentage())
@@ -151,7 +156,21 @@ export default function ProfilePage(): JSX.Element {
         },
       )
       void queryClient.invalidateQueries({ queryKey: [FEED_QUERY_KEY] })
+      useProfileStore.getState().addActivityPost({
+        id: newPost.post_id,
+        text: newPost.content,
+        image: newPost.media_type === 'image' ? newPost.media_url ?? null : null,
+        reactions: newPost.reactions_count,
+        comments: newPost.comments_count,
+      })
       setPostOpen(false)
+    },
+    onError: (error: ApiError) => {
+      toast({
+        variant: 'error',
+        title: 'Could not publish post',
+        description: error.message ?? 'Unexpected error.',
+      })
     },
   })
   const [activityTab, setActivityTab] = useState<'Posts' | 'Comments' | 'Images'>('Posts')
@@ -172,6 +191,11 @@ export default function ProfilePage(): JSX.Element {
     enabled: Boolean(memberId) && !isOwnProfile,
     staleTime: 0,
     refetchOnMount: 'always',
+  })
+  const authoredPostsQuery = useQuery({
+    queryKey: ['posts', 'author', memberId],
+    queryFn: async () => listPostsByAuthor(memberId, 1, 100),
+    enabled: Boolean(memberId),
   })
 
   const connectionsQuery = useQuery({
@@ -297,6 +321,8 @@ export default function ProfilePage(): JSX.Element {
 
   const own = isOwnProfile
   const fullName = display.full_name
+  const activityPostsFromFeed = (authoredPostsQuery.data?.posts ?? []).map(toActivityPost)
+  const activityPosts = activityPostsFromFeed.length > 0 ? activityPostsFromFeed : (display.activity_posts ?? [])
   const showCompletionCard = own && !completionDismissed && completionPct < 100
   const companyDirectory = [
     { id: 'co-f1', name: 'Nimbus Labs', tagline: 'Cloud analytics' },
@@ -325,12 +351,6 @@ export default function ProfilePage(): JSX.Element {
         }
       },
     )
-  }
-
-  function beginEditActivityPost(postId: string, text: string, image?: string | null): void {
-    setEditingPostId(postId)
-    setEditingPostText(text)
-    setEditingPostImage(image ?? '')
   }
 
   function closeEditActivityPost(): void {
@@ -561,8 +581,6 @@ export default function ProfilePage(): JSX.Element {
           </Card.Body>
         </Card>
 
-        {own && authUser?.member_id ? <ProfileHiringAlertsCard memberId={authUser.member_id} /> : null}
-
         {showCompletionCard ? (
           <Card>
             <Card.Header className="text-lg font-semibold">Complete your profile</Card.Header>
@@ -715,9 +733,7 @@ export default function ProfilePage(): JSX.Element {
                 <button type="button" className="flex w-full flex-col items-center gap-2 py-8" onClick={() => openModal('featured')}>
                   <Sparkles className="h-8 w-8 text-text-tertiary" />
                   <p className="text-sm font-semibold text-text-secondary">Showcase your best work</p>
-                  <span className="inline-flex items-center justify-center rounded-full bg-brand-primary px-4 py-2 text-sm font-semibold text-white">
-                    Add featured
-                  </span>
+                  <Button size="sm">Add featured</Button>
                 </button>
               ) : (
                 <div className="flex snap-x gap-3 overflow-x-auto pb-2">
@@ -757,100 +773,21 @@ export default function ProfilePage(): JSX.Element {
                 </button>
               ))}
             </div>
-            {activityTab === 'Posts' && (display.activity_posts?.length ?? 0) === 0 && own ? (
+            {activityTab === 'Posts' && activityPosts.length === 0 && own ? (
               <p className="py-6 text-center text-sm text-text-secondary">You haven&apos;t posted yet</p>
             ) : null}
-            <div className="grid gap-3 md:grid-cols-2">
-              {(display.activity_posts ?? []).slice(0, 6).map((post) => (
-                <article key={post.id} className="overflow-hidden rounded-xl border border-border bg-white">
-                  <div className="flex items-start justify-between gap-2 px-3 pt-3">
-                    <div className="flex items-start gap-2">
-                      <Avatar
-                        size="sm"
-                        name={fullName || 'Member'}
-                        src={display.profile_photo_url ?? undefined}
-                        className="mt-0.5"
-                      />
-                      <div>
-                        <p className="text-sm font-semibold text-text-primary">
-                          {fullName || 'Member'} <BrandMark size={16} className="inline-block h-4 w-4 align-[-2px]" />{' '}
-                          <span className="font-normal text-text-secondary">· You</span>
-                        </p>
-                        <p className="line-clamp-1 text-xs text-text-secondary">{display.headline || 'Add your headline'}</p>
-                        <p className="mt-0.5 flex items-center gap-1 text-xs text-text-tertiary">
-                          3w · <Globe2 className="h-3.5 w-3.5" aria-hidden />
-                        </p>
-                      </div>
-                    </div>
-                    <PostOptionsMenu
-                      variant="feed"
-                      isOwnPost={own}
-                      post={{
-                        post_id: post.id,
-                        author_member_id: display.member_id,
-                        author_name: fullName || 'You',
-                        author_degree: '1st',
-                        author_headline: display.headline ?? 'Add your headline',
-                        author_avatar_url: display.profile_photo_url ?? null,
-                        created_time_ago: 'now',
-                        visibility: 'anyone',
-                        content: post.text,
-                        media_type: post.image ? 'image' : 'text',
-                        media_url: post.image ?? undefined,
-                        reactions_count: post.reactions,
-                        comments_count: post.comments,
-                        reposts_count: 0,
-                        liked_by_me: false,
-                        reaction_icons: ['like'],
-                        comments: [],
-                      }}
-                      onEditPost={() => {
-                        if (!own) return
-                        beginEditActivityPost(post.id, post.text, post.image)
-                      }}
-                      onDeletePost={() => {
-                        if (!own) return
-                        setDeletingPostId(post.id)
-                      }}
-                    />
-                  </div>
-                  <div className="px-3 pt-2">
-                    <p className="line-clamp-2 text-sm text-text-primary" style={{ WebkitLineClamp: 2 }}>
-                      {post.text}
-                    </p>
-                    <Link to={`/in/${display.member_id}/activity`} className="text-sm text-text-secondary hover:text-text-primary">
-                      ...more
-                    </Link>
-                  </div>
-                  <div className="mt-2 border-y border-border bg-surface">
-                    {post.image ? (
-                      <img src={post.image} alt="" className="h-64 w-full object-cover" loading="lazy" />
-                    ) : (
-                      <div className="h-64 w-full bg-gradient-to-br from-slate-200 to-slate-300" />
-                    )}
-                  </div>
-                  <div className="px-3 py-2 text-xs text-text-secondary">
-                    {post.reactions} reactions{post.comments > 0 ? ` · ${post.comments} comments` : ''}
-                  </div>
-                  <div className="grid grid-cols-4 border-t border-border px-2 py-1.5 text-text-secondary">
-                    <button type="button" className="inline-flex items-center justify-center rounded-md py-1.5 hover:bg-black/5">
-                      <span className="sr-only">Like</span>
-                      <ThumbsUp className="h-4 w-4" />
-                    </button>
-                    <button type="button" className="inline-flex items-center justify-center rounded-md py-1.5 hover:bg-black/5">
-                      <span className="sr-only">Comment</span>
-                      <MessageCircle className="h-4 w-4" />
-                    </button>
-                    <button type="button" className="inline-flex items-center justify-center rounded-md py-1.5 hover:bg-black/5">
-                      <span className="sr-only">Repost</span>
-                      <Repeat2 className="h-4 w-4" />
-                    </button>
-                    <button type="button" className="inline-flex items-center justify-center rounded-md py-1.5 hover:bg-black/5">
-                      <span className="sr-only">Send</span>
-                      <Send className="h-4 w-4" />
-                    </button>
-                  </div>
-                </article>
+            <div className="space-y-3">
+              {activityPosts.slice(0, 6).map((ap) => (
+                <ActivityFeedPost
+                  key={ap.id}
+                  activity={ap}
+                  display={{
+                    member_id: display.member_id,
+                    full_name: display.full_name,
+                    headline: display.headline,
+                    profile_photo_url: display.profile_photo_url,
+                  }}
+                />
               ))}
             </div>
           </Card.Body>

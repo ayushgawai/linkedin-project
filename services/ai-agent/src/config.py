@@ -25,8 +25,12 @@ class Settings(BaseSettings):
     # Feature flags
     use_mock_services: bool = True
 
-    # OpenAI (optional)
+    # OpenAI (optional). When openai_api_key is set and coach_llm_enabled is True,
+    # career coach uses an LLM for rationale / headline / improvement tips.
     openai_api_key: str = ""
+    coach_llm_enabled: bool = True
+    coach_llm_model: str = "gpt-4o-mini"
+    coach_llm_timeout_sec: float = 45.0
 
     # Server
     service_port: int = 8007

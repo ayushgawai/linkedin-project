@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { Share2, MoreHorizontal, Sparkles } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import { recruiterJobsApplicantsUrl } from '../../lib/recruiterPaths'
 import { listMemberApplications } from '../../api/applications'
 import { closeJob, incrementJobViews } from '../../api/jobs'
 import type { JobRecord } from '../../types/jobs'
@@ -21,7 +22,8 @@ export function JobDetail({ job, emitViewed = false }: JobDetailProps): JSX.Elem
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { toast } = useToast()
-  const isOwner = Boolean(user?.member_id && job.recruiter_id === user.member_id)
+  const viewerRecruiterKey = user?.recruiter_id || user?.member_id
+  const isOwner = Boolean(viewerRecruiterKey && job.recruiter_id === viewerRecruiterKey)
   const companyName = (job.company_name ?? '').trim() || 'Company'
 
   const isSaved = useSavedJobsStore((s) => s.isSaved(job.job_id))
@@ -108,7 +110,7 @@ export function JobDetail({ job, emitViewed = false }: JobDetailProps): JSX.Elem
           <p className="text-sm text-text-secondary">{job.applicants_count} applicants • {localViews} views</p>
           <div className="flex flex-wrap items-center gap-2">
             {isOwner ? (
-              <Button variant="secondary" onClick={() => navigate(`/jobs/${job.job_id}/applicants`)}>
+              <Button variant="secondary" onClick={() => navigate(recruiterJobsApplicantsUrl(job.job_id))}>
                 View applicants
               </Button>
             ) : (
@@ -151,7 +153,7 @@ export function JobDetail({ job, emitViewed = false }: JobDetailProps): JSX.Elem
                   </Dropdown.Item>
                   <Dropdown.Item
                     className="font-medium text-text-primary"
-                    onSelect={() => navigate(`/jobs/${job.job_id}/applicants`)}
+                    onSelect={() => navigate(recruiterJobsApplicantsUrl(job.job_id))}
                   >
                     View applicants
                   </Dropdown.Item>

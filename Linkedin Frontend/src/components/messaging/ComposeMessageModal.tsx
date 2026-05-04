@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { openThread, sendMessage } from '../../api/messaging'
 import { listConnections } from '../../api/connections'
 import { getMember, searchMembers } from '../../api/profile'
@@ -15,6 +15,7 @@ type ComposeMessageModalProps = {
 }
 
 export function ComposeMessageModal({ isOpen, onClose, senderId, onThreadCreated }: ComposeMessageModalProps): JSX.Element {
+  const queryClient = useQueryClient()
   const { toast } = useToast()
   const actionToast = useActionToast()
   const [query, setQuery] = useState('')
@@ -66,11 +67,35 @@ export function ComposeMessageModal({ isOpen, onClose, senderId, onThreadCreated
     enabled: isOpen && Boolean(senderId) && query.trim().length > 0,
   })
 
+  /** When you have no connections, search still required typing before — show directory members with empty search. */
+  const membersBootstrapQuery = useQuery({
+    queryKey: ['members-bootstrap-compose', senderId],
+    queryFn: async () => {
+      const members = await searchMembers({ query: '' })
+      return members.filter((m) => m.member_id && m.member_id !== senderId)
+    },
+    enabled:
+      isOpen &&
+      Boolean(senderId) &&
+      query.trim() === '' &&
+      connectionsQuery.isFetched &&
+      (connectionsQuery.data?.length ?? 0) === 0,
+    staleTime: 120_000,
+  })
+
   const displayedRecipients = useMemo(() => {
+    const q = query.trim()
+    if (q.length > 0) {
+      if (filteredRecipients.length > 0) return filteredRecipients
+      return globalSearchQuery.data ?? []
+    }
     if (filteredRecipients.length > 0) return filteredRecipients
-    // If you have no accepted connections (common in demos), allow messaging any member.
-    return globalSearchQuery.data ?? []
-  }, [filteredRecipients, globalSearchQuery.data])
+    return membersBootstrapQuery.data ?? []
+  }, [query, filteredRecipients, globalSearchQuery.data, membersBootstrapQuery.data])
+
+  const listLoading =
+    connectionsQuery.isLoading ||
+    (query.trim().length > 0 ? globalSearchQuery.isFetching : membersBootstrapQuery.isFetching && (connectionsQuery.data?.length ?? 0) === 0)
 
   const sendMutation = useMutation({
     mutationFn: async () => {
@@ -80,6 +105,7 @@ export function ComposeMessageModal({ isOpen, onClose, senderId, onThreadCreated
     },
     onSuccess: async (newThreadId) => {
       actionToast.messageSent(recipientName || 'Recipient')
+      void queryClient.invalidateQueries({ queryKey: ['notifications'], exact: false })
       await onThreadCreated(newThreadId)
       onClose()
       setText('')
@@ -98,11 +124,11 @@ export function ComposeMessageModal({ isOpen, onClose, senderId, onThreadCreated
       <Modal.Body className="space-y-3">
         <Input label="Search people" value={query} onChange={(event) => setQuery(event.target.value)} />
         <p className="text-xs text-text-tertiary">
-          Start a conversation by searching members. Connections will appear first.
+          Connections appear first. With no connections, members from search load here — type to narrow, or pick from the list.
         </p>
         <div className="max-h-40 overflow-y-auto rounded-md border border-border">
-          {connectionsQuery.isLoading || globalSearchQuery.isLoading ? (
-            <p className="px-3 py-2 text-sm text-text-secondary">Loading connections…</p>
+          {listLoading ? (
+            <p className="px-3 py-2 text-sm text-text-secondary">Loading people…</p>
           ) : displayedRecipients.length === 0 ? (
             <p className="px-3 py-2 text-sm text-text-secondary">No members match this search.</p>
           ) : (

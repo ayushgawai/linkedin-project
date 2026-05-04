@@ -320,6 +320,11 @@ export const useProfileStore = create<ProfileStore>()(
             about: (m.bio ?? m.about ?? state.profile.about) || '',
             profile_photo_url: m.profile_photo_url ?? '',
             cover_photo_url: m.cover_photo_url ?? '',
+            ...(Array.isArray(m.experiences) ? { experience: m.experiences } : {}),
+            ...(Array.isArray(m.educations) ? { education: m.educations } : {}),
+            ...(Array.isArray(m.licenses) ? { licenses: m.licenses } : {}),
+            ...(Array.isArray(m.projects) ? { projects: m.projects } : {}),
+            ...(Array.isArray(m.courses) ? { courses: m.courses } : {}),
           },
         }))
       },

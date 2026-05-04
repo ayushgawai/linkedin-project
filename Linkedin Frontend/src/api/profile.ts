@@ -65,6 +65,8 @@ function normalizeMember(raw: any): Member {
     'Member'
   return {
     member_id: String(raw?.member_id ?? ''),
+    recruiter_id: typeof raw?.recruiter_id === 'string' ? raw.recruiter_id : undefined,
+    company_id: typeof raw?.company_id === 'string' ? raw.company_id : undefined,
     email: String(raw?.email ?? ''),
     full_name: full,
     role: raw?.role,
@@ -88,11 +90,11 @@ function normalizeMember(raw: any): Member {
     open_to_work_details: raw?.open_to_work_details,
     phone: raw?.phone ?? null,
     public_profile_url: raw?.public_profile_url ?? null,
-    experiences: Array.isArray(raw?.experiences) ? raw.experiences : [],
-    educations: Array.isArray(raw?.educations) ? raw.educations : [],
-    licenses: Array.isArray(raw?.licenses) ? raw.licenses : [],
-    projects: Array.isArray(raw?.projects) ? raw.projects : [],
-    courses: Array.isArray(raw?.courses) ? raw.courses : [],
+    experiences: Array.isArray(raw?.experiences) ? raw.experiences : undefined,
+    educations: Array.isArray(raw?.educations) ? raw.educations : undefined,
+    licenses: Array.isArray(raw?.licenses) ? raw.licenses : undefined,
+    projects: Array.isArray(raw?.projects) ? raw.projects : undefined,
+    courses: Array.isArray(raw?.courses) ? raw.courses : undefined,
     featured: Array.isArray(raw?.featured) ? raw.featured : [],
     activity_posts: Array.isArray(raw?.activity_posts) ? raw.activity_posts : [],
     interests: raw?.interests,
@@ -135,11 +137,21 @@ function applyMemberFieldsToProfile(member_id: string, fields: Partial<Member>):
   if (Array.isArray(fields.skills)) {
     state.patchProfile({ skills: memberSkillsToStoreSkills(fields.skills) })
   }
-  if (fields.experiences) state.patchProfile({ experience: fields.experiences })
-  if (fields.educations) state.patchProfile({ education: fields.educations })
-  if (fields.licenses) state.patchProfile({ licenses: fields.licenses })
-  if (fields.projects) state.patchProfile({ projects: fields.projects })
-  if (fields.courses) state.patchProfile({ courses: fields.courses })
+  if (Array.isArray(fields.experiences)) {
+    state.patchProfile({ experience: fields.experiences })
+  }
+  if (Array.isArray(fields.educations)) {
+    state.patchProfile({ education: fields.educations })
+  }
+  if (Array.isArray(fields.licenses)) {
+    state.patchProfile({ licenses: fields.licenses })
+  }
+  if (Array.isArray(fields.projects)) {
+    state.patchProfile({ projects: fields.projects })
+  }
+  if (Array.isArray(fields.courses)) {
+    state.patchProfile({ courses: fields.courses })
+  }
 }
 
 export async function login(email: string, password: string): Promise<AuthResponse> {
@@ -244,10 +256,7 @@ export async function updateMember(member_id: string, fields: Partial<Member>): 
   }
   const response = await apiClient.post<unknown>('/members/update', { member_id, ...fields })
   const next = normalizeMember(unwrapApiData(response.data) as any)
-  applyMemberFieldsToProfile(member_id, {
-    profile_photo_url: next.profile_photo_url,
-    cover_photo_url: next.cover_photo_url,
-  })
+  applyMemberFieldsToProfile(member_id, next)
   return next
 }
 

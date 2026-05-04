@@ -1,14 +1,14 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Globe2, MessageCircle, Repeat2, Send, ThumbsUp } from 'lucide-react'
 import { Link, Navigate, useParams } from 'react-router-dom'
 import { getMember } from '../../api/profile'
-import { PostOptionsMenu } from '../../components/feed/PostOptionsMenu'
-import { BrandMark } from '../../components/layout/BrandMark'
-import { Avatar, Card, Skeleton } from '../../components/ui'
+import { listPostsByAuthor } from '../../api/posts'
+import { ActivityFeedPost } from '../../components/feed/ActivityFeedPost'
+import { Card, Skeleton } from '../../components/ui'
 import { useAuthStore } from '../../store/authStore'
 import { useProfileStore } from '../../store/profileStore'
 import type { Member } from '../../types'
+import type { Post } from '../../types/feed'
 
 function ActivitySkeleton(): JSX.Element {
   return (
@@ -24,6 +24,16 @@ function ActivitySkeleton(): JSX.Element {
   )
 }
 
+function toActivityPost(post: Post): { id: string; text: string; image?: string | null; reactions: number; comments: number } {
+  return {
+    id: post.post_id,
+    text: post.content,
+    image: post.media_type === 'image' ? (post.media_url ?? null) : null,
+    reactions: post.reactions_count,
+    comments: post.comments_count,
+  }
+}
+
 export default function ProfileActivityPage(): JSX.Element {
   const { memberId = '' } = useParams<{ memberId: string }>()
   const authUser = useAuthStore((s) => s.user)
@@ -35,6 +45,11 @@ export default function ProfileActivityPage(): JSX.Element {
     queryKey: ['member', memberId],
     queryFn: () => getMember(memberId),
     enabled: Boolean(memberId) && !isOwnProfile,
+  })
+  const authoredPostsQuery = useQuery({
+    queryKey: ['posts', 'author', memberId],
+    queryFn: async () => listPostsByAuthor(memberId, 1, 100),
+    enabled: Boolean(memberId),
   })
 
   if (memberId === 'me') {
@@ -64,8 +79,8 @@ export default function ProfileActivityPage(): JSX.Element {
       }
     : (otherQuery.data as Member)
 
-  const allPosts = display.activity_posts ?? []
-  const isOwn = Boolean(display.member_id && profile.member_id && display.member_id === profile.member_id)
+  const allPostsFromFeed = (authoredPostsQuery.data?.posts ?? []).map(toActivityPost)
+  const allPosts = allPostsFromFeed.length > 0 ? allPostsFromFeed : (display.activity_posts ?? [])
 
   return (
     <Card>
@@ -98,96 +113,20 @@ export default function ProfileActivityPage(): JSX.Element {
         {allPosts.length === 0 ? (
           <p className="py-8 text-center text-sm text-text-secondary">No posts yet.</p>
         ) : (
-          allPosts.map((post) => (
-            <article key={post.id} className="overflow-hidden rounded-xl border border-border bg-white">
-              <div className="flex items-start justify-between gap-2 px-4 pt-4">
-                <div className="flex items-start gap-3">
-                  <Avatar size="md" name={display.full_name} src={display.profile_photo_url ?? undefined} />
-                  <div>
-                    <p className="text-base font-semibold leading-tight text-text-primary">
-                      {display.full_name}{' '}
-                      <BrandMark size={16} className="inline-block h-4 w-4 align-[-2px]" />
-                      {isOwn ? <span className="font-normal text-text-secondary"> · You</span> : null}
-                    </p>
-                    <p className="line-clamp-1 text-sm text-text-secondary">{display.headline || 'Add your headline'}</p>
-                    <p className="mt-0.5 flex items-center gap-1 text-sm text-text-tertiary">
-                      7mo · Edited · <Globe2 className="h-3.5 w-3.5" aria-hidden />
-                    </p>
-                  </div>
-                </div>
-                <PostOptionsMenu
-                  variant="feed"
-                  post={{
-                    post_id: post.id,
-                    author_member_id: display.member_id,
-                    author_name: display.full_name,
-                    author_degree: '1st',
-                    author_headline: display.headline ?? 'Member',
-                    author_avatar_url: display.profile_photo_url ?? null,
-                    created_time_ago: '7mo',
-                    visibility: 'anyone',
-                    content: post.text,
-                    media_type: post.image ? 'image' : 'text',
-                    media_url: post.image ?? undefined,
-                    reactions_count: post.reactions,
-                    comments_count: post.comments,
-                    reposts_count: 0,
-                    liked_by_me: false,
-                    reaction_icons: ['like'],
-                    comments: [],
-                  }}
-                  isOwnPost={isOwn}
-                />
-              </div>
-
-              <div className="px-4 pt-3">
-                <p className="line-clamp-3 text-base text-text-primary" style={{ WebkitLineClamp: 3 }}>
-                  {post.text}
-                </p>
-                <button type="button" className="text-sm text-text-secondary hover:text-text-primary">
-                  ...more
-                </button>
-              </div>
-
-              <div className="mt-2 border-y border-border bg-surface">
-                {post.image ? (
-                  <img src={post.image} alt="" className="h-[420px] w-full object-cover" loading="lazy" />
-                ) : (
-                  <div className="h-[420px] w-full bg-gradient-to-br from-slate-200 to-slate-300" />
-                )}
-              </div>
-
-              <div className="flex items-center justify-between px-4 py-2 text-sm text-text-secondary">
-                <span>{post.reactions} reactions</span>
-                <span>{post.comments} comments</span>
-              </div>
-
-              <div className="grid grid-cols-4 border-y border-border px-2 py-1.5 text-text-secondary">
-                <button type="button" className="inline-flex items-center justify-center gap-1 rounded-md py-2 text-base font-semibold hover:bg-black/5">
-                  <ThumbsUp className="h-5 w-5" /> Like
-                </button>
-                <button type="button" className="inline-flex items-center justify-center gap-1 rounded-md py-2 text-base font-semibold hover:bg-black/5">
-                  <MessageCircle className="h-5 w-5" /> Comment
-                </button>
-                <button type="button" className="inline-flex items-center justify-center gap-1 rounded-md py-2 text-base font-semibold hover:bg-black/5">
-                  <Repeat2 className="h-5 w-5" /> Repost
-                </button>
-                <button type="button" className="inline-flex items-center justify-center gap-1 rounded-md py-2 text-base font-semibold hover:bg-black/5">
-                  <Send className="h-5 w-5" /> Send
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between px-4 py-3 text-sm">
-                <span className="font-semibold text-text-secondary">{(post.reactions + 1657).toLocaleString()} impressions</span>
-                <Link to="/analytics" className="font-semibold text-brand-primary hover:underline">
-                  View analytics
-                </Link>
-              </div>
-            </article>
+          allPosts.map((ap) => (
+            <ActivityFeedPost
+              key={ap.id}
+              activity={ap}
+              display={{
+                member_id: display.member_id,
+                full_name: display.full_name,
+                headline: display.headline,
+                profile_photo_url: display.profile_photo_url,
+              }}
+            />
           ))
         )}
       </Card.Body>
     </Card>
   )
 }
-

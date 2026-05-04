@@ -67,6 +67,9 @@ export default function AnalyticsPage(): JSX.Element {
       return getMemberDashboard(user.member_id, window)
     },
     enabled: Boolean(user),
+    staleTime: 0,
+    refetchInterval: 5_000,
+    refetchOnWindowFocus: true,
   })
 
   const applicationsQuery = useQuery({

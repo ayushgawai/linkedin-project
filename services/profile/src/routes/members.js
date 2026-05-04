@@ -54,7 +54,8 @@ const CreateSignupSchema = z.object({
   role: z.enum(['member', 'recruiter']).optional().default('member'),
 });
 
-const CreateSchema = z.union([CreateProfessorSchema, CreateSignupSchema]);
+// Signup bodies include `password` + `full_name`; professor contract uses split names — try signup first.
+const CreateSchema = z.union([CreateSignupSchema, CreateProfessorSchema]);
 
 async function handleCreateMember(req, res, next) {
   try {
@@ -251,7 +252,8 @@ async function handleGetMember(req, res, next) {
       const [skills] = await pool.query('SELECT skill FROM member_skills WHERE member_id = :member_id', {
         member_id,
       });
-      data = { ...rows[0], skills: skills.map((s) => s.skill) };
+      const { experiences, educations } = await loadExperiencesEducations(pool, member_id);
+      data = shapeMemberForClient(rows[0], skills.map((s) => s.skill), experiences, educations);
     }
 
     if (!data) throw new ApiError(404, 'MEMBER_NOT_FOUND', `Member ${member_id} not found`);
@@ -265,6 +267,273 @@ async function handleGetMember(req, res, next) {
 // POST /members/get (legacy)
 membersRouter.post('/members/get', handleGetMember);
 
+const ExperiencePayloadSchema = z.object({
+  id: z.string().min(1).max(80),
+  title: z.string().max(300).optional().default(''),
+  company: z.string().max(300).optional().default(''),
+  employment_type: z.string().max(100).optional().default(''),
+  location: z.string().max(300).optional().default(''),
+  workplace: z.string().max(100).optional().default(''),
+  start_date: z.union([z.string().max(64), z.null()]).optional(),
+  end_date: z.union([z.string().max(64), z.null()]).optional(),
+  description: z.string().max(8000).optional().default(''),
+  skills: z.array(z.string().max(100)).optional().default([]),
+  company_logo: z.union([z.string().max(2000), z.null()]).optional(),
+});
+
+const EducationPayloadSchema = z.object({
+  id: z.string().min(1).max(80),
+  school: z.string().max(300),
+  school_logo: z.union([z.string().max(2000), z.null()]).optional(),
+  degree: z.string().max(200).optional().default(''),
+  field: z.string().max(200).optional().default(''),
+  grade: z.union([z.string().max(100), z.null()]).optional(),
+  start_date: z.union([z.string().max(64), z.null()]).optional(),
+  end_date: z.union([z.string().max(64), z.null()]).optional(),
+  skills: z.array(z.string().max(100)).optional().default([]),
+});
+
+const LicensePayloadSchema = z.object({
+  id: z.string().min(1).max(80),
+  name: z.string().max(300),
+  org: z.string().max(300),
+  org_logo: z.union([z.string().max(2000), z.null()]).optional(),
+  issue_date: z.string().max(64),
+  credential_url: z.union([z.string().max(2000), z.null()]).optional(),
+  preview_image: z.union([z.string().max(12_000_000), z.null()]).optional(),
+});
+
+const ProjectMediaPayloadSchema = z.object({
+  id: z.string().max(80),
+  image: z.string().max(12_000_000),
+  title: z.string().max(500),
+  url: z.string().max(2000),
+});
+
+const ProjectPayloadSchema = z.object({
+  id: z.string().min(1).max(80),
+  name: z.string().max(300),
+  associated_with: z.union([z.string().max(300), z.null()]).optional(),
+  start_date: z.string().max(64),
+  end_date: z.union([z.string().max(64), z.null()]).optional(),
+  description: z.string().max(16000).optional().default(''),
+  skills: z.array(z.string().max(100)).optional().default([]),
+  media: z.array(ProjectMediaPayloadSchema).optional().default([]),
+  project_url: z.union([z.string().max(2000), z.null()]).optional(),
+});
+
+function parseYmToSqlDate(ym) {
+  if (ym == null || ym === '') return null;
+  const s = String(ym).trim();
+  const m = /^(\d{4})-(\d{1,2})(?:-\d{1,2})?$/.exec(s);
+  if (!m) return null;
+  const mo = m[2].padStart(2, '0');
+  return `${m[1]}-${mo}-01`;
+}
+
+function yearFromYm(ym) {
+  if (ym == null || ym === '') return null;
+  const s = String(ym).trim();
+  if (/present/i.test(s)) return null;
+  const m = /^(\d{4})/.exec(s);
+  return m ? Number(m[1]) : null;
+}
+
+function formatYmFromSqlDate(d) {
+  if (!d) return '';
+  if (d instanceof Date && !Number.isNaN(d.getTime())) {
+    const y = d.getUTCFullYear();
+    const mo = String(d.getUTCMonth() + 1).padStart(2, '0');
+    return `${y}-${mo}`;
+  }
+  const s = String(d);
+  const m = /^(\d{4})-(\d{2})/.exec(s);
+  return m ? `${m[1]}-${m[2]}` : '';
+}
+
+function parseExtrasJson(raw) {
+  if (raw == null) return {};
+  if (typeof raw === 'object') return raw;
+  try {
+    return JSON.parse(String(raw));
+  } catch {
+    return {};
+  }
+}
+
+function mapExpRowToApi(row) {
+  const extras = parseExtrasJson(row.extras);
+  const startStr = extras.start_date != null && extras.start_date !== '' ? extras.start_date : formatYmFromSqlDate(row.start_date);
+  const endStr =
+    row.is_current ? null : extras.end_date != null && extras.end_date !== '' ? extras.end_date : formatYmFromSqlDate(row.end_date);
+  return {
+    id: row.exp_id,
+    title: row.title || '',
+    company: row.company || '',
+    employment_type: extras.employment_type ?? '',
+    location: extras.location ?? '',
+    workplace: extras.workplace ?? '',
+    start_date: startStr || '',
+    end_date: endStr || null,
+    description: row.description || '',
+    skills: Array.isArray(extras.skills) ? extras.skills : [],
+    company_logo: extras.company_logo ?? null,
+  };
+}
+
+function mapEduRowToApi(row) {
+  const extras = parseExtrasJson(row.extras);
+  const startStr =
+    extras.start_date != null && extras.start_date !== ''
+      ? extras.start_date
+      : row.start_year != null
+        ? String(row.start_year)
+        : '';
+  const endStr =
+    extras.end_date != null && extras.end_date !== ''
+      ? extras.end_date
+      : row.end_year != null
+        ? String(row.end_year)
+        : null;
+  return {
+    id: row.edu_id,
+    school: row.institution || '',
+    school_logo: extras.school_logo ?? null,
+    degree: row.degree || '',
+    field: row.field || '',
+    grade: extras.grade ?? null,
+    start_date: startStr,
+    end_date: endStr,
+    skills: Array.isArray(extras.skills) ? extras.skills : [],
+  };
+}
+
+async function loadExperiencesEducations(conn, member_id) {
+  const [expRows] = await conn.query(
+    `SELECT exp_id, company, title, start_date, end_date, description, is_current, extras
+       FROM member_experience WHERE member_id = :member_id
+       ORDER BY start_date DESC, exp_id DESC`,
+    { member_id },
+  );
+  const [eduRows] = await conn.query(
+    `SELECT edu_id, institution, degree, field, start_year, end_year, extras
+       FROM member_education WHERE member_id = :member_id
+       ORDER BY start_year DESC, edu_id DESC`,
+    { member_id },
+  );
+  return {
+    experiences: expRows.map(mapExpRowToApi),
+    educations: eduRows.map(mapEduRowToApi),
+  };
+}
+
+async function replaceMemberExperiences(conn, member_id, list) {
+  await conn.query('DELETE FROM member_experience WHERE member_id = :member_id', { member_id });
+  if (!Array.isArray(list) || list.length === 0) return;
+  for (const raw of list) {
+    const e = ExperiencePayloadSchema.parse(raw);
+    const startD = parseYmToSqlDate(e.start_date);
+    const isCurrent = e.end_date == null || String(e.end_date).trim() === '';
+    const endD = isCurrent ? null : parseYmToSqlDate(e.end_date);
+    const extras = {
+      employment_type: e.employment_type,
+      workplace: e.workplace,
+      location: e.location,
+      company_logo: e.company_logo ?? undefined,
+      skills: e.skills,
+      start_date: e.start_date ?? '',
+      end_date: e.end_date ?? null,
+    };
+    await conn.query(
+      `INSERT INTO member_experience (exp_id, member_id, company, title, start_date, end_date, description, is_current, extras)
+       VALUES (:exp_id, :member_id, :company, :title, :start_date, :end_date, :description, :is_current, :extras)`,
+      {
+        exp_id: e.id,
+        member_id,
+        company: e.company,
+        title: e.title,
+        start_date: startD,
+        end_date: endD,
+        description: e.description || null,
+        is_current: isCurrent,
+        extras: JSON.stringify(extras),
+      },
+    );
+  }
+}
+
+function extensionsFromRow(row) {
+  const ext = parseExtrasJson(row?.profile_extensions);
+  return {
+    licenses: Array.isArray(ext.licenses) ? ext.licenses : [],
+    projects: Array.isArray(ext.projects) ? ext.projects : [],
+    courses: Array.isArray(ext.courses) ? ext.courses : [],
+  };
+}
+
+/** Build client member payload; omit internal `profile_extensions` column. */
+function shapeMemberForClient(row, skillNames, expOut, eduOut) {
+  if (!row || typeof row !== 'object') return row;
+  const { profile_extensions: _pe, ...core } = row;
+  const { licenses, projects, courses } = extensionsFromRow(row);
+  return {
+    ...core,
+    skills: skillNames,
+    experiences: expOut,
+    educations: eduOut,
+    licenses,
+    projects,
+    courses,
+  };
+}
+
+async function mergeProfileExtensions(conn, member_id, { licenses, projects, courses }) {
+  const [r] = await conn.query(
+    'SELECT profile_extensions FROM members WHERE member_id = :member_id FOR UPDATE',
+    { member_id },
+  );
+  const prev = parseExtrasJson(r[0]?.profile_extensions);
+  const next = { ...prev };
+  if (licenses !== undefined) next.licenses = licenses;
+  if (projects !== undefined) next.projects = projects;
+  if (courses !== undefined) next.courses = courses;
+  await conn.query('UPDATE members SET profile_extensions = :ext WHERE member_id = :member_id', {
+    member_id,
+    ext: JSON.stringify(next),
+  });
+}
+
+async function replaceMemberEducations(conn, member_id, list) {
+  await conn.query('DELETE FROM member_education WHERE member_id = :member_id', { member_id });
+  if (!Array.isArray(list) || list.length === 0) return;
+  for (const raw of list) {
+    const e = EducationPayloadSchema.parse(raw);
+    const endRaw = e.end_date != null && String(e.end_date).trim();
+    const endYear = endRaw && !/present/i.test(String(e.end_date)) ? yearFromYm(e.end_date) : null;
+    const extras = {
+      school_logo: e.school_logo ?? undefined,
+      grade: e.grade ?? undefined,
+      skills: e.skills,
+      start_date: e.start_date ?? '',
+      end_date: e.end_date ?? null,
+    };
+    await conn.query(
+      `INSERT INTO member_education (edu_id, member_id, institution, degree, field, start_year, end_year, extras)
+       VALUES (:edu_id, :member_id, :institution, :degree, :field, :start_year, :end_year, :extras)`,
+      {
+        edu_id: e.id,
+        member_id,
+        institution: e.school,
+        degree: e.degree,
+        field: e.field,
+        start_year: yearFromYm(e.start_date),
+        end_year: endYear,
+        extras: JSON.stringify(extras),
+      },
+    );
+  }
+}
+
 const UpdateSchema = z.object({
   member_id: z.string().min(1),
   first_name: z.string().min(1).max(100).optional(),
@@ -276,6 +545,11 @@ const UpdateSchema = z.object({
   profile_photo_url: z.string().max(12_000_000).nullable().optional(),
   cover_photo_url: z.string().max(12_000_000).nullable().optional(),
   skills: z.array(z.string().min(1).max(100)).optional(),
+  experiences: z.array(ExperiencePayloadSchema).optional(),
+  educations: z.array(EducationPayloadSchema).optional(),
+  licenses: z.array(LicensePayloadSchema).max(50).optional(),
+  projects: z.array(ProjectPayloadSchema).max(50).optional(),
+  courses: z.array(z.string().max(500)).max(100).optional(),
 });
 
 /** Recruiters authenticate with member_id === recruiter_id but may only exist in `recruiters`. Materialize a mirror `members` row so POST /members/update can persist headline/photos/skills. */
@@ -345,7 +619,14 @@ async function handleUpdateMember(req, res, next) {
     }
     const pool = getPool();
     const skills = Object.prototype.hasOwnProperty.call(fields, 'skills') ? fields.skills : undefined;
-    const scalarEntries = entries.filter(([k]) => k !== 'skills');
+    const experiences = Object.prototype.hasOwnProperty.call(fields, 'experiences') ? fields.experiences : undefined;
+    const educations = Object.prototype.hasOwnProperty.call(fields, 'educations') ? fields.educations : undefined;
+    const licenses = Object.prototype.hasOwnProperty.call(fields, 'licenses') ? fields.licenses : undefined;
+    const projects = Object.prototype.hasOwnProperty.call(fields, 'projects') ? fields.projects : undefined;
+    const courses = Object.prototype.hasOwnProperty.call(fields, 'courses') ? fields.courses : undefined;
+    const scalarEntries = entries.filter(
+      ([k]) => !['skills', 'experiences', 'educations', 'licenses', 'projects', 'courses'].includes(k),
+    );
 
     const conn = await pool.getConnection();
     try {
@@ -381,6 +662,16 @@ async function handleUpdateMember(req, res, next) {
         }
       }
 
+      if (experiences !== undefined) {
+        await replaceMemberExperiences(conn, member_id, experiences);
+      }
+      if (educations !== undefined) {
+        await replaceMemberEducations(conn, member_id, educations);
+      }
+      if (licenses !== undefined || projects !== undefined || courses !== undefined) {
+        await mergeProfileExtensions(conn, member_id, { licenses, projects, courses });
+      }
+
       await conn.commit();
     } catch (err) {
       await conn.rollback();
@@ -405,8 +696,14 @@ async function handleUpdateMember(req, res, next) {
       'SELECT skill FROM member_skills WHERE member_id = :member_id',
       { member_id },
     );
+    const { experiences: expOut, educations: eduOut } = await loadExperiencesEducations(pool, member_id);
     return res.json(
-      ok(mapMemberMediaRow({ ...rows[0], skills: skillRows.map((r) => r.skill) }), req.traceId),
+      ok(
+        mapMemberMediaRow(
+          shapeMemberForClient(rows[0], skillRows.map((r) => r.skill), expOut, eduOut),
+        ),
+        req.traceId,
+      ),
     );
   } catch (err) {
     next(coerceNotFoundCode(err));
@@ -430,6 +727,8 @@ async function handleDeleteMember(req, res, next) {
     try {
       await conn.beginTransaction();
       await conn.query('DELETE FROM member_skills WHERE member_id = :member_id', { member_id });
+      await conn.query('DELETE FROM member_experience WHERE member_id = :member_id', { member_id });
+      await conn.query('DELETE FROM member_education WHERE member_id = :member_id', { member_id });
       const [result] = await conn.query(
         'DELETE FROM members WHERE member_id = :member_id',
         { member_id },
@@ -492,9 +791,7 @@ async function handleSearchMembers(req, res, next) {
       if (filters.keyword) {
         // Full-text search can silently return 0 rows (missing FULLTEXT indexes, stopwords, short tokens).
         // Use LIKE for reliability in demos + small datasets.
-        where.push(
-          '(first_name LIKE :kw_like OR last_name LIKE :kw_like OR CONCAT(first_name, \' \', last_name) LIKE :kw_like OR headline LIKE :kw_like OR about LIKE :kw_like)',
-        );
+        where.push('(first_name LIKE :kw_like OR last_name LIKE :kw_like OR headline LIKE :kw_like OR about LIKE :kw_like)');
         params.kw_like = `%${filters.keyword}%`;
       }
       if (filters.location) {

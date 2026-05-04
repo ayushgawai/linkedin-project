@@ -21,6 +21,7 @@ const steps = ['Contact', 'Resume', 'Questions', 'Review'] as const
 export function ApplyModal({ isOpen, onClose, job }: ApplyModalProps): JSX.Element {
   const member = useAuthStore((state) => state.user)
   const profile = useProfileStore((state) => state.profile)
+  const applicantMemberId = [member?.member_id, profile.member_id].find((id) => id && String(id).trim()) ?? ''
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const actionToast = useActionToast()
@@ -39,9 +40,12 @@ export function ApplyModal({ isOpen, onClose, job }: ApplyModalProps): JSX.Eleme
   const mutation = useMutation({
     mutationFn: async () => {
       if (!member) throw new Error('Please sign in to apply')
+      if (!applicantMemberId) {
+        throw new Error('Your account ID is missing. Sign out, sign in again, then try applying.')
+      }
       const payload: SubmitApplicationPayload = {
         job_id: job.job_id,
-        member_id: member.member_id,
+        member_id: applicantMemberId,
         // `blob:` URLs are browser-local; recruiters can't access them. Prefer `resume_text`.
         resume_url: resumeUrl?.startsWith('http') ? resumeUrl : null,
         resume_text: resumeText,
@@ -57,21 +61,27 @@ export function ApplyModal({ isOpen, onClose, job }: ApplyModalProps): JSX.Eleme
         },
       }
       const application = await submitApplication(payload)
+      const resolvedMemberId = application.member_id || applicantMemberId
       await ingestEvent({
         event_type: 'application.submitted',
         trace_id: crypto.randomUUID(),
         timestamp: new Date().toISOString(),
-        actor_id: member.member_id,
+        actor_id: resolvedMemberId,
         entity: { entity_type: 'job', entity_id: job.job_id },
-        idempotency_key: `application-submitted-${member.member_id}-${job.job_id}`,
+        idempotency_key: `application-submitted-${applicantMemberId}-${job.job_id}`,
+        metadata: {
+          city: location.trim() || undefined,
+          location: location.trim() || undefined,
+        },
       })
       return application
     },
     onSuccess: (application) => {
       if (member) {
+        const trackerMemberId = application.member_id || applicantMemberId
         if (USE_MOCKS) {
           appendApplicationToMemberTracker(
-            member.member_id,
+            trackerMemberId,
             {
               application_id: application.application_id,
               job_id: application.job_id,
@@ -81,12 +91,13 @@ export function ApplyModal({ isOpen, onClose, job }: ApplyModalProps): JSX.Eleme
           )
         }
         void incrementJobApplicants(job.job_id)
-        void queryClient.invalidateQueries({ queryKey: ['my-applications', member.member_id] })
+        void queryClient.invalidateQueries({ queryKey: ['my-applications', trackerMemberId] })
         void queryClient.invalidateQueries({ queryKey: ['jobs-discovery'] })
         void queryClient.invalidateQueries({ queryKey: ['job', job.job_id] })
         void queryClient.invalidateQueries({ queryKey: ['jobs-search'] })
-        void queryClient.invalidateQueries({ queryKey: ['recruiter-jobs', member.member_id] })
+        void queryClient.invalidateQueries({ queryKey: ['recruiter-jobs', trackerMemberId] })
         void queryClient.invalidateQueries({ queryKey: ['job-applicants', job.job_id] })
+        void queryClient.invalidateQueries({ queryKey: ['recruiter-dashboard'] })
       }
       actionToast.applicationSubmitted(job.title, job.company_name)
       onClose()

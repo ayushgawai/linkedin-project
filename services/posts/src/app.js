@@ -8,7 +8,7 @@ export function createApp() {
   const app = express();
   app.disable('x-powered-by');
   app.use(cors());
-  app.use(express.json({ limit: '2mb' }));
+  app.use(express.json({ limit: '15mb' }));
   app.use(healthRouter);
   app.use(postsRouter);
   return app;

@@ -20,6 +20,10 @@ export type NotificationRecord = {
   timestamp: string
   unread: boolean
   target_url: string
+  /** Pending connection invite from `/connections/pending` — drives Accept / Ignore on Notifications. */
+  connection_request_id?: string
+  /** Requester profile URL target when opening a connection-request row. */
+  connection_requester_member_id?: string
   /** When set, this notification is only shown to this member (mock routing). */
   recipient_member_id?: string
   /** Mock: show Accept / Decline for interview invites from employers. */

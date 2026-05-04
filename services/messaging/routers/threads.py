@@ -16,6 +16,7 @@ from typing import List
 
 from database import get_db
 from models import Thread, ThreadParticipant, Message
+from routers.presence import member_is_online
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -33,6 +34,7 @@ class OpenThreadRequest(BaseModel):
 
 class GetThreadRequest(BaseModel):
     thread_id: str
+    user_id: str | None = None
 
 class ThreadsByUserRequest(BaseModel):
     user_id: str
@@ -256,15 +258,19 @@ def get_thread(body: GetThreadRequest, db: Session = Depends(get_db)):
         select(ThreadParticipant.user_id).where(ThreadParticipant.thread_id == body.thread_id)
     ).scalars().all()
 
-    fallback_participant = participants[0] if participants else ""
+    viewer = (body.user_id or "").strip() or None
+    if viewer and viewer in participants:
+        other_id = next((p for p in participants if p != viewer), participants[0] if participants else "")
+    else:
+        other_id = participants[0] if participants else ""
     return {
         "thread_id": thread.thread_id,
         "participant": {
-            "member_id": fallback_participant,
-            "full_name": f"Member {fallback_participant[:8]}" if fallback_participant else "Unknown",
+            "member_id": other_id,
+            "full_name": f"Member {other_id[:8]}" if other_id else "Unknown",
             "headline": "",
             "profile_photo_url": None,
-            "online": False,
+            "online": member_is_online(other_id),
         },
         "last_message_preview": "",
         "last_message_time": "",
@@ -313,7 +319,7 @@ def threads_by_user(body: ThreadsByUserRequest, db: Session = Depends(get_db)):
                 "full_name": f"Member {other_user[:8]}",
                 "headline": "",
                 "profile_photo_url": None,
-                "online": False,
+                "online": member_is_online(other_user),
             }
             ,
             "last_message_preview": (last_msg.message_text[:100] if last_msg else "No messages yet"),

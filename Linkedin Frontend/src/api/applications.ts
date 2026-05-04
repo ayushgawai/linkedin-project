@@ -60,6 +60,14 @@ function toBackendStatus(status: string): string {
   return status
 }
 
+/** Saved recruiter notes from `application_notes` (or mock array). */
+export type ApplicationNoteRow = {
+  note_id: string
+  note_text: string
+  created_at?: string
+  recruiter_id?: string
+}
+
 /** Recruiter “applicants” list (mock): Easy Apply rows keyed by job_id, merged with seeded rows for catalog MOCK_JOBS only. */
 export type JobApplicantRow = Application & {
   member_name: string
@@ -67,7 +75,10 @@ export type JobApplicantRow = Application & {
   match_score: number
   resume_url?: string
   cover_letter?: string | null
-  notes?: string
+  /** Recruiter notes history (newest last from API order; UI may re-sort). */
+  notes?: ApplicationNoteRow[] | string
+  /** Easy Apply + contact JSON from `applications.answers`. */
+  answers?: Record<string, unknown> | null
   contact_email?: string
   contact_phone?: string
 }
@@ -90,7 +101,7 @@ function generateLegacyApplicants(job_id: string): JobApplicantRow[] {
     member_name: ['Nora White', 'Sam Lee', 'Ava Kim', 'Miguel Chen', 'Priya Sharma'][index % 5] ?? 'Nora White',
     headline: 'Software Engineer | Distributed Systems',
     match_score: 52 + (index % 48),
-    notes: '',
+    notes: [],
   }))
 }
 
@@ -98,7 +109,10 @@ async function appendMockApplicantFromEasyApply(payload: SubmitApplicationPayloa
   const member = await getMember(payload.member_id)
   const list = mockApplicantsByJobId.get(payload.job_id) ?? []
   if (list.some((r) => r.member_id === payload.member_id)) return
-  const cover = payload.answers ? JSON.stringify(payload.answers) : null
+  const mergedAnswers = payload.answers && typeof payload.answers === 'object' ? { ...payload.answers } : {}
+  if (payload.contact_email) mergedAnswers.contact_email = payload.contact_email
+  if (payload.contact_phone) mergedAnswers.contact_phone = payload.contact_phone
+  const cover = Object.keys(mergedAnswers).length > 0 ? JSON.stringify(mergedAnswers) : null
   const resumeForRecruiter =
     application.resume_url?.startsWith('http') && !application.resume_url.startsWith('blob:')
       ? application.resume_url
@@ -110,7 +124,8 @@ async function appendMockApplicantFromEasyApply(payload: SubmitApplicationPayloa
     match_score: 62 + (application.application_id.length % 34),
     resume_url: resumeForRecruiter,
     cover_letter: cover,
-    notes: '',
+    notes: [],
+    answers: mergedAnswers,
     contact_email: payload.contact_email,
     contact_phone: payload.contact_phone,
   }
@@ -239,6 +254,25 @@ export async function listApplicationsByJob(job_id: string): Promise<JobApplican
     raw.map(async (row: any) => {
       const appliedAt = row.applied_at || row.application_datetime || new Date().toISOString()
       const updatedAt = row.updated_at || row.application_datetime || appliedAt
+      const rawAnswers = row.answers
+      let answersObj: Record<string, unknown> | null = null
+      if (rawAnswers && typeof rawAnswers === 'object' && !Array.isArray(rawAnswers)) {
+        answersObj = rawAnswers as Record<string, unknown>
+      } else if (typeof rawAnswers === 'string' && rawAnswers.trim()) {
+        try {
+          const p = JSON.parse(rawAnswers) as unknown
+          if (p && typeof p === 'object' && !Array.isArray(p)) answersObj = p as Record<string, unknown>
+        } catch {
+          answersObj = null
+        }
+      }
+      const contact_email =
+        (typeof row.contact_email === 'string' && row.contact_email.trim()) ||
+        (answersObj && typeof answersObj.contact_email === 'string' ? answersObj.contact_email.trim() : undefined)
+      const contact_phone =
+        (typeof row.contact_phone === 'string' && row.contact_phone.trim()) ||
+        (answersObj && typeof answersObj.contact_phone === 'string' ? answersObj.contact_phone.trim() : undefined)
+      const noteList = Array.isArray(row.notes) ? (row.notes as ApplicationNoteRow[]) : []
       try {
         const member = await getMember(String(row.member_id))
         return {
@@ -248,6 +282,10 @@ export async function listApplicationsByJob(job_id: string): Promise<JobApplican
           status: normalizeRecruiterStatus(row.status),
           member_name: member.full_name || `Member ${String(row.member_id).slice(0, 6)}`,
           headline: member.headline ?? '',
+          notes: noteList,
+          answers: answersObj,
+          contact_email,
+          contact_phone,
         } as JobApplicantRow
       } catch {
         return {
@@ -257,6 +295,10 @@ export async function listApplicationsByJob(job_id: string): Promise<JobApplican
           status: normalizeRecruiterStatus(row.status),
           member_name: row.member_name || `Member ${String(row.member_id).slice(0, 6)}`,
           headline: row.headline || '',
+          notes: noteList,
+          answers: answersObj,
+          contact_email,
+          contact_phone,
         } as JobApplicantRow
       }
     }),
@@ -399,9 +441,24 @@ export async function updateMemberApplicationStatus(
 export async function addApplicationNote(application_id: string, note: string): Promise<{ success: boolean }> {
   if (USE_MOCKS) {
     await mockDelay(180)
-    console.debug('[mock] application note', { application_id, note })
+    const trimmed = note.trim()
+    if (!trimmed) return { success: true }
+    for (const list of mockApplicantsByJobId.values()) {
+      const row = list.find((r) => r.application_id === application_id)
+      if (row) {
+        const prev = Array.isArray(row.notes) ? row.notes : []
+        const next: ApplicationNoteRow = {
+          note_id: `mock-note-${Date.now()}`,
+          note_text: trimmed,
+          created_at: new Date().toISOString(),
+          recruiter_id: 'mock-recruiter',
+        }
+        row.notes = [...prev, next]
+        break
+      }
+    }
     return { success: true }
   }
   const response = await apiClient.post<{ success: boolean }>('/applications/addNote', { application_id, note })
-  return response.data
+  return unwrapApplicationPayload(response.data) as { success: boolean }
 }

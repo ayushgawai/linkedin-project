@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS members (
   about TEXT,
   profile_photo_url MEDIUMTEXT,
   cover_photo_url MEDIUMTEXT,
+  profile_extensions JSON NULL,
   connections_count INT DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -129,7 +130,7 @@ CREATE TABLE IF NOT EXISTS member_skills (
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS member_experience (
-  exp_id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  exp_id VARCHAR(80) PRIMARY KEY DEFAULT (UUID()),
   member_id VARCHAR(36),
   company VARCHAR(300),
   title VARCHAR(300),
@@ -137,17 +138,19 @@ CREATE TABLE IF NOT EXISTS member_experience (
   end_date DATE,
   description TEXT,
   is_current BOOLEAN DEFAULT FALSE,
+  extras JSON NULL,
   CONSTRAINT fk_member_experience_member FOREIGN KEY (member_id) REFERENCES members(member_id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS member_education (
-  edu_id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  edu_id VARCHAR(80) PRIMARY KEY DEFAULT (UUID()),
   member_id VARCHAR(36),
   institution VARCHAR(300),
   degree VARCHAR(200),
   field VARCHAR(200),
   start_year INT,
   end_year INT,
+  extras JSON NULL,
   CONSTRAINT fk_member_education_member FOREIGN KEY (member_id) REFERENCES members(member_id)
 ) ENGINE=InnoDB;
 
@@ -185,4 +188,23 @@ CREATE TABLE IF NOT EXISTS posts (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_posts_created (created_at DESC),
   INDEX idx_posts_author (author_member_id, created_at DESC)
+) ENGINE=InnoDB;
+
+-- Who liked which post (drives reactions_count + liked_by_me in /posts/list)
+CREATE TABLE IF NOT EXISTS post_likes (
+  post_id VARCHAR(64) NOT NULL,
+  member_id VARCHAR(36) NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (post_id, member_id),
+  INDEX idx_post_likes_post (post_id),
+  INDEX idx_post_likes_member (member_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS post_comments (
+  comment_id VARCHAR(64) PRIMARY KEY,
+  post_id VARCHAR(64) NOT NULL,
+  author_member_id VARCHAR(36) NOT NULL,
+  body TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_post_comments_post (post_id, created_at DESC)
 ) ENGINE=InnoDB;

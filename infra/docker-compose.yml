@@ -58,12 +58,14 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
       - ../data/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      # Demo seed (idempotent) so fresh clones have jobs/users immediately.
+      - ../data/backend_demo_seed.sql:/docker-entrypoint-initdb.d/02-backend-demo-seed.sql:ro
     healthcheck:
       test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD']
       interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
+      timeout: 10s
+      retries: 15
+      start_period: 120s
     networks: [backend]
 
   mongodb:
@@ -73,6 +75,7 @@ services:
       - '${MONGO_PORT_HOST:-27017}:27017'
     volumes:
       - mongo_data:/data/db
+      - ../data/mongo_setup.js:/docker-entrypoint-initdb.d/mongo_setup.js:ro
     healthcheck:
       test: ['CMD-SHELL', "echo 'db.runCommand({ ping: 1 })' | mongosh --quiet"]
       interval: 10s
@@ -80,40 +83,6 @@ services:
       retries: 10
       start_period: 20s
     networks: [backend]
-
-  data-bootstrap:
-    build:
-      context: ..
-      dockerfile: data/Dockerfile
-    container_name: linkedinclone-data-bootstrap
-    # Compose uses infra/ as the project directory, so ${KAGGLE_*} in this file can resolve
-    # empty and override values from a repo-root .env. Load ../.env here instead of passing
-    # those keys through empty-default environment lines.
-    env_file:
-      - ../.env
-    environment:
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_USER: root
-      DB_PASS: ${DB_PASS:-linkedin}
-      DB_NAME: ${DB_NAME:-linkedinclone}
-      MONGO_URI: mongodb://mongodb:27017
-      RAW_DIR: /tmp/linkedinclone/raw
-      SEEDS_DIR: /tmp/linkedinclone/seeds
-      PIPELINE_SOURCE_DIR: ${PIPELINE_SOURCE_DIR:-/workspace/Data_2}
-      KAGGLE_JOBS_DATASET: ${KAGGLE_JOBS_DATASET:-rajatraj0502/linkedin-job-2023}
-      KAGGLE_RESUME_DATASET: ${KAGGLE_RESUME_DATASET:-snehaanbhawal/resume-dataset}
-      SEED_MYSQL_BATCH: ${SEED_MYSQL_BATCH:-100}
-      SEED_MONGO_BATCH: ${SEED_MONGO_BATCH:-500}
-    depends_on:
-      mysql:
-        condition: service_healthy
-      mongodb:
-        condition: service_healthy
-    volumes:
-      - ..:/workspace:ro
-    networks: [backend]
-    restart: "no"
 
   redis:
     image: redis:7-alpine
@@ -144,11 +113,11 @@ services:
       - zookeeper_data:/var/lib/zookeeper/data
       - zookeeper_log:/var/lib/zookeeper/log
     healthcheck:
-      test: ['CMD-SHELL', 'cub zk-ready localhost:2181 5']
-      interval: 10s
-      timeout: 10s
-      retries: 10
-      start_period: 15s
+      test: ['CMD-SHELL', 'cub zk-ready localhost:2181 90']
+      interval: 20s
+      timeout: 120s
+      retries: 12
+      start_period: 240s
     networks: [backend]
 
   kafka:
@@ -244,8 +213,6 @@ services:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
-      data-bootstrap:
-        condition: service_completed_successfully
     ports:
       - '${PROFILE_PORT_HOST:-8001}:8001'
     networks: [backend]
@@ -284,8 +251,6 @@ services:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
-      data-bootstrap:
-        condition: service_completed_successfully
     ports:
       - '${JOB_PORT_HOST:-8002}:8002'
     networks: [backend]
@@ -311,8 +276,6 @@ services:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
-      data-bootstrap:
-        condition: service_completed_successfully
     ports:
       - '${APPLICATION_PORT_HOST:-8003}:8003'
     networks: [backend]
@@ -332,7 +295,8 @@ services:
       CONNECTION_URL: http://connection:8005
       ANALYTICS_URL: http://analytics:8006
       AI_URL: http://ai-agent:8007
-      POSTS_URL: http://posts:8008
+      # Default uses Docker DNS; override in infra/.env e.g. API_GATEWAY_POSTS_URL=http://host.docker.internal:8008
+      POSTS_URL: ${API_GATEWAY_POSTS_URL:-http://posts:8008}
       S3_ENDPOINT: http://minio:9000
       S3_BUCKET: ${S3_BUCKET:-linkedinclone-media}
     depends_on:
@@ -379,8 +343,6 @@ services:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
-      data-bootstrap:
-        condition: service_completed_successfully
     ports:
       - '${MESSAGING_PORT_HOST:-8004}:8004'
     networks: [backend]
@@ -405,12 +367,10 @@ services:
       mysql:
         condition: service_healthy
       mongodb:
-        condition: service_healthy
+        condition: service_started
       kafka:
         condition: service_healthy
       kafka-init:
-        condition: service_completed_successfully
-      data-bootstrap:
         condition: service_completed_successfully
     ports:
       - '${CONNECTION_PORT_HOST:-8005}:8005'
@@ -456,8 +416,6 @@ services:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
-      data-bootstrap:
-        condition: service_completed_successfully
     ports:
       - '${ANALYTICS_PORT_HOST:-8006}:8006'
     networks: [backend]
@@ -481,6 +439,9 @@ services:
       MESSAGING_SERVICE_URL: http://messaging:8004
       USE_MOCK_SERVICES: ${USE_MOCK_SERVICES:-false}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      COACH_LLM_ENABLED: ${COACH_LLM_ENABLED:-true}
+      COACH_LLM_MODEL: ${COACH_LLM_MODEL:-gpt-4o-mini}
+      COACH_LLM_TIMEOUT_SEC: ${COACH_LLM_TIMEOUT_SEC:-45}
       SERVICE_PORT: 8007
       LOG_LEVEL: ${LOG_LEVEL:-info}
       CORS_ORIGINS: http://localhost:3000
@@ -499,8 +460,6 @@ services:
         condition: service_started
       messaging:
         condition: service_started
-      data-bootstrap:
-        condition: service_completed_successfully
     ports:
       - '${AI_PORT_HOST:-8007}:8007'
     networks: [backend]
@@ -522,11 +481,18 @@ services:
       DB_NAME: ${DB_NAME:-linkedinclone}
       DB_POOL_MAX: ${DB_POOL_MAX:-20}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-s3}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      S3_REGION: ${S3_REGION:-us-west-1}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-minioadmin}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-minioadmin}
+      S3_BUCKET: ${S3_BUCKET:-linkedinclone-media}
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-http://127.0.0.1:9000/linkedinclone-media}
     depends_on:
       mysql:
         condition: service_healthy
-      data-bootstrap:
-        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
     ports:
       - '${POSTS_PORT_HOST:-8008}:8008'
     networks: [backend]

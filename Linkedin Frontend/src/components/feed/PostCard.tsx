@@ -1,9 +1,12 @@
-import { Globe2, MessageCircle, Send, ThumbsUp, Repeat2, X } from 'lucide-react'
-import { memo, useMemo, useState } from 'react'
+import { Globe2, MessageCircle, Send, ThumbsUp, Repeat2, Trash2, X } from 'lucide-react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
+import type { ApiError } from '../../types'
 import type { Post } from '../../types/feed'
+import { addPostComment, deletePost, deletePostComment, memberIdsEqual, togglePostLike } from '../../api/posts'
 import { ingestEvent } from '../../api/analytics'
+import { rewriteMinioUrlForApiGateway } from '../../lib/mediaUrl'
 import { PostOptionsMenu } from './PostOptionsMenu'
 import { Avatar, Button, Card, Divider, Input, Modal } from '../ui'
 import { useProfileStore } from '../../store/profileStore'
@@ -14,6 +17,10 @@ import { useAuthStore } from '../../store/authStore'
 
 type PostCardProps = {
   post: Post
+  /** Hide feed-only “dismiss” control (e.g. profile / activity pages). */
+  showDismiss?: boolean
+  /** Open the comment thread when the post has comments (e.g. profile activity matches feed). */
+  expandCommentsIfPresent?: boolean
 }
 
 function ReactionIcons(): JSX.Element {
@@ -26,34 +33,119 @@ function ReactionIcons(): JSX.Element {
   )
 }
 
-function PostCardComponent({ post }: PostCardProps): JSX.Element {
+function PostCardComponent({ post, showDismiss = true, expandCommentsIfPresent = false }: PostCardProps): JSX.Element {
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const authUser = useAuthStore((s) => s.user)
   const [localPost, setLocalPost] = useState(post)
   const [deleted, setDeleted] = useState(false)
   const [expanded, setExpanded] = useState(false)
-  const [liked, setLiked] = useState(post.liked_by_me)
+  const [likeBusy, setLikeBusy] = useState(false)
+  const [commentBusy, setCommentBusy] = useState(false)
+  const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null)
   const [commentsOpen, setCommentsOpen] = useState(false)
   const [commentText, setCommentText] = useState('')
   const [replyInputOpen, setReplyInputOpen] = useState<string | null>(null)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+
+  // Merge server identity when the feed refetches so author_member_id stays correct for delete, without
+  // clobbering local optimistic edits (content, counts) on unrelated parent re-renders.
+  useEffect(() => {
+    setLocalPost((prev) => {
+      if (prev.post_id !== post.post_id) return post
+      return {
+        ...prev,
+        author_member_id: post.author_member_id ?? prev.author_member_id,
+        author_name: post.author_name,
+        author_headline: post.author_headline,
+        author_avatar_url: post.author_avatar_url ?? prev.author_avatar_url,
+        reactions_count: post.reactions_count,
+        comments_count: post.comments_count,
+        liked_by_me: post.liked_by_me,
+        comments: Array.isArray(post.comments) ? post.comments : prev.comments,
+      }
+    })
+  }, [post])
+
+  const didAutoExpandForPost = useRef<string | null>(null)
+  useEffect(() => {
+    if (!expandCommentsIfPresent) return
+    if (didAutoExpandForPost.current === localPost.post_id) return
+    if (localPost.comments.length > 0 || localPost.comments_count > 0) {
+      setCommentsOpen(true)
+      didAutoExpandForPost.current = localPost.post_id
+    }
+  }, [expandCommentsIfPresent, localPost.comments.length, localPost.comments_count, localPost.post_id])
+
+  const imageDisplayUrl = useMemo(() => {
+    const u = localPost.media_url
+    if (!u || localPost.media_type !== 'image') return null
+    return rewriteMinioUrlForApiGateway(u) ?? u
+  }, [localPost.media_url, localPost.media_type])
 
   const contentShouldClamp = localPost.content.length > 180
-  const displayedReactions = useMemo(() => (liked ? localPost.reactions_count + 1 : localPost.reactions_count), [liked, localPost.reactions_count])
+  const displayedReactions = localPost.reactions_count
   const memberId = useProfileStore((s) => s.profile.member_id)
   const firstName = useProfileStore((s) => s.profile.first_name)
   const lastName = useProfileStore((s) => s.profile.last_name)
   const headline = useProfileStore((s) => s.profile.headline)
   const avatarUrl = useProfileStore((s) => s.profile.profile_photo_url)
   const profileName = `${firstName} ${lastName}`.trim()
+  /** Strict id match (profile or auth) — required for delete/edit. */
+  const canModifyPost =
+    memberIdsEqual(localPost.author_member_id, memberId) ||
+    memberIdsEqual(localPost.author_member_id, authUser?.member_id)
   const isOwnPost =
-    Boolean(memberId && localPost.author_member_id && localPost.author_member_id === memberId) ||
+    canModifyPost ||
     (localPost.author_degree === '1st' && (localPost.author_name === 'You' || localPost.author_name === profileName))
+  /** Match profile Activity tab when the feed marks this as your post but `author_member_id` was omitted. */
+  const shouldSyncProfileActivity = canModifyPost || (isOwnPost && Boolean(authUser?.member_id))
+
+  // When the feed refetches (e.g. someone else commented), keep profile Activity cards aligned.
+  useEffect(() => {
+    const authId = authUser?.member_id
+    if (!authId) return
+    const feedSaysOwn =
+      memberIdsEqual(post.author_member_id, authId) ||
+      memberIdsEqual(post.author_member_id, memberId) ||
+      (post.author_degree === '1st' && (post.author_name === 'You' || post.author_name === profileName))
+    if (!feedSaysOwn) return
+    const state = useProfileStore.getState()
+    if (!state.profile.activity_posts.some((a) => a.id === post.post_id)) return
+    const nextComments = post.comments_count
+    const nextReactions = post.reactions_count
+    state.patchProfile({
+      activity_posts: state.profile.activity_posts.map((a) =>
+        a.id === post.post_id
+          ? a.comments === nextComments && a.reactions === nextReactions
+            ? a
+            : { ...a, comments: nextComments, reactions: nextReactions }
+          : a,
+      ),
+    })
+  }, [
+    authUser?.member_id,
+    memberId,
+    post.author_degree,
+    post.author_member_id,
+    post.author_name,
+    post.comments_count,
+    post.post_id,
+    post.reactions_count,
+    profileName,
+  ])
+
   const authorName = isOwnPost ? profileName || 'You' : localPost.author_name
   const authorHeadline = isOwnPost ? headline || 'Add your headline' : localPost.author_headline
   const authorAvatar = isOwnPost ? avatarUrl || undefined : localPost.author_avatar_url ?? undefined
+  const authorMemberId = isOwnPost ? (memberId || authUser?.member_id || null) : (localPost.author_member_id || null)
   const isFollowingAuthor = isOwnPost || localPost.author_degree === '1st'
+
+  function invalidateFeedAndPostDetail(postId: string): void {
+    void queryClient.invalidateQueries({ queryKey: [FEED_QUERY_KEY] })
+    void queryClient.invalidateQueries({ queryKey: ['post', postId] })
+  }
 
   function updateCaches(mutator: (p: Post) => Post | null): void {
     queryClient.setQueriesData<{ pages: ListFeedResponse[]; pageParams: number[] }>({ queryKey: [FEED_QUERY_KEY] }, (existing) => {
@@ -80,7 +172,7 @@ function PostCardComponent({ post }: PostCardProps): JSX.Element {
     }
     setLocalPost((prev) => ({ ...prev, content: trimmed }))
     updateCaches((p) => (p.post_id === localPost.post_id ? { ...p, content: trimmed } : p))
-    if (isOwnPost) {
+    if (canModifyPost) {
       const state = useProfileStore.getState()
       state.patchProfile({
         activity_posts: state.profile.activity_posts.map((ap) =>
@@ -100,61 +192,166 @@ function PostCardComponent({ post }: PostCardProps): JSX.Element {
     updateCaches((p) => (p.post_id === localPost.post_id ? null : p))
   }
 
-  function confirmDeletePost(): void {
-    setDeleted(true)
-    updateCaches((p) => (p.post_id === localPost.post_id ? null : p))
-    if (isOwnPost) {
-      const state = useProfileStore.getState()
-      state.patchProfile({
-        activity_posts: state.profile.activity_posts.filter((ap) => ap.id !== localPost.post_id),
-      })
+  async function confirmDeletePost(): Promise<void> {
+    setDeleteBusy(true)
+    try {
+      await deletePost(localPost.post_id, localPost.author_member_id)
+      setDeleted(true)
+      updateCaches((p) => (p.post_id === localPost.post_id ? null : p))
+      invalidateFeedAndPostDetail(localPost.post_id)
+      if (canModifyPost) {
+        const state = useProfileStore.getState()
+        state.patchProfile({
+          activity_posts: state.profile.activity_posts.filter((ap) => ap.id !== localPost.post_id),
+        })
+      }
+      toast({ variant: 'success', title: 'Post deleted.' })
+      setDeleteConfirmOpen(false)
+    } catch (err: unknown) {
+      const ae = err as Partial<ApiError>
+      let desc = typeof ae.message === 'string' ? ae.message : 'Could not delete post.'
+      const d = ae.details
+      if (d && typeof d === 'object' && d !== null) {
+        const raw = d as Record<string, unknown>
+        if (typeof raw.details === 'string' && raw.details) desc = `${desc} — ${raw.details}`
+        else if (typeof raw.hint === 'string' && raw.hint) desc = `${desc} — ${raw.hint}`
+        else if (typeof raw.upstream_target === 'string') desc = `${desc} (${raw.upstream_target})`
+      }
+      toast({ variant: 'error', title: 'Delete failed', description: desc })
+    } finally {
+      setDeleteBusy(false)
     }
-    toast({ variant: 'success', title: 'Post deleted.' })
-    setDeleteConfirmOpen(false)
   }
 
-  function submitComment(): void {
+  async function submitComment(): Promise<void> {
     if (!commentText.trim()) return
+    if (!authUser?.member_id) {
+      toast({ variant: 'error', title: 'Sign in to comment.' })
+      return
+    }
     const nextText = commentText.trim()
-    const newComment: Post['comments'][number] = {
-      comment_id: `c-${Date.now()}`,
-      author_name: profileName || authUser?.full_name || 'You',
-      author_headline: headline || 'Add your headline',
-      author_avatar_url: avatarUrl || null,
-      text: nextText,
-      time_ago: 'now',
-    }
-    setLocalPost((prev) => ({
-      ...prev,
-      comments_count: prev.comments_count + 1,
-      comments: [newComment, ...prev.comments].slice(0, 2),
-    }))
-    if (isOwnPost) {
-      const state = useProfileStore.getState()
-      state.patchProfile({
-        activity_posts: state.profile.activity_posts.map((ap) =>
-          ap.id === localPost.post_id ? { ...ap, comments: ap.comments + 1 } : ap,
-        ),
+    setCommentBusy(true)
+    try {
+      const out = await addPostComment(localPost.post_id, nextText)
+      setCommentText('')
+      setLocalPost((prev) => ({
+        ...prev,
+        comments_count: out.comments_count,
+        comments: [out.comment, ...prev.comments.filter((c) => c.comment_id !== out.comment.comment_id)].slice(0, 8),
+      }))
+      updateCaches((p) =>
+        p.post_id === localPost.post_id
+          ? {
+              ...p,
+              comments_count: out.comments_count,
+              comments: [out.comment, ...p.comments.filter((c) => c.comment_id !== out.comment.comment_id)].slice(0, 8),
+            }
+          : p,
+      )
+      invalidateFeedAndPostDetail(localPost.post_id)
+      void queryClient.invalidateQueries({ queryKey: ['notifications'], exact: false })
+      if (shouldSyncProfileActivity) {
+        const state = useProfileStore.getState()
+        state.patchProfile({
+          activity_posts: state.profile.activity_posts.map((ap) =>
+            ap.id === localPost.post_id ? { ...ap, comments: out.comments_count } : ap,
+          ),
+        })
+      }
+      if (localPost.author_member_id) {
+        void ingestEvent({
+          event_type: 'post.engagement',
+          trace_id: crypto.randomUUID(),
+          timestamp: new Date().toISOString(),
+          actor_id: authUser.member_id,
+          entity: { entity_type: 'post', entity_id: localPost.post_id },
+          idempotency_key: `post-comment-${authUser.member_id}-${localPost.post_id}-${Date.now()}`,
+          metadata: { action: 'comment', target_member_id: localPost.author_member_id, text_length: nextText.length },
+        })
+      }
+    } catch (err: unknown) {
+      const ae = err as Partial<ApiError>
+      toast({
+        variant: 'error',
+        title: 'Could not post comment',
+        description: typeof ae.message === 'string' ? ae.message : 'Try again.',
       })
+    } finally {
+      setCommentBusy(false)
     }
-    if (authUser?.member_id && localPost.author_member_id) {
-      void ingestEvent({
-        event_type: 'post.engagement',
-        trace_id: crypto.randomUUID(),
-        timestamp: new Date().toISOString(),
-        actor_id: authUser.member_id,
-        entity: { entity_type: 'post', entity_id: localPost.post_id },
-        idempotency_key: `post-comment-${authUser.member_id}-${localPost.post_id}-${Date.now()}`,
-        metadata: { action: 'comment', target_member_id: localPost.author_member_id, text_length: nextText.length },
-      })
-    }
-    setCommentText('')
   }
 
-  function toggleLike(): void {
-    setLiked((prev) => {
-      const next = !prev
-      if (next && authUser?.member_id && localPost.author_member_id) {
+  function canDeleteCommentRow(c: Post['comments'][number]): boolean {
+    return (
+      memberIdsEqual(c.author_member_id, memberId) || memberIdsEqual(c.author_member_id, authUser?.member_id)
+    )
+  }
+
+  async function removeComment(commentId: string): Promise<void> {
+    if (!authUser?.member_id) return
+    const postId = localPost.post_id
+    setDeletingCommentId(commentId)
+    try {
+      const out = await deletePostComment(commentId)
+      setLocalPost((prev) => ({
+        ...prev,
+        comments_count: out.comments_count,
+        comments: prev.comments.filter((c) => c.comment_id !== commentId).slice(0, 8),
+      }))
+      updateCaches((p) =>
+        p.post_id === postId
+          ? {
+              ...p,
+              comments_count: out.comments_count,
+              comments: p.comments.filter((c) => c.comment_id !== commentId).slice(0, 8),
+            }
+          : p,
+      )
+      invalidateFeedAndPostDetail(postId)
+      if (shouldSyncProfileActivity) {
+        const state = useProfileStore.getState()
+        state.patchProfile({
+          activity_posts: state.profile.activity_posts.map((ap) =>
+            ap.id === postId ? { ...ap, comments: out.comments_count } : ap,
+          ),
+        })
+      }
+      toast({ variant: 'success', title: 'Comment deleted.' })
+    } catch (err: unknown) {
+      const ae = err as Partial<ApiError>
+      toast({
+        variant: 'error',
+        title: 'Could not delete comment',
+        description: typeof ae.message === 'string' ? ae.message : 'Try again.',
+      })
+    } finally {
+      setDeletingCommentId(null)
+    }
+  }
+
+  async function toggleLike(): Promise<void> {
+    if (!authUser?.member_id) {
+      toast({ variant: 'error', title: 'Sign in to like posts.' })
+      return
+    }
+    setLikeBusy(true)
+    try {
+      const out = await togglePostLike(localPost.post_id)
+      setLocalPost((p) => ({
+        ...p,
+        reactions_count: out.reactions_count,
+        liked_by_me: out.liked_by_me,
+      }))
+      updateCaches((p) =>
+        p.post_id === localPost.post_id
+          ? { ...p, reactions_count: out.reactions_count, liked_by_me: out.liked_by_me }
+          : p,
+      )
+      invalidateFeedAndPostDetail(localPost.post_id)
+      if (out.liked_by_me) {
+        void queryClient.invalidateQueries({ queryKey: ['notifications'], exact: false })
+      }
+      if (localPost.author_member_id) {
         void ingestEvent({
           event_type: 'post.engagement',
           trace_id: crypto.randomUUID(),
@@ -162,19 +359,30 @@ function PostCardComponent({ post }: PostCardProps): JSX.Element {
           actor_id: authUser.member_id,
           entity: { entity_type: 'post', entity_id: localPost.post_id },
           idempotency_key: `post-like-${authUser.member_id}-${localPost.post_id}-${Date.now()}`,
-          metadata: { action: 'like', target_member_id: localPost.author_member_id },
+          metadata: {
+            action: out.liked_by_me ? 'like' : 'unlike',
+            target_member_id: localPost.author_member_id,
+          },
         })
       }
-      if (isOwnPost) {
+      if (shouldSyncProfileActivity) {
         const state = useProfileStore.getState()
         state.patchProfile({
           activity_posts: state.profile.activity_posts.map((ap) =>
-            ap.id === localPost.post_id ? { ...ap, reactions: Math.max(0, ap.reactions + (next ? 1 : -1)) } : ap,
+            ap.id === localPost.post_id ? { ...ap, reactions: out.reactions_count } : ap,
           ),
         })
       }
-      return next
-    })
+    } catch (err: unknown) {
+      const ae = err as Partial<ApiError>
+      toast({
+        variant: 'error',
+        title: 'Could not update like',
+        description: typeof ae.message === 'string' ? ae.message : 'Try again.',
+      })
+    } finally {
+      setLikeBusy(false)
+    }
   }
 
   if (deleted) return <></>
@@ -185,22 +393,47 @@ function PostCardComponent({ post }: PostCardProps): JSX.Element {
       <Card.Body className="space-y-3 p-4">
         <header className="flex items-start justify-between gap-2">
           <div className="flex items-start gap-3">
-            <Avatar size="md" name={authorName} src={authorAvatar} />
-            <div>
-              <p className="text-sm font-semibold text-text-primary">
-                {authorName} <span className="font-normal text-text-secondary">• {localPost.author_degree}</span>
-              </p>
-              <p className="text-xs text-text-secondary">{authorHeadline}</p>
-              <p className="flex items-center gap-1 text-xs text-text-tertiary">
-                {localPost.created_time_ago}
-                <span>•</span>
-                <Globe2 className="h-3.5 w-3.5" aria-hidden />
-              </p>
-            </div>
+            {authorMemberId ? (
+              <Link to={`/in/${authorMemberId}`} className="flex items-start gap-3">
+                <Avatar size="md" name={authorName} src={authorAvatar} />
+                <div>
+                  <p className="text-sm font-semibold text-text-primary hover:underline">
+                    {authorName} <span className="font-normal text-text-secondary">• {localPost.author_degree}</span>
+                  </p>
+                  <p className="text-xs text-text-secondary">{authorHeadline}</p>
+                  <p className="flex items-center gap-1 text-xs text-text-tertiary">
+                    {localPost.created_time_ago}
+                    <span>•</span>
+                    <Globe2 className="h-3.5 w-3.5" aria-hidden />
+                  </p>
+                </div>
+              </Link>
+            ) : (
+              <>
+                <Avatar size="md" name={authorName} src={authorAvatar} />
+                <div>
+                  <p className="text-sm font-semibold text-text-primary">
+                    {authorName} <span className="font-normal text-text-secondary">• {localPost.author_degree}</span>
+                  </p>
+                  <p className="text-xs text-text-secondary">{authorHeadline}</p>
+                  <p className="flex items-center gap-1 text-xs text-text-tertiary">
+                    {localPost.created_time_ago}
+                    <span>•</span>
+                    <Globe2 className="h-3.5 w-3.5" aria-hidden />
+                  </p>
+                </div>
+              </>
+            )}
           </div>
           <div className="flex items-center gap-1">
-            <PostOptionsMenu variant="feed" post={localPost} isOwnPost={isOwnPost} onEditPost={onEditPost} onDeletePost={onDeletePost} />
-            {!isFollowingAuthor ? (
+            <PostOptionsMenu
+              variant="feed"
+              post={localPost}
+              isOwnPost={canModifyPost}
+              onEditPost={onEditPost}
+              onDeletePost={onDeletePost}
+            />
+            {showDismiss && !isFollowingAuthor ? (
               <button
                 type="button"
                 onClick={dismissPost}
@@ -224,16 +457,22 @@ function PostCardComponent({ post }: PostCardProps): JSX.Element {
           ) : null}
         </div>
 
-        {localPost.media_type === 'image' && localPost.media_url ? (
+        {localPost.media_type === 'image' && imageDisplayUrl ? (
           <div className="overflow-hidden rounded-md border border-border bg-black/5" style={{ aspectRatio: '16 / 9' }}>
-            <img src={localPost.media_url} alt="Post media" className="h-full w-full object-cover" />
+            <img src={imageDisplayUrl} alt="Post media" className="h-full w-full object-cover" />
           </div>
         ) : null}
 
         {localPost.media_type === 'article' ? (
           <a href="#" className="block overflow-hidden rounded-md border border-border bg-surface hover:bg-black/[0.03]">
             <div className="flex flex-col sm:flex-row">
-              {localPost.media_url ? <img src={localPost.media_url} alt="Article preview" className="h-28 w-full object-cover sm:w-44" /> : null}
+              {localPost.media_url ? (
+                <img
+                  src={rewriteMinioUrlForApiGateway(localPost.media_url) ?? localPost.media_url}
+                  alt="Article preview"
+                  className="h-28 w-full object-cover sm:w-44"
+                />
+              ) : null}
               <div className="p-3">
                 <p className="text-sm font-semibold text-text-primary">{localPost.article_title}</p>
                 <p className="mt-1 text-xs text-text-secondary">{localPost.article_source}</p>
@@ -275,11 +514,15 @@ function PostCardComponent({ post }: PostCardProps): JSX.Element {
         <div className="grid grid-cols-4 gap-1">
           <button
             type="button"
-            onClick={toggleLike}
-            className="flex items-center justify-center gap-1 rounded-md py-2 text-sm font-semibold text-text-secondary transition hover:bg-black/5"
+            disabled={likeBusy}
+            onClick={() => void toggleLike()}
+            className="flex items-center justify-center gap-1 rounded-md py-2 text-sm font-semibold text-text-secondary transition hover:bg-black/5 disabled:cursor-wait disabled:opacity-60"
           >
-            <ThumbsUp className={`h-4 w-4 transition ${liked ? 'scale-110 text-brand-primary' : ''}`} aria-hidden />
-            <span className={liked ? 'text-brand-primary' : ''}>Like</span>
+            <ThumbsUp
+              className={`h-4 w-4 transition ${localPost.liked_by_me ? 'scale-110 text-brand-primary' : ''}`}
+              aria-hidden
+            />
+            <span className={localPost.liked_by_me ? 'text-brand-primary' : ''}>Like</span>
           </button>
           <button type="button" onClick={() => setCommentsOpen((prev) => !prev)} className="flex items-center justify-center gap-1 rounded-md py-2 text-sm font-semibold text-text-secondary transition hover:bg-black/5">
             <MessageCircle className="h-4 w-4" aria-hidden /> Comment
@@ -302,14 +545,16 @@ function PostCardComponent({ post }: PostCardProps): JSX.Element {
                 onChange={(event) => setCommentText(event.target.value)}
                 onKeyDown={(event) => {
                   if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-                    submitComment()
+                    void submitComment()
                   }
                 }}
               />
-              <Button size="sm" onClick={submitComment}>Post</Button>
+              <Button size="sm" loading={commentBusy} disabled={commentBusy} onClick={() => void submitComment()}>
+                Post
+              </Button>
             </div>
 
-            {localPost.comments.slice(0, 2).map((comment) => (
+            {localPost.comments.slice(0, 8).map((comment) => (
               <div key={comment.comment_id} className="space-y-2">
                 <div className="flex items-start gap-2">
                   {comment.author_member_id ? (
@@ -319,7 +564,7 @@ function PostCardComponent({ post }: PostCardProps): JSX.Element {
                   ) : (
                     <Avatar size="sm" name={comment.author_name} src={comment.author_avatar_url ?? undefined} />
                   )}
-                  <div className="rounded-lg bg-surface p-2">
+                  <div className="min-w-0 flex-1 rounded-lg bg-surface p-2">
                     {comment.author_member_id ? (
                       <Link to={`/in/${comment.author_member_id}`} className="text-xs font-semibold text-text-primary hover:underline">
                         {comment.author_name}
@@ -331,9 +576,26 @@ function PostCardComponent({ post }: PostCardProps): JSX.Element {
                     <p className="mt-1 text-sm text-text-primary">{comment.text}</p>
                   </div>
                 </div>
-                <button type="button" className="ml-10 text-xs font-semibold text-text-secondary hover:text-text-primary" onClick={() => setReplyInputOpen(replyInputOpen === comment.comment_id ? null : comment.comment_id)}>
-                  Reply
-                </button>
+                <div className="ml-10 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    className="text-xs font-semibold text-text-secondary hover:text-text-primary"
+                    onClick={() => setReplyInputOpen(replyInputOpen === comment.comment_id ? null : comment.comment_id)}
+                  >
+                    Reply
+                  </button>
+                  {canDeleteCommentRow(comment) ? (
+                    <button
+                      type="button"
+                      disabled={deletingCommentId === comment.comment_id}
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-danger hover:text-danger/90 disabled:cursor-wait disabled:opacity-50"
+                      onClick={() => void removeComment(comment.comment_id)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                      Delete
+                    </button>
+                  ) : null}
+                </div>
                 {replyInputOpen === comment.comment_id ? (
                   <div className="ml-10 flex items-center gap-2">
                     <Input placeholder="Write a reply..." />
@@ -352,10 +614,10 @@ function PostCardComponent({ post }: PostCardProps): JSX.Element {
         <p className="text-sm text-text-secondary">This action cannot be undone. This post will be removed from your profile and feed.</p>
       </Modal.Body>
       <Modal.Footer>
-        <Button variant="tertiary" onClick={() => setDeleteConfirmOpen(false)}>
+        <Button type="button" variant="tertiary" onClick={() => setDeleteConfirmOpen(false)}>
           Cancel
         </Button>
-        <Button variant="destructive" onClick={confirmDeletePost}>
+        <Button type="button" variant="destructive" loading={deleteBusy} onClick={() => void confirmDeletePost()}>
           Delete
         </Button>
       </Modal.Footer>

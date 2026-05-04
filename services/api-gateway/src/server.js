@@ -1,8 +1,14 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import cors from 'cors';
 import http from 'node:http';
 import httpProxy from 'http-proxy';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Load services/api-gateway/.env even when `node src/server.js` is started from the repo root.
+dotenv.config({ path: path.join(__dirname, '../.env') });
 
 const app = express();
 app.disable('x-powered-by');
@@ -36,7 +42,8 @@ function pickUpstream(path) {
   if (path.startsWith('/recruiters')) return JOB_URL;
   if (path.startsWith('/jobs') || path.startsWith('/companies')) return JOB_URL;
   if (path.startsWith('/applications')) return APPLICATION_URL;
-  if (path.startsWith('/threads') || path.startsWith('/messages')) return MESSAGING_URL;
+  if (path.startsWith('/presence') || path.startsWith('/threads') || path.startsWith('/messages'))
+    return MESSAGING_URL;
   if (path.startsWith('/connections')) return CONNECTION_URL;
   if (path.startsWith('/events') || path.startsWith('/analytics')) return ANALYTICS_URL;
   if (path.startsWith('/posts')) return POSTS_URL;
@@ -210,22 +217,67 @@ app.all('*', async (req, res) => {
     const auth = req.header('authorization');
     if (auth) headers.authorization = auth;
 
+    let serializedBody;
+    try {
+      serializedBody =
+        req.method === 'GET' || req.method === 'HEAD' ? undefined : JSON.stringify(req.body ?? {});
+    } catch (serErr) {
+      return res.status(400).json({
+        message: 'Request body could not be serialized as JSON',
+        details: String(serErr?.message || serErr),
+      });
+    }
+
     const upstreamResp = await fetch(url, {
       method: req.method,
       headers,
-      body: req.method === 'GET' || req.method === 'HEAD' ? undefined : JSON.stringify(req.body ?? {}),
+      body: serializedBody,
     });
 
     const text = await upstreamResp.text();
-    const parsed = text ? JSON.parse(text) : null;
-
-    if (!upstreamResp.ok) {
-      return res.status(upstreamResp.status).json(normalizeErrorBody(parsed));
+    let parsed = null;
+    try {
+      parsed = text && String(text).trim() ? JSON.parse(text) : null;
+    } catch (parseErr) {
+      return res.status(upstreamResp.ok ? 502 : upstreamResp.status).json({
+        message: upstreamResp.ok ? 'Upstream returned invalid JSON' : 'Upstream error (invalid JSON)',
+        details: {
+          parse_error: String(parseErr?.message || parseErr),
+          body_preview: text?.slice(0, 500),
+          upstream_status: upstreamResp.status,
+          path: req.path,
+        },
+      });
     }
 
-    return res.status(upstreamResp.status).json(unwrap(parsed));
+    if (!upstreamResp.ok) {
+      return res
+        .status(upstreamResp.status)
+        .json(normalizeErrorBody(parsed ?? { message: text?.slice(0, 200) || 'Upstream error' }));
+    }
+
+    const out = unwrap(parsed);
+    try {
+      return res.status(upstreamResp.status).json(out !== undefined ? out : parsed);
+    } catch (jsonErr) {
+      return res.status(502).json({
+        message: 'Gateway could not serialize upstream response',
+        details: String(jsonErr?.message || jsonErr),
+        path: req.path,
+      });
+    }
   } catch (err) {
-    return res.status(500).json({ message: 'Gateway error', details: String(err?.message || err) });
+    const code = err?.code || err?.cause?.code;
+    const unreachable = code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'EAI_AGAIN';
+    return res.status(unreachable ? 502 : 500).json({
+      message: unreachable ? 'Upstream service unreachable' : 'Gateway error',
+      details: String(err?.message || err),
+      code: code || undefined,
+      upstream_target: `${upstream}${req.path}`,
+      hint: unreachable
+        ? 'Set POSTS_URL (and other *_URL) to a host:port the gateway can reach. Docker names like http://posts:8008 only work inside the Compose network; on the host use e.g. http://127.0.0.1:8008.'
+        : undefined,
+    });
   }
 });
 

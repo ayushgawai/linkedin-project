@@ -64,7 +64,15 @@ recruitersRouter.post('/recruiters/create', async (req, res, next) => {
       );
     } catch (err) {
       if (err.code === 'ER_DUP_ENTRY') {
-        throw new ApiError(409, 'DUPLICATE_EMAIL', 'A recruiter with that email already exists');
+        const msg = String(err.message || '');
+        const onMembers = /members\.|for key.*members/i.test(msg);
+        throw new ApiError(
+          409,
+          'DUPLICATE_EMAIL',
+          onMembers
+            ? 'That email is already registered as a member. Sign in as a member or use a different email for recruiter signup.'
+            : 'A recruiter with that email already exists',
+        );
       }
       throw err;
     }

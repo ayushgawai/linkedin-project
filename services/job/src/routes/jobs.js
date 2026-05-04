@@ -110,7 +110,8 @@ const CreateFrontendSchema = z.object({
   industry: z.string().max(200).optional().nullable(),
   company_id: z.string().optional().nullable(),
   company_name: z.string().max(300).optional().nullable(),
-  company_logo_url: z.string().url().max(500).optional().nullable(),
+  /** UI often sends ""; strict .url() rejects that and breaks the whole create payload. */
+  company_logo_url: z.union([z.string().url().max(500), z.literal(''), z.null()]).optional(),
   company_about: z.string().optional().nullable(),
   company_size: z.string().max(100).optional().nullable(),
   followers_count: z.number().int().nonnegative().optional().nullable(),
@@ -131,7 +132,9 @@ const CreatePytestSchema = z.object({
   salary_range: z.string().max(100).optional().nullable(),
 });
 
-const CreateSchema = z.union([CreateProfessorSchema, CreateFrontendSchema, CreatePytestSchema]);
+// Prefer the LinkedIn-style payload first so extra fields (skills, industry, …) do not fall through
+// to the minimal pytest shape and silently drop data.
+const CreateSchema = z.union([CreateFrontendSchema, CreatePytestSchema, CreateProfessorSchema]);
 
 // ── REST compatibility: recruiters + jobs ──────────────────────────────────────
 // The professor doc specifies POST-only RPC endpoints (/jobs/*). The project test
@@ -567,16 +570,30 @@ jobsRouter.post('/jobs/search', async (req, res, next) => {
       const where = ["j.status = 'open'"];
       const params = { page_size, offset };
 
-      if (filters.keyword && filters.keyword.length >= 3) {
-        where.push('MATCH(title, description, location) AGAINST (:kw IN NATURAL LANGUAGE MODE)');
-        params.kw = filters.keyword;
-      } else if (filters.keyword) {
-        where.push('(title LIKE :kw_like OR description LIKE :kw_like OR location LIKE :kw_like)');
-        params.kw_like = `%${filters.keyword}%`;
+      const kwRaw = filters.keyword != null ? String(filters.keyword).trim() : '';
+      if (kwRaw) {
+        params.kw_like = `%${kwRaw}%`;
+        // Avoid FULLTEXT stopwords / token rules: match role text and structured skills.
+        where.push(`(
+          LOWER(j.title) LIKE LOWER(:kw_like)
+          OR LOWER(j.description) LIKE LOWER(:kw_like)
+          OR LOWER(COALESCE(j.location, '')) LIKE LOWER(:kw_like)
+          OR EXISTS (
+            SELECT 1 FROM job_skills js_kw
+            WHERE js_kw.job_id = j.job_id AND LOWER(js_kw.skill) LIKE LOWER(:kw_like)
+          )
+        )`);
       }
       if (filters.location) {
-        where.push('j.location LIKE :loc');
-        params.loc = `%${filters.location}%`;
+        const loc = String(filters.location).trim();
+        params.loc = `%${loc}%`;
+        const cityPart = loc.split(',')[0].trim();
+        if (cityPart && cityPart !== loc) {
+          params.loc_city = `%${cityPart}%`;
+          where.push('(j.location LIKE :loc OR j.location LIKE :loc_city)');
+        } else {
+          where.push('j.location LIKE :loc');
+        }
       }
       const employment = filters.employment_type || (filters.type ? filters.type : undefined);
       if (employment && EMPLOYMENT.includes(employment)) {
@@ -593,27 +610,28 @@ jobsRouter.post('/jobs/search', async (req, res, next) => {
         params.industry = `%${filters.industry}%`;
       }
       const whereSql = `WHERE ${where.join(' AND ')}`;
+      const fromSql = `FROM jobs j
+         LEFT JOIN recruiters r ON r.recruiter_id = j.recruiter_id`;
 
       const [rows] = await pool.query(
-        `SELECT j.job_id, j.title, j.location, j.remote_type, j.employment_type,
+        `SELECT j.job_id, j.recruiter_id, j.title, j.description, j.location, j.remote_type, j.employment_type,
                 j.salary_range, j.posted_datetime, j.applicants_count, j.views_count,
-                r.company_name,
+                r.company_name, r.company_industry AS industry,
                 COUNT(js.skill) AS skill_count
-           FROM jobs j
-           LEFT JOIN recruiters r ON r.recruiter_id = j.recruiter_id
+           ${fromSql}
            LEFT JOIN job_skills js ON js.job_id = j.job_id
            ${whereSql}
-           GROUP BY j.job_id, j.title, j.location, j.remote_type, j.employment_type,
-                    j.salary_range, j.posted_datetime, j.applicants_count, j.views_count, r.company_name
-           ORDER BY skill_count DESC, j.posted_datetime DESC
+           GROUP BY j.job_id, j.recruiter_id, j.title, j.description, j.location, j.remote_type, j.employment_type,
+                    j.salary_range, j.posted_datetime, j.applicants_count, j.views_count, r.company_name, r.company_industry
+           ORDER BY j.posted_datetime DESC, skill_count DESC
            LIMIT :page_size OFFSET :offset`,
         params,
       );
       const [[{ total }]] = await pool.query(
-        `SELECT COUNT(*) AS total FROM jobs j ${whereSql}`,
+        `SELECT COUNT(DISTINCT j.job_id) AS total ${fromSql} ${whereSql}`,
         params,
       );
-      return { results: rows, total: Number(total), page: filters.page, page_size: filters.page_size };
+      return { results: rows, total: Number(total), page: filters.page, page_size };
     });
 
     return res.json(ok(data, req.traceId));
@@ -677,13 +695,29 @@ jobsRouter.get('/jobs/search', async (req, res, next) => {
       const where = ["j.status = 'open'"];
       const params = { page_size, offset };
 
-      if (filters.keyword) {
-        where.push('MATCH(title, description, location) AGAINST (:kw IN NATURAL LANGUAGE MODE)');
-        params.kw = filters.keyword;
+      const kwRaw = filters.keyword != null ? String(filters.keyword).trim() : '';
+      if (kwRaw) {
+        params.kw_like = `%${kwRaw}%`;
+        where.push(`(
+          LOWER(j.title) LIKE LOWER(:kw_like)
+          OR LOWER(j.description) LIKE LOWER(:kw_like)
+          OR LOWER(COALESCE(j.location, '')) LIKE LOWER(:kw_like)
+          OR EXISTS (
+            SELECT 1 FROM job_skills js_kw
+            WHERE js_kw.job_id = j.job_id AND LOWER(js_kw.skill) LIKE LOWER(:kw_like)
+          )
+        )`);
       }
       if (filters.location) {
-        where.push('j.location LIKE :loc');
-        params.loc = `%${filters.location}%`;
+        const loc = String(filters.location).trim();
+        params.loc = `%${loc}%`;
+        const cityPart = loc.split(',')[0].trim();
+        if (cityPart && cityPart !== loc) {
+          params.loc_city = `%${cityPart}%`;
+          where.push('(j.location LIKE :loc OR j.location LIKE :loc_city)');
+        } else {
+          where.push('j.location LIKE :loc');
+        }
       }
       if (filters.employment_type && EMPLOYMENT.includes(filters.employment_type)) {
         where.push('j.employment_type = :employment_type');
@@ -698,20 +732,21 @@ jobsRouter.get('/jobs/search', async (req, res, next) => {
         params.industry = `%${filters.industry}%`;
       }
       const whereSql = `WHERE ${where.join(' AND ')}`;
+      const fromSql = `FROM jobs j
+         LEFT JOIN recruiters r ON r.recruiter_id = j.recruiter_id`;
 
       const [rows] = await pool.query(
-        `SELECT j.job_id, j.title, j.location, j.remote_type, j.employment_type,
+        `SELECT j.job_id, j.recruiter_id, j.title, j.description, j.location, j.remote_type, j.employment_type,
                 j.salary_range, j.posted_datetime, j.applicants_count, j.views_count,
-                r.company_name
-           FROM jobs j
-           LEFT JOIN recruiters r ON r.recruiter_id = j.recruiter_id
+                r.company_name, r.company_industry AS industry
+           ${fromSql}
            ${whereSql}
            ORDER BY j.posted_datetime DESC
            LIMIT :page_size OFFSET :offset`,
         params,
       );
       const [[{ total }]] = await pool.query(
-        `SELECT COUNT(*) AS total FROM jobs j LEFT JOIN recruiters r ON r.recruiter_id = j.recruiter_id ${whereSql}`,
+        `SELECT COUNT(DISTINCT j.job_id) AS total ${fromSql} ${whereSql}`,
         params,
       );
       return { items: rows, total: Number(total), page: filters.page, limit: page_size };

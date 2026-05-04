@@ -2,6 +2,9 @@ import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { createPost } from '../../api/posts'
 import { CreatePostModal, FeaturedDevToCarousel, FeedTabs, PostFeed, StartPostCard, FEED_QUERY_KEY } from '../../components/feed'
+import { useToast } from '../../components/ui'
+import type { ApiError } from '../../types'
+import { useProfileStore } from '../../store/profileStore'
 import type { FeedSort, FeedTab, ListFeedResponse } from '../../types/feed'
 
 export default function FeedPage(): JSX.Element {
@@ -9,6 +12,7 @@ export default function FeedPage(): JSX.Element {
   const [sort, setSort] = useState<FeedSort>('top')
   const [modalOpen, setModalOpen] = useState(false)
   const queryClient = useQueryClient()
+  const { toast } = useToast()
 
   const createPostMutation = useMutation({
     mutationFn: createPost,
@@ -33,7 +37,21 @@ export default function FeedPage(): JSX.Element {
           }
         },
       )
+      useProfileStore.getState().addActivityPost({
+        id: newPost.post_id,
+        text: newPost.content,
+        image: newPost.media_type === 'image' ? newPost.media_url ?? null : null,
+        reactions: newPost.reactions_count,
+        comments: newPost.comments_count,
+      })
       setModalOpen(false)
+    },
+    onError: (error: ApiError) => {
+      toast({
+        variant: 'error',
+        title: 'Could not publish post',
+        description: error.message ?? 'Unexpected error.',
+      })
     },
   })
 

@@ -1,3 +1,4 @@
+export * from './ActivityFeedPost'
 export * from './CreatePostModal'
 export * from './FeaturedDevToCarousel'
 export * from './FeedTabs'

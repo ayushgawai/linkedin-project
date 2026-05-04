@@ -1,6 +1,8 @@
 import { CalendarDays, File, ImageIcon, PartyPopper, PlaySquare, Vote, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { Avatar, Button, Modal, Select, Textarea } from '../ui'
+import { currentMemberId, uploadPostMedia } from '../../api/posts'
+import { readFileAsDataUrl, readImageFileAsDataUrl } from '../../lib/imageUpload'
+import { Avatar, Button, Modal, Select, Textarea, useToast } from '../ui'
 import { useProfileStore } from '../../store/profileStore'
 import type { CreatePostPayload } from '../../types/feed'
 
@@ -12,16 +14,22 @@ type CreatePostModalProps = {
 }
 
 export function CreatePostModal({ isOpen, onClose, onCreatePost, isSubmitting }: CreatePostModalProps): JSX.Element {
+  const { toast } = useToast()
   const [content, setContent] = useState('')
   const [visibility, setVisibility] = useState<'anyone' | 'connections'>('anyone')
   const [activeTool, setActiveTool] = useState<'image' | 'video' | 'event' | 'celebrate' | 'poll' | 'article' | null>(null)
-  const [mediaUrl, setMediaUrl] = useState('')
+  /** Pasted or resolved HTTPS URL (not a blob preview). */
+  const [pastedMediaUrl, setPastedMediaUrl] = useState('')
+  const [pendingImageFile, setPendingImageFile] = useState<File | null>(null)
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null)
+  const [pendingVideoFile, setPendingVideoFile] = useState<File | null>(null)
   const [articleTitle, setArticleTitle] = useState('')
   const [articleSource, setArticleSource] = useState('')
   const [pollOptionA, setPollOptionA] = useState('')
   const [pollOptionB, setPollOptionB] = useState('')
   const [eventDate, setEventDate] = useState('')
   const [eventLabel, setEventLabel] = useState('')
+  const [localSubmitting, setLocalSubmitting] = useState(false)
   const imageInputRef = useRef<HTMLInputElement>(null)
   const videoInputRef = useRef<HTMLInputElement>(null)
   const docInputRef = useRef<HTMLInputElement>(null)
@@ -39,24 +47,37 @@ export function CreatePostModal({ isOpen, onClose, onCreatePost, isSubmitting }:
     { key: 'article', label: 'Article', icon: File },
   ] as const
 
+  function revokePreview(): void {
+    if (imagePreviewUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(imagePreviewUrl)
+    }
+    setImagePreviewUrl(null)
+  }
+
   useEffect(() => {
     if (!isOpen) {
       setContent('')
       setVisibility('anyone')
       setActiveTool(null)
-      setMediaUrl('')
+      setPastedMediaUrl('')
+      setPendingImageFile(null)
+      revokePreview()
+      setPendingVideoFile(null)
       setArticleTitle('')
       setArticleSource('')
       setPollOptionA('')
       setPollOptionB('')
       setEventDate('')
       setEventLabel('')
+      setLocalSubmitting(false)
     }
   }, [isOpen])
 
-  function buildPayload(): CreatePostPayload {
+  function buildPayload(resolvedMediaUrl?: string): CreatePostPayload {
     const trimmed = content.trim()
     const payload: CreatePostPayload = { content: trimmed, visibility }
+    const mediaUrl = resolvedMediaUrl ?? pastedMediaUrl.trim()
+
     if (activeTool === 'image' && mediaUrl) {
       payload.media_type = 'image'
       payload.media_url = mediaUrl
@@ -80,11 +101,74 @@ export function CreatePostModal({ isOpen, onClose, onCreatePost, isSubmitting }:
     return payload
   }
 
-  function submit(): void {
-    const payload = buildPayload()
-    if (!payload.content.trim()) return
-    onCreatePost(payload)
+  async function handleSubmit(): Promise<void> {
+    const trimmed = content.trim()
+    if (!trimmed) return
+    if (!currentMemberId()) {
+      toast({ variant: 'error', title: 'Sign in required', description: 'You need to be logged in to post.' })
+      return
+    }
+
+    let resolvedMediaUrl: string | undefined
+
+    try {
+      if (activeTool === 'image') {
+        if (pendingImageFile) {
+          setLocalSubmitting(true)
+          const { url: dataUrl, error: readErr } = await readImageFileAsDataUrl(pendingImageFile, 12)
+          if (readErr || !dataUrl) {
+            toast({ variant: 'error', title: 'Could not read image', description: readErr ?? 'Unknown error' })
+            setLocalSubmitting(false)
+            return
+          }
+          resolvedMediaUrl = await uploadPostMedia(dataUrl)
+        } else if (pastedMediaUrl.trim()) {
+          const u = pastedMediaUrl.trim()
+          if (u.startsWith('blob:')) {
+            toast({
+              variant: 'error',
+              title: 'Invalid image',
+              description: 'Re-select your photo with Upload — preview links cannot be saved.',
+            })
+            return
+          }
+          resolvedMediaUrl = u
+        }
+      }
+
+      if (activeTool === 'video') {
+        if (pendingVideoFile) {
+          setLocalSubmitting(true)
+          const { url: dataUrl, error: readErr } = await readFileAsDataUrl(pendingVideoFile, 35)
+          if (readErr || !dataUrl) {
+            toast({ variant: 'error', title: 'Could not read video', description: readErr ?? 'Unknown error' })
+            setLocalSubmitting(false)
+            return
+          }
+          resolvedMediaUrl = await uploadPostMedia(dataUrl)
+        } else if (pastedMediaUrl.trim()) {
+          const u = pastedMediaUrl.trim()
+          if (u.startsWith('blob:')) {
+            toast({ variant: 'error', title: 'Invalid video', description: 'Upload again or paste a hosted video URL.' })
+            return
+          }
+          resolvedMediaUrl = u
+        }
+      }
+
+      const payload = buildPayload(resolvedMediaUrl)
+      if (!payload.content.trim()) return
+
+      onCreatePost(payload)
+    } catch (err: unknown) {
+      const msg = err && typeof err === 'object' && 'message' in err ? String((err as { message: string }).message) : 'Upload failed'
+      toast({ variant: 'error', title: 'Could not publish post', description: msg })
+    } finally {
+      setLocalSubmitting(false)
+    }
   }
+
+  const busy = isSubmitting || localSubmitting
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Create a post" size="lg">
@@ -126,69 +210,166 @@ export function CreatePostModal({ isOpen, onClose, onCreatePost, isSubmitting }:
                 className="rounded-full p-1 text-text-secondary hover:bg-black/5"
                 onClick={() => {
                   setActiveTool(null)
-                  setMediaUrl('')
+                  setPastedMediaUrl('')
+                  setPendingImageFile(null)
+                  setPendingVideoFile(null)
+                  revokePreview()
                 }}
                 aria-label="Clear selected tool"
               >
-                <X className="h-4 w-4" />
+                <X className="h-4 w-4" aria-hidden />
               </button>
             </div>
 
             {activeTool === 'image' ? (
               <div className="space-y-2">
-                <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => {
-                  const file = e.target.files?.[0]
-                  if (file) setMediaUrl(URL.createObjectURL(file))
-                }} />
-                <Button variant="secondary" size="sm" onClick={() => imageInputRef.current?.click()}>Upload image</Button>
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    if (!file) return
+                    revokePreview()
+                    setPendingImageFile(file)
+                    setPastedMediaUrl('')
+                    setImagePreviewUrl(URL.createObjectURL(file))
+                  }}
+                />
+                <Button variant="secondary" size="sm" onClick={() => imageInputRef.current?.click()}>
+                  Upload image
+                </Button>
+                {imagePreviewUrl ? (
+                  <div className="overflow-hidden rounded-md border border-border">
+                    <img src={imagePreviewUrl} alt="" className="max-h-48 w-full object-cover" />
+                  </div>
+                ) : null}
                 <input
                   className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm"
-                  placeholder="or paste image URL"
-                  value={mediaUrl}
-                  onChange={(e) => setMediaUrl(e.target.value)}
+                  placeholder="or paste image URL (https://…)"
+                  value={pastedMediaUrl}
+                  onChange={(e) => {
+                    setPastedMediaUrl(e.target.value)
+                    setPendingImageFile(null)
+                    revokePreview()
+                  }}
                 />
               </div>
             ) : null}
 
             {activeTool === 'video' ? (
               <div className="space-y-2">
-                <input ref={videoInputRef} type="file" accept="video/*" className="hidden" onChange={(e) => {
-                  const file = e.target.files?.[0]
-                  if (file) setMediaUrl(URL.createObjectURL(file))
-                }} />
-                <Button variant="secondary" size="sm" onClick={() => videoInputRef.current?.click()}>Upload video</Button>
-                <input className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm" placeholder="Video title" value={articleTitle} onChange={(e) => setArticleTitle(e.target.value)} />
-                <input className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm" placeholder="Source (optional)" value={articleSource} onChange={(e) => setArticleSource(e.target.value)} />
+                <input
+                  ref={videoInputRef}
+                  type="file"
+                  accept="video/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    if (!file) return
+                    setPendingVideoFile(file)
+                    setPastedMediaUrl('')
+                  }}
+                />
+                <Button variant="secondary" size="sm" onClick={() => videoInputRef.current?.click()}>
+                  Upload video
+                </Button>
+                {pendingVideoFile ? <p className="text-xs text-text-secondary">Selected: {pendingVideoFile.name}</p> : null}
+                <input
+                  className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm"
+                  placeholder="Video title"
+                  value={articleTitle}
+                  onChange={(e) => setArticleTitle(e.target.value)}
+                />
+                <input
+                  className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm"
+                  placeholder="Source (optional)"
+                  value={articleSource}
+                  onChange={(e) => setArticleSource(e.target.value)}
+                />
+                <input
+                  className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm"
+                  placeholder="or paste hosted video URL"
+                  value={pastedMediaUrl}
+                  onChange={(e) => {
+                    setPastedMediaUrl(e.target.value)
+                    setPendingVideoFile(null)
+                  }}
+                />
               </div>
             ) : null}
 
             {activeTool === 'article' ? (
               <div className="space-y-2">
-                <input ref={docInputRef} type="file" accept=".pdf,.doc,.docx,.ppt,.pptx" className="hidden" onChange={(e) => {
-                  const file = e.target.files?.[0]
-                  if (file) {
-                    setArticleTitle(file.name)
-                    setMediaUrl('')
-                  }
-                }} />
-                <Button variant="secondary" size="sm" onClick={() => docInputRef.current?.click()}>Attach document</Button>
-                <input className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm" placeholder="Article/document title" value={articleTitle} onChange={(e) => setArticleTitle(e.target.value)} />
-                <input className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm" placeholder="Preview image URL (optional)" value={mediaUrl} onChange={(e) => setMediaUrl(e.target.value)} />
-                <input className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm" placeholder="Source (optional)" value={articleSource} onChange={(e) => setArticleSource(e.target.value)} />
+                <input
+                  ref={docInputRef}
+                  type="file"
+                  accept=".pdf,.doc,.docx,.ppt,.pptx"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    if (file) {
+                      setArticleTitle(file.name)
+                      setPastedMediaUrl('')
+                    }
+                  }}
+                />
+                <Button variant="secondary" size="sm" onClick={() => docInputRef.current?.click()}>
+                  Attach document
+                </Button>
+                <input
+                  className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm"
+                  placeholder="Article/document title"
+                  value={articleTitle}
+                  onChange={(e) => setArticleTitle(e.target.value)}
+                />
+                <input
+                  className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm"
+                  placeholder="Preview image URL (optional)"
+                  value={pastedMediaUrl}
+                  onChange={(e) => setPastedMediaUrl(e.target.value)}
+                />
+                <input
+                  className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm"
+                  placeholder="Source (optional)"
+                  value={articleSource}
+                  onChange={(e) => setArticleSource(e.target.value)}
+                />
               </div>
             ) : null}
 
             {activeTool === 'poll' ? (
               <div className="space-y-2">
-                <input className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm" placeholder="Option 1" value={pollOptionA} onChange={(e) => setPollOptionA(e.target.value)} />
-                <input className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm" placeholder="Option 2" value={pollOptionB} onChange={(e) => setPollOptionB(e.target.value)} />
+                <input
+                  className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm"
+                  placeholder="Option 1"
+                  value={pollOptionA}
+                  onChange={(e) => setPollOptionA(e.target.value)}
+                />
+                <input
+                  className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm"
+                  placeholder="Option 2"
+                  value={pollOptionB}
+                  onChange={(e) => setPollOptionB(e.target.value)}
+                />
               </div>
             ) : null}
 
             {activeTool === 'event' || activeTool === 'celebrate' ? (
               <div className="space-y-2">
-                <input className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm" placeholder={activeTool === 'event' ? 'Event title' : 'What are you celebrating?'} value={eventLabel} onChange={(e) => setEventLabel(e.target.value)} />
-                <input type="date" className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm" value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
+                <input
+                  className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm"
+                  placeholder={activeTool === 'event' ? 'Event title' : 'What are you celebrating?'}
+                  value={eventLabel}
+                  onChange={(e) => setEventLabel(e.target.value)}
+                />
+                <input
+                  type="date"
+                  className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm"
+                  value={eventDate}
+                  onChange={(e) => setEventDate(e.target.value)}
+                />
                 <Button
                   variant="secondary"
                   size="sm"
@@ -220,11 +401,7 @@ export function CreatePostModal({ isOpen, onClose, onCreatePost, isSubmitting }:
         </div>
       </Modal.Body>
       <Modal.Footer>
-        <Button
-          disabled={!content.trim()}
-          loading={isSubmitting}
-          onClick={submit}
-        >
+        <Button disabled={!content.trim()} loading={busy} onClick={() => void handleSubmit()}>
           Post
         </Button>
       </Modal.Footer>

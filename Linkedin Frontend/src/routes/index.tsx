@@ -37,7 +37,7 @@ const RecruiterDashboardPage = lazy(() => import('../features/recruiter/Recruite
 const JobPostingActivityPage = lazy(() => import('../features/recruiter/JobPostingActivityPage'))
 const RecruiterJobsPage = lazy(() => import('../features/recruiter/RecruiterJobsPage'))
 const RecruiterJobFormPage = lazy(() => import('../features/recruiter/RecruiterJobFormPage'))
-const RecruiterApplicantsPage = lazy(() => import('../features/recruiter/RecruiterApplicantsPage'))
+const RecruiterApplicantsRedirect = lazy(() => import('../features/recruiter/RecruiterApplicantsRedirect'))
 const RecruiterAiPage = lazy(() => import('../features/recruiter/RecruiterAiPage'))
 const CareerCoachPage = lazy(() => import('../features/ai/CareerCoachPage'))
 const SettingsPage = lazy(() => import('./RoutePlaceholders').then((m) => ({ default: m.SettingsPage })))
@@ -102,7 +102,7 @@ export const router = createBrowserRouter([
             path: 'jobs/:jobId/applicants',
             element: (
               <RecruiterJobFeatureGate>
-                <LazyPage component={RecruiterApplicantsPage} />
+                <LazyPage component={RecruiterApplicantsRedirect} />
               </RecruiterJobFeatureGate>
             ),
           },
@@ -197,7 +197,7 @@ export const router = createBrowserRouter([
           { path: 'recruiter/jobs', element: <LazyPage component={RecruiterJobsPage} /> },
           { path: 'recruiter/jobs/new', element: <LazyPage component={RecruiterJobFormPage} /> },
           { path: 'recruiter/jobs/:jobId/edit', element: <LazyPage component={RecruiterJobFormPage} /> },
-          { path: 'recruiter/jobs/:jobId/applicants', element: <LazyPage component={RecruiterApplicantsPage} /> },
+          { path: 'recruiter/jobs/:jobId/applicants', element: <LazyPage component={RecruiterApplicantsRedirect} /> },
           { path: 'recruiter/ai', element: <LazyPage component={RecruiterAiPage} /> },
         ],
       },

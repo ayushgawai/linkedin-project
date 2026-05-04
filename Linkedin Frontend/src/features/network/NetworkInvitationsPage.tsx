@@ -42,6 +42,7 @@ export default function NetworkInvitationsPage(): JSX.Element {
       patchProfile({ connections_count: currentConnections + 1 })
       void queryClient.invalidateQueries({ queryKey: ['pending-invitations', user?.member_id] })
       void queryClient.invalidateQueries({ queryKey: ['connections', user?.member_id] })
+      void queryClient.invalidateQueries({ queryKey: ['notifications'] })
     },
   })
 
@@ -49,6 +50,7 @@ export default function NetworkInvitationsPage(): JSX.Element {
     mutationFn: rejectConnection,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['pending-invitations', user?.member_id] })
+      void queryClient.invalidateQueries({ queryKey: ['notifications'] })
     },
   })
 

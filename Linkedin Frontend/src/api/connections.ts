@@ -14,7 +14,7 @@
 // Auth: Bearer token via src/api/client.ts interceptor
 // ============================================
 
-import { USE_MOCKS, apiClient, mockDelay } from './client'
+import { USE_MOCKS, apiClient, mockDelay, unwrapApiData } from './client'
 import type { Connection } from '../types'
 import { PENDING_CONNECTION_INVITATIONS } from '../lib/networkInvitationsData'
 import { useAuthStore } from '../store/authStore'
@@ -192,8 +192,9 @@ export async function listPendingInvitations(user_id: string): Promise<Connectio
     seedForUser(user_id)
     return mockInvitations.filter((inv) => inv.addressee_member_id === user_id)
   }
-  const response = await apiClient.post<ConnectionInvitation[]>('/connections/pending', { user_id })
-  const invitations = response.data ?? []
+  const response = await apiClient.post<unknown>('/connections/pending', { user_id })
+  const raw = unwrapApiData<ConnectionInvitation[]>(response.data)
+  const invitations = Array.isArray(raw) ? raw : []
   // Enrich requester display info (works for both members + recruiters).
   const uniqueRequesterIds = Array.from(new Set(invitations.map((i) => i.requester_member_id).filter(Boolean)))
   const requesterMap = new Map<string, { name: string; headline: string }>()
@@ -203,7 +204,7 @@ export async function listPendingInvitations(user_id: string): Promise<Connectio
         const m = await getMember(rid)
         requesterMap.set(rid, { name: m.full_name, headline: m.headline ?? 'Professional' })
       } catch {
-        requesterMap.set(rid, { name: `Member ${rid.slice(0, 6)}`, headline: 'Professional' })
+        /* Use name/headline from connection service; avoid showing raw member IDs. */
       }
     }),
   )

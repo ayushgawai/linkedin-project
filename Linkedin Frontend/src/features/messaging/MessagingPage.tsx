@@ -56,7 +56,7 @@ const MessageBubble = memo(function MessageBubble({
   const hasText = Boolean(message.text?.trim())
   return (
     <div
-      className={`max-w-[74%] rounded-2xl px-3 py-2 text-sm ${mine ? 'bg-brand-primary text-white' : 'bg-black/5 text-text-primary'}`}
+      className={`w-fit max-w-full rounded-2xl px-3 py-2 text-sm ${mine ? 'bg-brand-primary text-white' : 'bg-black/5 text-text-primary'}`}
     >
       {message.image_url ? (
         <img
@@ -191,6 +191,7 @@ export default function MessagingPage(): JSX.Element {
     },
     enabled: Boolean(user),
     staleTime: 0,
+    refetchInterval: 25_000,
   })
 
   const tabFilteredThreads = useMemo(() => {
@@ -381,6 +382,7 @@ export default function MessagingPage(): JSX.Element {
       setPendingAttachment(null)
       void queryClient.invalidateQueries({ queryKey: ['threads', user?.member_id] })
       void queryClient.invalidateQueries({ queryKey: ['threads'] })
+      void queryClient.invalidateQueries({ queryKey: ['notifications'], exact: false })
       if (activeThreadId) broadcastMessagingThreadUpdate(activeThreadId)
     },
     onError: (_error, variables) => {
@@ -739,7 +741,9 @@ export default function MessagingPage(): JSX.Element {
                                       </div>
                                     </div>
                                   ) : (
-                                    <MessageBubble message={message} mine />
+                                    <div className="flex min-w-0 flex-1 justify-end">
+                                      <MessageBubble message={message} mine />
+                                    </div>
                                   )}
                                   {sentStatusLabel ? (
                                     <span className="shrink-0 text-[10px] leading-none text-text-tertiary">{sentStatusLabel}</span>
@@ -776,7 +780,7 @@ export default function MessagingPage(): JSX.Element {
                               ) : (
                                 <span className="h-6 w-6 shrink-0" aria-hidden />
                               )}
-                              <div className="flex min-w-0 max-w-[78%] flex-col gap-0.5">
+                              <div className="flex min-w-0 max-w-[78%] flex-col items-start gap-0.5">
                                 <MessageBubble message={message} mine={false} />
                                 <span className="invisible pl-1 text-[10px] text-text-tertiary group-hover:visible">
                                   {new Date(message.sent_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

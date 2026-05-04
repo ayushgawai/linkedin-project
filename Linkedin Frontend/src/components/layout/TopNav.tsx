@@ -10,10 +10,11 @@ import {
   Users,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
-import { cloneElement, isValidElement, useMemo, useRef, useState, type ReactElement } from 'react'
+import { cloneElement, isValidElement, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { NavLink, Link, useLocation, useNavigate } from 'react-router-dom'
-import { listNotifications } from '../../api/notifications'
 import { searchMembers } from '../../api/profile'
+import { listNotifications } from '../../api/notifications'
+import { useConnectionNotificationPoll } from '../../hooks/useConnectionNotificationPoll'
 import { useOutcomeNotificationSync } from '../../hooks/useOutcomeNotificationSync'
 import { Avatar, Dropdown, Input } from '../ui'
 import { BrandMark } from './BrandMark'
@@ -25,6 +26,7 @@ import { cn } from '../../lib/cn'
 import { useClickOutside } from '../../hooks/useClickOutside'
 import { DIRECTORY_MEMBERS } from '../../lib/profileDirectory'
 import { MOCK_JOBS } from '../../lib/jobsMockData'
+import type { Member } from '../../types'
 
 type SearchSuggestion = {
   id: string
@@ -33,6 +35,17 @@ type SearchSuggestion = {
   typeLabel: 'People' | 'Jobs' | 'Events' | 'News' | 'Groups' | 'Newsletters'
   to: string
   memberId?: string
+}
+
+function memberToPeopleSuggestion(m: Member): SearchSuggestion {
+  return {
+    id: `person-${m.member_id}`,
+    title: m.full_name,
+    subtitle: [m.headline, m.location].filter(Boolean).join(' · ') || 'Member',
+    typeLabel: 'People',
+    to: `/in/${m.member_id}`,
+    memberId: m.member_id,
+  }
 }
 
 function NavItem({
@@ -94,6 +107,7 @@ function NavItem({
 
 export function TopNav(): JSX.Element {
   useOutcomeNotificationSync()
+  useConnectionNotificationPoll(5000)
   const user = useAuthStore((state) => state.user)
   const clearAuth = useAuthStore((state) => state.clearAuth)
   const memberId = useProfileStore((s) => s.profile.member_id)
@@ -126,18 +140,20 @@ export function TopNav(): JSX.Element {
   )
   const activityPath = `${profilePath}/activity`
   const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const searchWrapRef = useRef<HTMLDivElement>(null)
   useClickOutside(searchWrapRef, () => setSearchOpen(false), searchOpen)
 
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebouncedQuery(searchQuery.trim()), 320)
+    return () => window.clearTimeout(id)
+  }, [searchQuery])
+
   const memberSearchQuery = useQuery({
-    queryKey: ['nav-member-search', searchQuery.trim()],
-    queryFn: async () => {
-      const q = searchQuery.trim()
-      if (!q) return []
-      return searchMembers({ query: q })
-    },
-    enabled: searchOpen && searchQuery.trim().length > 0,
+    queryKey: ['nav-search-members', debouncedQuery],
+    queryFn: () => searchMembers({ query: debouncedQuery }),
+    enabled: Boolean(user?.member_id) && debouncedQuery.length >= 2,
     staleTime: 30_000,
   })
 
@@ -150,11 +166,9 @@ export function TopNav(): JSX.Element {
       full_name: displayName,
       headline: headline || 'Add your headline',
     }
-    const remoteMatches = memberSearchQuery.data ?? []
-    const people = [ownMember, ...remoteMatches, ...DIRECTORY_MEMBERS]
-      .filter((member, index, list) => list.findIndex((candidate) => candidate.member_id === member.member_id) === index)
+    const peopleLocal = [ownMember, ...DIRECTORY_MEMBERS]
       .filter((m) => `${m.full_name} ${m.headline ?? ''}`.toLowerCase().includes(q))
-      .slice(0, 3)
+      .slice(0, 6)
       .map((m) => ({
         id: `person-${m.member_id}`,
         title: m.full_name,
@@ -163,6 +177,14 @@ export function TopNav(): JSX.Element {
         to: `/in/${m.member_id}`,
         memberId: m.member_id,
       }))
+
+    let people: SearchSuggestion[] = peopleLocal
+    if (debouncedQuery.length >= 2 && memberSearchQuery.data && memberSearchQuery.data.length > 0) {
+      const fromApi = memberSearchQuery.data.map(memberToPeopleSuggestion)
+      const seen = new Set(fromApi.map((p) => p.memberId).filter(Boolean))
+      const extraLocal = peopleLocal.filter((p) => p.memberId && !seen.has(p.memberId))
+      people = [...fromApi, ...extraLocal].slice(0, 8)
+    }
 
     const jobs = MOCK_JOBS.filter((j) => `${j.title} ${j.company_name} ${j.location}`.toLowerCase().includes(q))
       .slice(0, 3)
@@ -201,7 +223,7 @@ export function TopNav(): JSX.Element {
       .map((n) => ({ ...n, typeLabel: 'Newsletters' as const }))
 
     return [...people, ...jobs, ...events, ...news, ...groups, ...newsletters].slice(0, 10)
-  }, [displayName, headline, memberId, memberSearchQuery.data, searchQuery, user?.member_id])
+  }, [debouncedQuery, displayName, headline, memberId, memberSearchQuery.data, searchQuery, user?.member_id])
 
   function navigateFromSearch(item: SearchSuggestion): void {
     navigate(item.to)
@@ -254,6 +276,9 @@ export function TopNav(): JSX.Element {
             />
             {searchOpen && searchQuery.trim() ? (
               <div className="absolute left-0 right-0 top-[44px] z-50 overflow-hidden rounded-xl border border-[#d0d0d0] bg-white shadow-[0_4px_12px_rgba(0,0,0,0.15)]">
+                {memberSearchQuery.isFetching && debouncedQuery.length >= 2 ? (
+                  <p className="border-b border-[#ebebeb] px-3 py-2 text-xs text-[#666666]">Searching members…</p>
+                ) : null}
                 {searchSuggestions.length > 0 ? (
                   <ul className="max-h-[360px] overflow-y-auto py-1">
                     {searchSuggestions.map((item) => (
@@ -276,8 +301,6 @@ export function TopNav(): JSX.Element {
                       </li>
                     ))}
                   </ul>
-                ) : memberSearchQuery.isFetching ? (
-                  <p className="px-3 py-3 text-sm text-[#666666]">Searching…</p>
                 ) : (
                   <p className="px-3 py-3 text-sm text-[#666666]">No matches found.</p>
                 )}

@@ -55,7 +55,9 @@ function AppLeftRail({ user: authUser }: { user: Member }): JSX.Element {
   const { data, isPending } = useQuery({
     queryKey: ['member-dashboard', mergedUser.member_id, '7d'],
     queryFn: () => getMemberDashboard(mergedUser.member_id, '7d'),
-    staleTime: 60_000,
+    staleTime: 0,
+    refetchInterval: 10_000,
+    refetchOnWindowFocus: true,
   })
   return (
     <LeftRail
@@ -90,6 +92,8 @@ export function AppShell({ leftRail, rightRail, protectedRoute = true, mainColum
     [pathWithoutTrailingSlash],
   )
   const isJobsHubRoute = useMemo(() => isJobsHubMinimalRailsPath(pathWithoutTrailingSlash), [pathWithoutTrailingSlash])
+  const isRecruiterHubRoute =
+    pathWithoutTrailingSlash === '/recruiter' || pathWithoutTrailingSlash.startsWith('/recruiter/')
 
   if (protectedRoute && !user) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />
@@ -99,13 +103,23 @@ export function AppShell({ leftRail, rightRail, protectedRoute = true, mainColum
   const hideLeftRailColumn =
     (leftRail === null && rightRail !== null) ||
     (leftRail === undefined && isJobsHubRoute && rightRail !== null)
-  const hideRightRailColumn = isJobsHubRoute && rightRail === undefined
+  const hideRightRailColumn = (isJobsHubRoute && rightRail === undefined) || rightRail === null
+
+  /** Narrow fixed-width nav + fluid main (aligned with Quick tips ~17rem). */
+  const isRecruiterHubShell = isRecruiterHubRoute && !hideLeftRailColumn && hideRightRailColumn
+
+  const pageContainerShellClass = cn(
+    'pt-4',
+    isRecruiterHubShell && 'max-w-none px-4 sm:px-6 lg:px-8 xl:px-10',
+    isRecruiterHubShell &&
+      'lg:grid-cols-[minmax(0,17rem)_minmax(0,1fr)] xl:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]',
+  )
 
   return (
     <div className="min-h-screen bg-surface pb-20 lg:pb-0">
       <TopNav />
       {noSidebars ? (
-        <PageContainer className="pt-4">
+        <PageContainer className={pageContainerShellClass}>
           <main
             id="main-content"
             className={cn('col-span-12 min-h-[calc(100vh-90px)]', mainColumnClassName)}
@@ -114,9 +128,14 @@ export function AppShell({ leftRail, rightRail, protectedRoute = true, mainColum
           </main>
         </PageContainer>
       ) : (
-        <PageContainer className="pt-4">
+        <PageContainer className={pageContainerShellClass}>
           {!hideLeftRailColumn ? (
-            <div className="hidden lg:col-span-3 lg:block">
+            <div
+              className={cn(
+                'hidden min-w-0 lg:block',
+                isRecruiterHubShell ? 'col-span-12 lg:col-span-1' : 'lg:col-span-3',
+              )}
+            >
               {leftRail === undefined ? (
                 isProfileRoute ? (
                   <ProfileLeftRail />
@@ -133,13 +152,18 @@ export function AppShell({ leftRail, rightRail, protectedRoute = true, mainColum
           <main
             id="main-content"
             className={cn(
-              'col-span-12 min-h-[calc(100vh-90px)] md:col-span-8',
-              hideLeftRailColumn && hideRightRailColumn
-                ? 'lg:col-span-12'
-                : hideLeftRailColumn
-                  ? 'lg:col-span-8'
-                  : 'lg:col-span-6',
-              mainColumnClassName,
+              'col-span-12 min-h-[calc(100vh-90px)]',
+              isRecruiterHubShell
+                ? 'min-w-0 lg:col-span-1'
+                : cn(
+                    'md:col-span-8',
+                    hideLeftRailColumn && hideRightRailColumn
+                      ? 'lg:col-span-12'
+                      : hideLeftRailColumn
+                        ? 'lg:col-span-8'
+                        : 'lg:col-span-6',
+                    mainColumnClassName,
+                  ),
             )}
           >
             <Outlet />

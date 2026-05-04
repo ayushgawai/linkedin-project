@@ -22,6 +22,8 @@ export default function JobsDiscoveryPage(): JSX.Element {
   const saveJob = useSavedJobsStore((s) => s.save)
   const removeSavedJob = useSavedJobsStore((s) => s.remove)
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => new Set())
+  const [keywordDraft, setKeywordDraft] = useState('')
+  const [keywordFilter, setKeywordFilter] = useState('')
   const [locationDraft, setLocationDraft] = useState('')
   const [locationFilter, setLocationFilter] = useState('')
   const [remoteOnly, setRemoteOnly] = useState(false)
@@ -36,15 +38,21 @@ export default function JobsDiscoveryPage(): JSX.Element {
   }, [locationDraft])
 
   useEffect(() => {
+    const t = window.setTimeout(() => setKeywordFilter(keywordDraft.trim()), 320)
+    return () => window.clearTimeout(t)
+  }, [keywordDraft])
+
+  useEffect(() => {
     setDismissedIds(new Set())
-  }, [locationFilter, remoteOnly])
+  }, [locationFilter, remoteOnly, keywordFilter])
 
   const query = useInfiniteQuery({
-    queryKey: ['jobs-discovery', locationFilter, remoteOnly],
+    queryKey: ['jobs-discovery', keywordFilter, locationFilter, remoteOnly],
     queryFn: ({ pageParam }) =>
       listJobs({
         page: pageParam,
         pageSize: 15,
+        keyword: keywordFilter || undefined,
         location: locationFilter || undefined,
         remote: remoteOnly || undefined,
       }),
@@ -98,12 +106,14 @@ export default function JobsDiscoveryPage(): JSX.Element {
   }
 
   function clearLocationFilters(): void {
+    setKeywordDraft('')
+    setKeywordFilter('')
     setLocationDraft('')
     setLocationFilter('')
     setRemoteOnly(false)
   }
 
-  const hasActiveFilters = Boolean(locationFilter) || remoteOnly
+  const hasActiveFilters = Boolean(keywordFilter) || Boolean(locationFilter) || remoteOnly
 
   return (
     <div className="grid grid-cols-12 gap-4 pb-6">
@@ -141,8 +151,14 @@ export default function JobsDiscoveryPage(): JSX.Element {
               </Button>
             </div>
             <Input
+              label="Search titles, companies, or skills"
+              placeholder="e.g. data analytics, Python, marketing"
+              value={keywordDraft}
+              onChange={(e) => setKeywordDraft(e.target.value)}
+            />
+            <Input
               label="Filter by location"
-              placeholder="City, state, or region"
+              placeholder="City, state, or region (not job title)"
               value={locationDraft}
               onChange={(e) => setLocationDraft(e.target.value)}
               rightIcon={<LocateFixed className="h-4 w-4" aria-hidden />}
@@ -193,7 +209,7 @@ export default function JobsDiscoveryPage(): JSX.Element {
               <p className="px-1 py-6 text-center text-sm text-text-secondary">
                 {jobs.length === 0
                   ? hasActiveFilters
-                    ? 'No jobs match this location or remote filter. Try another city or turn off Remote only.'
+                    ? 'No jobs match these filters. For role keywords use Search titles above (not location), or try Advanced search.'
                     : 'No jobs to show yet.'
                   : 'No jobs left in this list — load more or refresh the page.'}
               </p>
@@ -242,7 +258,10 @@ export default function JobsDiscoveryPage(): JSX.Element {
         <Card>
           <Card.Header><h2 className="text-lg font-semibold">Search tips</h2></Card.Header>
           <Card.Body className="space-y-2 text-sm text-text-secondary">
-            <p>Use location and Remote only on the left, or open Advanced search for keywords plus filters together.</p>
+            <p>
+              Use <strong>Search titles</strong> for role or skill keywords (e.g. data analytics). Use <strong>location</strong> only for cities or regions.
+              Remote only narrows to remote listings.
+            </p>
             <Link to="/jobs/search" className="inline-block font-semibold text-brand-primary hover:underline">
               Open job search
             </Link>

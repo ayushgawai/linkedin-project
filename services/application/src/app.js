@@ -25,10 +25,93 @@ function validateSubmitPayload(body) {
   return {
     job_id: requireString(body.job_id, 'job_id'),
     member_id: requireString(body.member_id, 'member_id'),
+    contact_email: optionalString(body.contact_email),
+    contact_phone: optionalString(body.contact_phone),
     resume_url: optionalString(body.resume_url),
     resume_text: optionalString(body.resume_text),
     cover_letter: optionalString(body.cover_letter),
     answers: body.answers && typeof body.answers === 'object' ? body.answers : null
+  };
+}
+
+/**
+ * `applications.member_id` FK targets `members`. Recruiters use `member_id === recruiter_id` but may not
+ * have a mirror `members` row until profile update. Materialize the same stub row as profile service.
+ */
+async function ensureApplicantMemberRow(connection, memberId) {
+  const [existing] = await connection.execute('SELECT member_id FROM members WHERE member_id = ? LIMIT 1', [memberId]);
+  if (existing.length) return true;
+
+  const [recRows] = await connection.execute(
+    'SELECT recruiter_id, name, email, phone, company_name FROM recruiters WHERE recruiter_id = ? LIMIT 1',
+    [memberId],
+  );
+  if (!recRows.length) return false;
+
+  const r = recRows[0];
+  const full = String(r.name || 'Recruiter').trim();
+  const parts = full.split(/\s+/).filter(Boolean);
+  const first = parts[0] || full;
+  const last = parts.slice(1).join(' ') || '';
+  const headline = `Recruiter at ${r.company_name || 'Company'}`;
+
+  try {
+    await connection.execute(
+      `INSERT INTO members
+         (member_id, first_name, last_name, email, phone, location, headline, about, profile_photo_url, cover_photo_url)
+       VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, NULL, NULL)`,
+      [memberId, first, last, r.email, r.phone ?? null, headline],
+    );
+  } catch (err) {
+    if (err && err.code === 'ER_DUP_ENTRY') {
+      const [again] = await connection.execute('SELECT member_id FROM members WHERE member_id = ? LIMIT 1', [memberId]);
+      return again.length > 0;
+    }
+    throw err;
+  }
+  return true;
+}
+
+/**
+ * Resolve the applicant row in `members`: direct id, recruiter mirror insert, or single row by contact email
+ * when the client sent a stale/wrong `member_id` (common with persisted auth vs profile store).
+ */
+async function resolveApplicantMemberId(connection, input) {
+  const [direct] = await connection.execute('SELECT member_id FROM members WHERE member_id = ? LIMIT 1', [
+    input.member_id,
+  ]);
+  if (direct.length) return input.member_id;
+
+  const ensured = await ensureApplicantMemberRow(connection, input.member_id);
+  if (ensured) {
+    const [again] = await connection.execute('SELECT member_id FROM members WHERE member_id = ? LIMIT 1', [
+      input.member_id,
+    ]);
+    if (again.length) return input.member_id;
+  }
+
+  const email = input.contact_email;
+  if (!email) return null;
+  const [byEmail] = await connection.execute(
+    'SELECT member_id FROM members WHERE LOWER(email) = LOWER(?) LIMIT 2',
+    [email],
+  );
+  if (byEmail.length === 1) return byEmail[0].member_id;
+  return null;
+}
+
+function shapeSubmitRpcResponse(created) {
+  const dt = created.application_datetime;
+  return {
+    application_id: created.application_id,
+    job_id: created.job_id,
+    member_id: created.member_id,
+    resume_url: created.resume_url ?? null,
+    resume_text: created.resume_text ?? null,
+    cover_letter: created.cover_letter ?? null,
+    status: created.status ?? 'submitted',
+    applied_at: dt,
+    updated_at: dt,
   };
 }
 
@@ -77,8 +160,8 @@ export function createApplicationMySqlRepository() {
           return { missing: 'JOB_NOT_FOUND' };
         }
 
-        const [memberRows] = await connection.execute('SELECT member_id FROM members WHERE member_id = ?', [input.member_id]);
-        if (!memberRows.length) {
+        const applicantMemberId = await resolveApplicantMemberId(connection, input);
+        if (!applicantMemberId) {
           return { missing: 'MEMBER_NOT_FOUND' };
         }
 
@@ -88,7 +171,7 @@ export function createApplicationMySqlRepository() {
 
         const [dupeRows] = await connection.execute(
           'SELECT application_id FROM applications WHERE job_id = ? AND member_id = ?',
-          [input.job_id, input.member_id]
+          [input.job_id, applicantMemberId],
         );
 
         if (dupeRows.length) {
@@ -96,6 +179,12 @@ export function createApplicationMySqlRepository() {
         }
 
         const applicationId = randomUUID();
+        const mergedAnswers =
+          input.answers && typeof input.answers === 'object' ? { ...input.answers } : {};
+        if (input.contact_email) mergedAnswers.contact_email = input.contact_email;
+        if (input.contact_phone) mergedAnswers.contact_phone = input.contact_phone;
+        const answersJson = Object.keys(mergedAnswers).length ? JSON.stringify(mergedAnswers) : null;
+
         await connection.execute(
           `INSERT INTO applications
             (application_id, job_id, member_id, resume_url, resume_text, cover_letter, answers, status, status_note)
@@ -103,12 +192,12 @@ export function createApplicationMySqlRepository() {
           [
             applicationId,
             input.job_id,
-            input.member_id,
+            applicantMemberId,
             input.resume_url,
             input.resume_text,
             input.cover_letter,
-            input.answers ? JSON.stringify(input.answers) : null
-          ]
+            answersJson,
+          ],
         );
 
         await connection.execute('UPDATE jobs SET applicants_count = applicants_count + 1 WHERE job_id = ?', [input.job_id]);
@@ -224,10 +313,10 @@ export function createApplicationApp({ repository }) {
 
       publishOrOutbox('application.submitted', buildEnvelope({
         eventType: 'application.submitted',
-        actorId: req.body.member_id,
+        actorId: created.member_id,
         entityType: 'application',
         entityId: created.application_id,
-        payload: { application_id: created.application_id, job_id: req.body.job_id, member_id: req.body.member_id }
+        payload: { application_id: created.application_id, job_id: created.job_id, member_id: created.member_id },
       })).catch(() => {});
 
       return sendSuccess(res, created, 201);
@@ -364,13 +453,13 @@ export function createApplicationApp({ repository }) {
 
       publishOrOutbox('application.submitted', buildEnvelope({
         eventType: 'application.submitted',
-        actorId: req.body.member_id,
+        actorId: created.member_id,
         entityType: 'application',
         entityId: created.application_id,
-        payload: { application_id: created.application_id, job_id: req.body.job_id, member_id: req.body.member_id }
+        payload: { application_id: created.application_id, job_id: created.job_id, member_id: created.member_id },
       })).catch(() => {});
 
-      return sendSuccess(res, { application_id: created.application_id }, 201);
+      return sendSuccess(res, shapeSubmitRpcResponse(created), 201);
     } catch (error) {
       return handleError(res, error);
     }

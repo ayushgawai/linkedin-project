@@ -17,11 +17,14 @@
 
 import { USE_MOCKS, apiClient, mockDelay } from './client'
 import type { AnalyticsEvent } from '../types'
-import { listMemberApplications } from './applications'
+import { listApplicationsByJob, listMemberApplications, type JobApplicantRow } from './applications'
+import { listJobsByRecruiter } from './jobs'
+import { getMockSavedJobCounts } from '../lib/mockRecruiterMetrics'
 import { mapStatusToTab } from '../lib/statusUtils'
 import { DIRECTORY_MEMBERS } from '../lib/profileDirectory'
 import { useAuthStore } from '../store/authStore'
 import { useProfileStore } from '../store/profileStore'
+import { useSavedJobsStore } from '../store/savedJobsStore'
 
 type IngestPayload = {
   event_type: string
@@ -79,6 +82,9 @@ export type RecruiterDashboardResponse = {
   city_applications: Array<{ city: string; value: number }>
   low_performing_jobs: Array<{ name: string; value: number }>
   clicks_per_job: Array<{ name: string; value: number }>
+  /** Bar chart: one bar per job posting with save count (preferred over time-series). */
+  saved_jobs_by_posting: Array<{ name: string; value: number }>
+  /** Legacy time series; may be empty when backend returns per-job saves only. */
   saved_jobs_trend: Array<{ date: string; value: number }>
 }
 
@@ -212,25 +218,105 @@ async function buildMockDashboard(member_id: string, window: MemberDashboardWind
   }
 }
 
-function mockRecruiter(): RecruiterDashboardResponse {
+function withinRecruiterWindow(iso: string, window: MemberDashboardWindow): boolean {
+  const ms = new Date(iso).getTime()
+  if (!Number.isFinite(ms)) return false
+  const days = daysFromWindow(window)
+  return ms >= Date.now() - days * 86_400_000
+}
+
+function extractApplicantLocation(row: JobApplicantRow): string | null {
+  let answers: Record<string, unknown> | null = null
+  const rawAnswers = row.answers
+  if (rawAnswers && typeof rawAnswers === 'object' && !Array.isArray(rawAnswers)) {
+    answers = rawAnswers as Record<string, unknown>
+  } else if (row.cover_letter?.trim()) {
+    try {
+      const p = JSON.parse(row.cover_letter) as unknown
+      if (p && typeof p === 'object' && !Array.isArray(p)) answers = p as Record<string, unknown>
+    } catch {
+      /* ignore */
+    }
+  }
+  const loc = answers?.location
+  if (typeof loc === 'string' && loc.trim()) return loc.trim()
+  return null
+}
+
+async function buildMockRecruiterDashboard(recruiterId: string, window: MemberDashboardWindow): Promise<RecruiterDashboardResponse> {
+  const empty: RecruiterDashboardResponse = {
+    kpis: { active_jobs: 0, total_applicants: 0, avg_time_to_review_days: 0, pending_messages: 0 },
+    top_jobs_by_applications: [],
+    city_applications: [],
+    low_performing_jobs: [],
+    clicks_per_job: [],
+    saved_jobs_by_posting: [],
+    saved_jobs_trend: [],
+  }
+  if (!recruiterId.trim()) return empty
+
+  const jobs = await listJobsByRecruiter(recruiterId, { page: 1, page_size: 200 })
+  if (jobs.length === 0) return empty
+
+  const jobIds = new Set(jobs.map((j) => j.job_id))
+  const cityMap = new Map<string, number>()
+  const appsPerJob: Array<{ job_id: string; title: string; count: number }> = []
+
+  for (const job of jobs) {
+    const rows = await listApplicationsByJob(job.job_id)
+    const inWindow = rows.filter((r) => withinRecruiterWindow(r.applied_at, window))
+    appsPerJob.push({ job_id: job.job_id, title: job.title, count: inWindow.length })
+    for (const app of inWindow) {
+      const raw = extractApplicantLocation(app)
+      if (raw) {
+        const label = raw.split(',')[0]?.trim() || raw
+        if (label) cityMap.set(label, (cityMap.get(label) ?? 0) + 1)
+      }
+    }
+  }
+
+  const topSorted = [...appsPerJob].sort((a, b) => b.count - a.count)
+  const top_jobs_by_applications = topSorted.slice(0, 10).map((j) => ({ name: j.title, value: j.count }))
+
+  const lowSorted = [...appsPerJob].sort((a, b) => a.count - b.count)
+  const low_performing_jobs = lowSorted.slice(0, 5).map((j) => ({ name: j.title, value: j.count }))
+
+  const clicks_per_job = jobs.map((j) => ({ name: j.title, value: j.views_count ?? 0 }))
+
+  const openJobs = jobs.filter((j) => j.promoted || j.easy_apply)
+  const kpis = {
+    active_jobs: openJobs.length,
+    total_applicants: appsPerJob.reduce((s, j) => s + j.count, 0),
+    avg_time_to_review_days: 0,
+    pending_messages: 0,
+  }
+
+  const city_applications = [...cityMap.entries()]
+    .map(([city, value]) => ({ city, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 20)
+
+  const mockSaved = getMockSavedJobCounts()
+  const fromStore = new Map<string, number>()
+  for (const e of useSavedJobsStore.getState().entries) {
+    if (jobIds.has(e.job.job_id)) fromStore.set(e.job.job_id, 1)
+  }
+  const saved_jobs_by_posting = jobs
+    .map((j) => ({
+      name: j.title,
+      value: Math.max(mockSaved.get(j.job_id) ?? 0, fromStore.get(j.job_id) ?? 0),
+    }))
+    .filter((x) => x.value > 0)
+    .sort((a, b) => b.value - a.value)
+
   return {
-    kpis: { active_jobs: 12, total_applicants: 238, avg_time_to_review_days: 3.4, pending_messages: 14 },
-    top_jobs_by_applications: Array.from({ length: 10 }).map((_, i) => ({ name: `Role ${i + 1}`, value: 90 - i * 6 })),
-    city_applications: [
-      { city: 'San Jose', value: 64 },
-      { city: 'San Francisco', value: 52 },
-      { city: 'Austin', value: 31 },
-      { city: 'New York', value: 29 },
-    ],
-    low_performing_jobs: [
-      { name: 'QA Lead', value: 4 },
-      { name: 'Ops Analyst', value: 5 },
-      { name: 'Support Engineer', value: 6 },
-      { name: 'Data QA', value: 7 },
-      { name: 'UX Writer', value: 8 },
-    ],
-    clicks_per_job: Array.from({ length: 8 }).map((_, i) => ({ name: `Job ${i + 1}`, value: 22 + i * 5 })),
-    saved_jobs_trend: generateSeries(10, 14, 6),
+    kpis,
+    top_jobs_by_applications,
+    city_applications,
+    low_performing_jobs,
+    clicks_per_job,
+    saved_jobs_by_posting,
+    saved_jobs_trend: [],
   }
 }
 
@@ -272,14 +358,22 @@ export async function getMemberDashboard(member_id: string, window: MemberDashbo
 }
 
 export async function getRecruiterDashboard(window: MemberDashboardWindow): Promise<RecruiterDashboardResponse> {
+  const recruiterId = useAuthStore.getState().user?.recruiter_id || useAuthStore.getState().user?.member_id || ''
   if (USE_MOCKS) {
-    await mockDelay(260)
-    return mockRecruiter()
+    await mockDelay(180)
+    return buildMockRecruiterDashboard(recruiterId, window)
   }
+  const body = { window, recruiter_id: recruiterId }
   const [top, funnel, geo] = await Promise.all([
-    apiClient.post<{ top_jobs_by_applications: RecruiterDashboardResponse['top_jobs_by_applications']; clicks_per_job: RecruiterDashboardResponse['clicks_per_job']; saved_jobs_trend: RecruiterDashboardResponse['saved_jobs_trend']; kpis: RecruiterDashboardResponse['kpis'] }>('/analytics/jobs/top', { window }),
-    apiClient.post<{ low_performing_jobs: RecruiterDashboardResponse['low_performing_jobs'] }>('/analytics/funnel', { window }),
-    apiClient.post<{ city_applications: RecruiterDashboardResponse['city_applications'] }>('/analytics/geo', { window }),
+    apiClient.post<{
+      top_jobs_by_applications: RecruiterDashboardResponse['top_jobs_by_applications']
+      clicks_per_job: RecruiterDashboardResponse['clicks_per_job']
+      saved_jobs_trend: RecruiterDashboardResponse['saved_jobs_trend']
+      saved_jobs_by_posting?: RecruiterDashboardResponse['saved_jobs_by_posting']
+      kpis: RecruiterDashboardResponse['kpis']
+    }>('/analytics/jobs/top', body),
+    apiClient.post<{ low_performing_jobs: RecruiterDashboardResponse['low_performing_jobs'] }>('/analytics/funnel', body),
+    apiClient.post<{ city_applications: RecruiterDashboardResponse['city_applications'] }>('/analytics/geo', body),
   ])
 
   return {
@@ -288,6 +382,7 @@ export async function getRecruiterDashboard(window: MemberDashboardWindow): Prom
     city_applications: geo.data.city_applications,
     low_performing_jobs: funnel.data.low_performing_jobs,
     clicks_per_job: top.data.clicks_per_job,
-    saved_jobs_trend: top.data.saved_jobs_trend,
+    saved_jobs_by_posting: top.data.saved_jobs_by_posting ?? [],
+    saved_jobs_trend: top.data.saved_jobs_trend ?? [],
   }
 }

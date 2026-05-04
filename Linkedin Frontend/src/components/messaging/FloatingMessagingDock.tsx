@@ -113,6 +113,7 @@ function MiniChatPanel({ threadId, thread, onClose }: MiniChatProps): JSX.Elemen
       void queryClient.invalidateQueries({ queryKey: ['messages', threadId] })
       void queryClient.invalidateQueries({ queryKey: ['threads', user?.member_id] })
       void queryClient.invalidateQueries({ queryKey: ['threads'] })
+      void queryClient.invalidateQueries({ queryKey: ['notifications'], exact: false })
       broadcastMessagingThreadUpdate(threadId)
       void ingestEvent({
         event_type: 'message.sent',

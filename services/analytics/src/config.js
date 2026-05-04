@@ -36,6 +36,9 @@ const EnvSchema = z.object({
     .default('info'),
 
   ANALYTICS_CACHE_TTL_SEC: z.coerce.number().int().positive().default(60),
+  /** Short TTL so member dashboards pick up likes, comments, and search events quickly. */
+  MEMBER_DASHBOARD_CACHE_TTL_SEC: z.coerce.number().int().positive().default(5),
+  RECRUITER_AGG_CACHE_TTL_SEC: z.coerce.number().int().positive().default(5),
   OTHER_TECHNIQUES_ENABLED: z
     .enum(['true', 'false'])
     .default('true')

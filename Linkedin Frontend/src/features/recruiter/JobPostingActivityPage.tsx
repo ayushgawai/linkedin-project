@@ -11,6 +11,7 @@ import { SavedEmptyIllustration } from '../saved/SavedEmptyIllustration'
 import { useAuthStore } from '../../store/authStore'
 import { useSavedJobsStore } from '../../store/savedJobsStore'
 import { useToast } from '../../components/ui/Toast'
+import { recruiterJobsApplicantsUrl } from '../../lib/recruiterPaths'
 import type { JobRecord } from '../../types/jobs'
 
 function PostedJobRowMenu({ job }: { job: JobRecord }): JSX.Element {
@@ -60,7 +61,7 @@ function PostedJobRowMenu({ job }: { job: JobRecord }): JSX.Element {
             </Dropdown.Item>
             <Dropdown.Item
               className="font-medium text-text-primary"
-              onSelect={() => navigate(`/jobs/${job.job_id}/applicants`)}
+              onSelect={() => navigate(recruiterJobsApplicantsUrl(job.job_id))}
             >
               View applicants
             </Dropdown.Item>
@@ -106,6 +107,7 @@ export default function JobPostingActivityPage(): JSX.Element {
   const savedIds = useMemo(() => savedEntries.map((e) => e.job.job_id), [savedEntries])
 
   const recruiterId = (user?.recruiter_id || user?.member_id) ?? ''
+  const isRecruiter = user?.role === 'recruiter'
 
   const jobsQuery = useQuery({
     queryKey: ['recruiter-jobs-activity', recruiterId],
@@ -150,6 +152,20 @@ export default function JobPostingActivityPage(): JSX.Element {
               <Link to="/saved" className="px-4 py-3 text-sm font-medium text-text-primary hover:bg-black/[0.04]">
                 Saved posts and articles
               </Link>
+              {isRecruiter ? (
+                <>
+                  <div className="mx-4 border-t border-border" />
+                  <Link
+                    to="/recruiter/ai"
+                    onMouseEnter={() => {
+                      void import('./RecruiterAiPage')
+                    }}
+                    className="px-4 py-3 text-sm font-medium text-text-primary hover:bg-black/[0.04]"
+                  >
+                    AI Copilot
+                  </Link>
+                </>
+              ) : null}
             </nav>
           </Card.Body>
         </Card>

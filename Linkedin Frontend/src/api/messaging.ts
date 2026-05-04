@@ -14,7 +14,7 @@
 // Auth: Bearer token via src/api/client.ts interceptor
 // ============================================
 
-import { USE_MOCKS, apiClient, mockDelay } from './client'
+import { USE_MOCKS, apiClient, mockDelay, unwrapApiData } from './client'
 import { listConnections } from './connections'
 import { getMember } from './profile'
 import type { MessageRecord, MessagesListResponse, ThreadListItem } from '../types/messaging'
@@ -176,8 +176,8 @@ export async function openThread(participant_ids: string[]): Promise<{ thread_id
     ensureThreadRow(a, b)
     return { thread_id: tid }
   }
-  const response = await apiClient.post<{ thread_id: string }>('/threads/open', { participant_ids })
-  return response.data
+  const response = await apiClient.post<unknown>('/threads/open', { participant_ids })
+  return unwrapApiData<{ thread_id: string }>(response.data)
 }
 
 export async function getThread(thread_id: string): Promise<ThreadListItem> {
@@ -193,8 +193,9 @@ export async function getThread(thread_id: string): Promise<ThreadListItem> {
     const other = otherParticipant(row, viewer)
     return (await buildThreadListItemForViewer(viewer, other)) ?? MOCK_THREADS[0]
   }
-  const response = await apiClient.post<ThreadListItem>('/threads/get', { thread_id })
-  return response.data
+  const viewerId = useAuthStore.getState().user?.member_id
+  const response = await apiClient.post<unknown>('/threads/get', { thread_id, user_id: viewerId ?? undefined })
+  return unwrapApiData<ThreadListItem>(response.data)
 }
 
 export async function listThreadsByUser(user_id: string): Promise<ThreadListItem[]> {
@@ -243,9 +244,13 @@ export async function listThreadsByUser(user_id: string): Promise<ThreadListItem
     return items
   }
   const response = await apiClient.post<unknown>('/threads/byUser', { user_id })
-  const data = response.data as any
+  const data = unwrapApiData(response.data) as unknown
   // Backend may return { threads, total } or a raw array.
-  const base: ThreadListItem[] = Array.isArray(data) ? (data as ThreadListItem[]) : data && Array.isArray(data.threads) ? (data.threads as ThreadListItem[]) : []
+  const base: ThreadListItem[] = Array.isArray(data)
+    ? (data as ThreadListItem[])
+    : data && typeof data === 'object' && data !== null && Array.isArray((data as { threads?: ThreadListItem[] }).threads)
+      ? ((data as { threads: ThreadListItem[] }).threads as ThreadListItem[])
+      : []
 
   // Enrich participant display with Profile service so UI shows real names/photos.
   try {

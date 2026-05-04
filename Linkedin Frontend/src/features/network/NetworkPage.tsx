@@ -91,12 +91,14 @@ export default function NetworkPage(): JSX.Element {
       }
       void queryClient.invalidateQueries({ queryKey: ['pending-invitations', user?.member_id] })
       void queryClient.invalidateQueries({ queryKey: ['connections', user?.member_id] })
+      void queryClient.invalidateQueries({ queryKey: ['notifications'] })
     },
   })
   const rejectMutation = useMutation({
     mutationFn: rejectConnection,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['pending-invitations', user?.member_id] })
+      void queryClient.invalidateQueries({ queryKey: ['notifications'] })
     },
   })
 

@@ -14,7 +14,7 @@
 // Auth: Bearer token via src/api/client.ts interceptor
 // ============================================
 
-import { USE_MOCKS, apiClient, mockDelay } from './client'
+import { USE_MOCKS, apiClient, mockDelay, unwrapApiData } from './client'
 
 export type AiTaskStatus = 'running' | 'waiting_approval' | 'completed' | 'failed'
 
@@ -162,21 +162,20 @@ export async function rejectOutput(task_id: string, step_id: string, reason: str
   return response.data
 }
 
+/** Aligns with AI service `CoachResponse` / POST /ai/coach `data` payload. */
 export type CareerCoachResponse = {
-  task_id?: string
-  trace_id?: string
   member_id?: string
-  target_job_id?: string
-  suggestions?: {
-    headline?: string
-    summary?: string
-    skills_to_add?: string[]
-    resume_bullets?: string[]
-  }
-  rationale?: string[]
+  match_score?: number
+  matching_skills?: string[]
+  missing_skills?: string[]
+  headline_suggestion?: string
+  resume_improvements?: string[]
+  rationale?: string
+  skills_to_add?: string[]
+  trace_id?: string
 }
 
 export async function getCareerCoaching(member_id: string, target_job_id: string): Promise<CareerCoachResponse> {
-  const response = await apiClient.post<CareerCoachResponse>('/ai/coach', { member_id, target_job_id })
-  return response.data
+  const response = await apiClient.post<unknown>('/ai/coach', { member_id, target_job_id })
+  return unwrapApiData<CareerCoachResponse>(response.data)
 }

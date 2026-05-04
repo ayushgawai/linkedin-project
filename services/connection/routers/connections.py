@@ -114,6 +114,31 @@ def _delete_edge_from_mongo(conn: Connection) -> None:
         log.warning("mongo delete failed for connection %s: %s", getattr(conn, "connection_id", "?"), exc)
 
 
+def _requester_display_name_headline(db: Session, requester_id: str) -> tuple[str, str]:
+    """Resolve requester_id to a human-readable name and headline (members or recruiters table)."""
+    row = db.execute(
+        text("SELECT first_name, last_name, headline FROM members WHERE member_id = :id LIMIT 1"),
+        {"id": requester_id},
+    ).fetchone()
+    if row:
+        fn = (row[0] or "").strip()
+        ln = (row[1] or "").strip()
+        hl = (row[2] or "").strip() or "Professional"
+        full = f"{fn} {ln}".strip()
+        name = full if full else "Network member"
+        return name, hl
+    row = db.execute(
+        text("SELECT name, company_name FROM recruiters WHERE recruiter_id = :id LIMIT 1"),
+        {"id": requester_id},
+    ).fetchone()
+    if row:
+        nm = (row[0] or "").strip() or "Recruiter"
+        co = (row[1] or "").strip()
+        hl = f"Recruiter at {co}" if co else "Recruiter"
+        return nm, hl
+    return "Network member", "Professional"
+
+
 def _rejecting_actor(conn: Connection) -> str:
     """Addressee (non-requester) is treated as the actor for a reject event."""
     rb = conn.requested_by or conn.user_a
@@ -493,12 +518,13 @@ def list_pending(body: PendingConnectionsBody, db: Session = Depends(get_db)):
         receiver_id = c.user_b if requester_id == c.user_a else c.user_a
         if receiver_id != body.user_id:
             continue
+        disp_name, disp_headline = _requester_display_name_headline(db, requester_id)
         items.append({
             "request_id": c.connection_id,
             "requester_member_id": requester_id,
             "addressee_member_id": body.user_id,
-            "name": f"Member {requester_id[:6]}",
-            "headline": "Professional",
+            "name": disp_name,
+            "headline": disp_headline,
             "mutual": 0,
             "created_at": c.created_at.isoformat() if c.created_at else None,
         })
