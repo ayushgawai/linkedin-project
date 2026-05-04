@@ -232,6 +232,29 @@ def fetch_mysql_counts() -> dict[str, int]:
         conn.close()
 
 
+def ensure_mysql_schema() -> None:
+    schema_path = BASE / "schema.sql"
+    sql = schema_path.read_text(encoding="utf-8")
+    conn = mysql.connector.connect(
+        host=os.getenv("DB_HOST", "localhost"),
+        port=int(os.getenv("DB_PORT", "3306")),
+        user=os.getenv("DB_USER", "root"),
+        password=os.getenv("DB_PASS", ""),
+        database=os.getenv("DB_NAME", "linkedinclone"),
+        connection_timeout=30,
+    )
+    try:
+        cur = conn.cursor()
+        statements = [stmt.strip() for stmt in sql.split(";") if stmt.strip()]
+        for statement in statements:
+            cur.execute(statement)
+        conn.commit()
+        cur.close()
+        log("ensured MySQL schema is present")
+    finally:
+        conn.close()
+
+
 def fetch_mongo_counts() -> dict[str, int]:
     client = MongoClient(os.getenv("MONGO_URI", "mongodb://localhost:27017"), serverSelectionTimeoutMS=5000)
     try:
@@ -310,6 +333,7 @@ def ensure_raw_inputs() -> None:
 
 def main() -> int:
     load_runtime_secrets()
+    ensure_mysql_schema()
     seed_state = check_seed_state()
     if seed_state == "complete":
         return 0

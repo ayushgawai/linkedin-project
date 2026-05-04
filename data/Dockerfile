@@ -11,6 +11,7 @@ COPY data/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY data/bootstrap_pipeline.py ./bootstrap_pipeline.py
+COPY data/schema.sql ./schema.sql
 COPY data/transform.py ./transform.py
 COPY data/seed_loader.py ./seed_loader.py
 
