@@ -492,7 +492,9 @@ async function handleSearchMembers(req, res, next) {
       if (filters.keyword) {
         // Full-text search can silently return 0 rows (missing FULLTEXT indexes, stopwords, short tokens).
         // Use LIKE for reliability in demos + small datasets.
-        where.push('(first_name LIKE :kw_like OR last_name LIKE :kw_like OR headline LIKE :kw_like OR about LIKE :kw_like)');
+        where.push(
+          '(first_name LIKE :kw_like OR last_name LIKE :kw_like OR CONCAT(first_name, \' \', last_name) LIKE :kw_like OR headline LIKE :kw_like OR about LIKE :kw_like)',
+        );
         params.kw_like = `%${filters.keyword}%`;
       }
       if (filters.location) {

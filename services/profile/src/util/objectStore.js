@@ -83,6 +83,10 @@ function getS3() {
   return s3;
 }
 
+function usesAwsManagedS3() {
+  return STORAGE_ENV.provider === 's3' && !STORAGE_ENV.endpoint;
+}
+
 function parseDataUrl(dataUrl) {
   const m = /^data:([^;]+);base64,(.+)$/s.exec(String(dataUrl || ''));
   if (!m) return null;
@@ -106,24 +110,38 @@ export async function maybeStoreDataUrl({ kind, memberId, dataUrl }) {
     );
     return { stored: false, url: dataUrl };
   }
+  if (usesAwsManagedS3()) {
+    logger.info(
+      { kind, memberId, size: parsed.body.length },
+      'using inline data URL because AWS bucket objects are not served publicly in this deployment',
+    );
+    return { stored: false, url: dataUrl };
+  }
 
   const ext = parsed.contentType === 'image/png' ? 'png'
     : parsed.contentType === 'image/jpeg' ? 'jpg'
       : parsed.contentType === 'image/webp' ? 'webp'
         : 'bin';
   const key = `${kind}/${memberId}/${crypto.randomUUID()}.${ext}`;
+  const putParams = {
+    Bucket: STORAGE_ENV.bucket,
+    Key: key,
+    Body: parsed.body,
+    ContentType: parsed.contentType,
+  };
+  // MinIO + local S3-compatible setups still need an explicit ACL for browser-readable objects.
+  putParams.ACL = 'public-read';
 
-  await client.send(
-    new PutObjectCommand({
-      Bucket: STORAGE_ENV.bucket,
-      Key: key,
-      Body: parsed.body,
-      ContentType: parsed.contentType,
-      ACL: 'public-read', // MinIO bucket policy is public-read; AWS ignores unless allowed.
-    }),
-  );
-
-  const base = effectivePublicBaseUrl();
-  const url = `${base}/${key}`;
-  return { stored: true, url };
+  try {
+    await client.send(new PutObjectCommand(putParams));
+    const base = effectivePublicBaseUrl();
+    const url = `${base}/${key}`;
+    return { stored: true, url };
+  } catch (error) {
+    logger.warn(
+      { kind, memberId, size: parsed.body.length, err: error instanceof Error ? error.message : String(error) },
+      'object store upload failed; falling back to inline data URL',
+    );
+    return { stored: false, url: dataUrl };
+  }
 }
