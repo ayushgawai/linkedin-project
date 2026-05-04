@@ -145,7 +145,7 @@ These APIs are **client-side only** and live in `src/api/external/`. A dedicated
 - Align recruiter/application status enum mapping with backend canonical values
 - Add final auth token refresh flow and role claims from backend JWT
 - Finalize AI task WS payload schemas with FastAPI service
-- Add server-driven pagination cursors for large lists
+- Add server-driven pagination (keyset or offset) for large lists
 
 ## Final Checklist
 

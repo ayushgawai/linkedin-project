@@ -1,97 +1,80 @@
 # infra — local stack
 
-`docker-compose.yml` brings up everything the Analytics / Redis / JMeter
-benchmark suite needs:
-
-| Service       | Host port | Image / build                  | Purpose                                   |
-| ------------- | --------- | ------------------------------ | ----------------------------------------- |
-| `mysql`       | 3306      | `mysql:8.4`                    | Relational store (`data/schema.sql`)      |
-| `mongodb`     | 27017     | `mongo:7`                      | Event + profile_view store                |
-| `redis`       | 6379      | `redis:7-alpine` (LRU, 256 MB) | Cache-aside layer                         |
-| `zookeeper`   | 2181      | Confluent 7.6                  | Kafka coordination                        |
-| `kafka`       | 9092      | Confluent 7.6                  | Event bus (INSIDE 29092 / OUTSIDE 9092)   |
-| `kafka-init`  | —         | Confluent 7.6 (one-shot)       | Creates required topics then exits        |
-| `profile`     | 8001      | `services/profile/Dockerfile`  | Minimal members CRUD (cache-aside)        |
-| `job`         | 8002      | `services/job/Dockerfile`      | Minimal jobs CRUD + search (cache-aside)  |
-| `analytics`   | 8006      | `services/analytics/Dockerfile`| Event ingest + 4 analytics endpoints      |
-
-All services share a single bridge network `linkedinclone-backend`, so they
-reach each other by service name (`mysql`, `redis`, `kafka:29092`, etc.).
-
-## Quickstart
+Primary entrypoint: **repository root** +
 
 ```bash
-cp .env.example .env                  # from repo root
 docker compose -f infra/docker-compose.yml up -d --build
-docker compose -f infra/docker-compose.yml ps   # wait for all healthy
-curl http://localhost:8006/health     # analytics
-curl http://localhost:8001/health     # profile
-curl http://localhost:8002/health     # job
 ```
 
-`/health` on each service returns:
+## Layout
 
-```json
-{
-  "status": "ok",
-  "service": "analytics",
-  "db": "connected",
-  "mongo": "connected",
-  "redis": "connected",
-  "kafka": "connected",
-  "trace_id": "…"
-}
+- **`docker-compose.yml`**: full LinkedInClone stack (MySQL, MongoDB, Redis, MinIO, Zookeeper, Kafka, **`data-bootstrap`**, Profile, Job, Application, Messaging, Connection, Analytics, AI Agent, Posts, API Gateway, init helpers).
+- **`aws/`**: CloudFormation and ECS-related templates (see `infra/aws/README.md`).
+- **`perf/`**: JMeter / dashboard tooling for benchmarks.
+
+## Data bootstrap
+
+**`data-bootstrap`** is a **one-shot** image built from `data/Dockerfile`. It runs **`data/bootstrap_pipeline.py`** after MySQL and MongoDB are healthy: prepare raw job/resume inputs, run **`data/transform.py`**, then **`data/seed_loader.py`**.
+
+Application services declare a **`depends_on`** relationship to **`data-bootstrap`** so they do not serve traffic until seeding finishes (or the bootstrap container has exited).
+
+For Kaggle downloads inside the container, put **`KAGGLE_USERNAME`** and **`KAGGLE_KEY`** in the **repository root** `.env`. That file is attached to **`data-bootstrap`** via **`env_file: ../.env`** so credentials are not lost when Compose treats **`infra/`** as the project directory. You can instead mount pre-downloaded files under repo-root **`Data_2/`** (see `data/README.md`).
+
+Verify success:
+
+```bash
+docker inspect linkedinclone-data-bootstrap --format '{{.State.ExitCode}}'
 ```
 
-## Start-up order & readiness
+Expect **`0`**. Status **`Exited`** in `docker compose ps` is normal for this service.
 
-docker-compose handles this for us via `depends_on.condition`:
+## Networking and ports
 
+Services share the **`backend`** bridge network and reach each other by DNS name (`mysql`, `mongodb`, `redis`, `kafka`, …).
+
+Host-published ports are driven from the **repository root** `.env` (for example `DB_PORT_HOST`, `KAFKA_PORT_HOST`, gateway **`8011`**). Defaults match the root **`README.md`** host port table.
+
+## Quick checks (with stack up)
+
+```bash
+curl -s http://127.0.0.1:8011/health
+curl -s http://127.0.0.1:8001/health
+curl -s http://127.0.0.1:8006/health
 ```
-zookeeper (healthy)  ──►  kafka (healthy)  ──►  kafka-init (completed)  ──►  analytics
-mysql / mongodb / redis (all healthy)       ──►  profile / job / analytics
-```
 
-A cold `up -d --build` typically takes ~60 s on first run (Kafka startup is
-the bottleneck); subsequent runs are ~15 s.
+## Start-up order (high level)
 
-## Toggling Redis / Kafka off (baseline benchmarks)
+- **Zookeeper → Kafka → `kafka-init`** (topics).
+- **MySQL / MongoDB** (healthchecks).
+- **`data-bootstrap`** (runs to completion).
+- **Redis, MinIO**, then application services and **API Gateway** (each wired with `depends_on` as in `docker-compose.yml`).
 
-To measure the cache-off baseline for Phase 5 charts:
+## Toggling Redis / Kafka off (benchmarks)
 
 ```bash
 REDIS_ENABLED=false docker compose -f infra/docker-compose.yml up -d profile job analytics
 ```
 
-Services keep running against MySQL / Mongo directly — no code change needed,
-`cache.js` degrades gracefully.
-
-Same trick for Kafka:
-
 ```bash
 KAFKA_ENABLED=false docker compose -f infra/docker-compose.yml up -d analytics
 ```
 
-The analytics HTTP `POST /events/ingest` path still works; only the Kafka
-consumer is skipped.
+Services degrade to direct DB usage where the code supports it.
 
-## Host-port conflicts
+## Host port conflicts
 
-Every published port is overridable via env (`DB_PORT_HOST`,
-`REDIS_PORT_HOST`, `PROFILE_PORT_HOST`, …). If port 3306 or 9092 is already
-in use on your Mac, bump them in `.env`:
+Override in **repository root** `.env`, for example:
 
 ```
 DB_PORT_HOST=3307
 KAFKA_PORT_HOST=9093
 ```
 
-…and point `DB_HOST` / `KAFKA_BROKERS` in `.env` to `localhost:<new-port>`
-for any host-side tooling (JMeter, seed script, mysql CLI).
+Use `localhost:<port>` in the same `.env` for any tooling running on the host.
 
 ## Tear-down
 
 ```bash
-docker compose -f infra/docker-compose.yml down          # keeps data volumes
-docker compose -f infra/docker-compose.yml down -v       # nuke volumes too
+docker compose -f infra/docker-compose.yml down          # keeps volumes
+docker compose -f infra/docker-compose.yml down -v       # removes volumes
 ```

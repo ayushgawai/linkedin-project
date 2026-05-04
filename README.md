@@ -62,19 +62,20 @@ Submission-ready diagrams live under `docs/submission/`:
 
 ## Local setup
 1. Copy `.env.example` to `.env` in the **repository root** and set host port overrides if needed (for example `DB_PORT_HOST=3307` if port 3306 is already in use).
-2. From the repo root, start the stack:
+2. **Data bootstrap (first full stack start):** The `data-bootstrap` service runs once after MySQL and MongoDB are healthy. It fills the databases from Kaggle downloads or from a local dataset directory. For Kaggle downloads inside Docker, set **`KAGGLE_USERNAME`** and **`KAGGLE_KEY`** in the **repository root** `.env` (same file as step 1). Compose loads that file into `data-bootstrap`; credentials only under `~/.kaggle/` on the host are not visible to the container. Alternatively, place raw inputs under a repo-root folder such as **`Data_2/`** and set **`PIPELINE_SOURCE_DIR=/workspace/Data_2`** in `.env` if you use a non-default path (the container mounts the repo at `/workspace`). Optional AWS-driven paths (`KAGGLE_SECRETS_SECRET_ID`, S3 dataset envs) are documented in `data/README.md`.
+3. From the repo root, start the stack:
 
 ```bash
 docker compose -f infra/docker-compose.yml up -d --build
 ```
 
-This starts MySQL, MongoDB, Redis, MinIO, Zookeeper, Kafka, Profile, Job, Application, Messaging, Connection, Analytics, AI Agent, Posts, and the API Gateway.
+This starts MySQL, MongoDB, Redis, MinIO, Zookeeper, Kafka, the one-shot **`data-bootstrap`** job, then Profile, Job, Application, Messaging, Connection, Analytics, AI Agent, Posts, and the API Gateway. Application services **wait** on `data-bootstrap` so APIs start after seeds exist.
 
-3. The API Gateway is exposed on `http://127.0.0.1:8011` and should be used as the frontend/backend entrypoint.
+4. The API Gateway is exposed on `http://127.0.0.1:8011` and should be used as the frontend/backend entrypoint.
 
    **Reminder:** Compose images bake service code into the image. After `git pull`, run **`up -d --build`** (or rebuild specific services) so containers match `main`.
-4. MySQL runs `data/schema.sql` on first MySQL data volume; use the data pipeline below for large CSV-driven seeds.
-5. Use Docker for full integration; run Node services on the host only when you specifically need hot reload.
+5. MySQL runs `data/schema.sql` on first MySQL data volume; **`data-bootstrap`** applies the large CSV-driven seed pipeline (see **Data Pipeline** below). To confirm the bootstrap container finished successfully: `docker inspect linkedinclone-data-bootstrap --format '{{.State.ExitCode}}'` should print **`0`** (the container may show as `Exited` in `docker compose ps`, which is expected).
+6. Use Docker for full integration; run Node services on the host only when you specifically need hot reload.
 
 ### Host ports (default)
 | Service | Port |
@@ -149,17 +150,27 @@ If you are not running the React UI, validate the integrated stack with contract
 | LinkedIn Job Postings 2023 | [Kaggle](https://www.kaggle.com/datasets/rajatraj0502/linkedin-job-2023) | 15K jobs, companies, skills |
 | Resume Dataset | [Kaggle](https://www.kaggle.com/datasets/snehaanbhawal/resume-dataset) | 2.4K resumes across 24 categories |
 
-Raw CSVs are **not committed** (gitignored). Download them into `data/raw/` before running the pipeline.
+Raw CSVs are **not committed** (gitignored). With Docker, `data/bootstrap_pipeline.py` downloads or copies them into a temp raw directory inside the container, then runs **`data/transform.py`** and **`data/seed_loader.py`**. Override dataset slugs with **`KAGGLE_JOBS_DATASET`** and **`KAGGLE_RESUME_DATASET`** in `.env` if needed.
 
 ### How to seed the database
 
-**Prerequisites:** Python 3.11, MySQL running, MongoDB running.
+#### Option A — Docker Compose (recommended)
+
+1. Put **`KAGGLE_USERNAME`** and **`KAGGLE_KEY`** in the **repository root** `.env` (see `.env.example`), **or** provide raw files under **`Data_2/`** (or another directory and set **`PIPELINE_SOURCE_DIR`** to the in-container path, default **`/workspace/Data_2`**).
+2. Run **`docker compose -f infra/docker-compose.yml up -d --build`** from the repo root. The **`data-bootstrap`** service runs the full pipeline once; dependent services start after it completes.
+
+More detail: `data/README.md`.
+
+#### Option B — Manual on the host
+
+**Prerequisites:** Python 3.11, MySQL and MongoDB reachable from your machine (for example ports published by Compose).
 
 ```bash
 # 1. Install dependencies
-pip3.11 install pandas faker mysql-connector-python pymongo python-dotenv kaggle
+pip3.11 install -r data/requirements.txt
+# or: pip3.11 install pandas faker mysql-connector-python pymongo python-dotenv kaggle
 
-# 2. Download datasets (requires Kaggle API token at ~/.kaggle/kaggle.json)
+# 2. Download datasets (Kaggle CLI: token in ~/.kaggle/kaggle.json or env vars)
 cd data/raw
 kaggle datasets download -d rajatraj0502/linkedin-job-2023 --unzip
 kaggle datasets download -d snehaanbhawal/resume-dataset --unzip
