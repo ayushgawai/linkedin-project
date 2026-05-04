@@ -31,19 +31,39 @@ def _normalize(skills: list[str] | None) -> list[str]:
     return out
 
 
-def _build_headline(existing: str, job_title: str, top_missing: str | None) -> str:
-    """Compose a headline that signals intent toward the target role.
+def _format_skills(skills: list[str]) -> str:
+    """Format a list of skills as a clean comma-and-and string.
 
-    Keeps it short; prefers existing headline content when meaningful.
+    ['python']                     -> 'Python'
+    ['python', 'kafka']            -> 'Python and Kafka'
+    ['python', 'kafka', 'docker']  -> 'Python, Kafka, and Docker'
+    """
+    titled = [s.title() for s in skills]
+    if not titled:
+        return ""
+    if len(titled) == 1:
+        return titled[0]
+    if len(titled) == 2:
+        return f"{titled[0]} and {titled[1]}"
+    return ", ".join(titled[:-1]) + f", and {titled[-1]}"
+
+
+def _build_headline(existing: str, job_title: str, top_missing: str | None) -> str:
+    """Compose a clean LinkedIn-style headline that signals intent toward
+    the target role.
+
+    Format: "<Base> | Targeting <Role> | Focus: <Skill>"
+    Uses pipes as the only separator. No em dashes, no parentheses.
     """
     existing = (existing or "").strip()
     base = existing if existing else "Software Engineer"
     target = (job_title or "").strip()
-    if top_missing:
-        return f"{base} | Building toward {target} — focused on {top_missing.title()}".strip(" —")
+    parts = [base]
     if target:
-        return f"{base} | Targeting {target}".strip(" |")
-    return base
+        parts.append(f"Targeting {target}")
+    if top_missing:
+        parts.append(f"Focus: {top_missing.title()}")
+    return " | ".join(parts)
 
 
 def _resume_improvements(
@@ -52,43 +72,55 @@ def _resume_improvements(
     job_title: str,
     job_description: str,
 ) -> list[str]:
-    """Concrete, actionable bullets the candidate can apply today."""
+    """Clean, structured resume tips.
+
+    Each item is a short standalone sentence that reads well as a bullet
+    point in the UI. No em dashes, no parenthetical examples, no
+    multi-clause run-ons.
+    """
     improvements: list[str] = []
 
     if missing_skills:
-        top = missing_skills[:3]
+        top = _format_skills(missing_skills[:3])
         improvements.append(
-            "Add concrete bullet points that demonstrate "
-            f"{', '.join(top)} — tie each to a measurable outcome "
-            "(e.g. latency reduction, throughput, revenue)."
+            f"Add resume bullet points that show hands-on experience with {top}."
+        )
+        improvements.append(
+            "Pair each bullet with a measurable outcome such as latency, "
+            "throughput, cost savings, or revenue impact."
         )
 
     if len(missing_skills) >= 4:
         improvements.append(
-            "Create a dedicated \"Relevant Skills\" block near the top so "
-            f"{len(missing_skills)} missing keywords surface in recruiter "
-            "and ATS screens."
+            f"Add a Relevant Skills section at the top of your resume so all "
+            f"{len(missing_skills)} missing keywords are picked up by "
+            "recruiters and ATS scans."
         )
 
-    # Summary/about assessment: empty or very short → suggest rewriting.
     summary = (member_summary or "").strip()
     if len(summary) < 80:
+        target = job_title or "your target"
         improvements.append(
-            "Rewrite the profile summary to be 3–4 sentences that frame "
-            f"your experience against a {job_title or 'target'} role — "
-            "lead with impact, not responsibilities."
+            f"Rewrite your profile summary into 3 to 4 sentences that frame "
+            f"your experience for a {target} role."
+        )
+        improvements.append(
+            "Lead with the impact you have delivered, not your day-to-day "
+            "responsibilities."
         )
 
-    # Experience-bullet style tip — independent of content.
     improvements.append(
-        "Rework experience bullets to start with a strong verb + artifact + "
-        "metric (e.g. \"Shipped X serving Y QPS, cutting p95 by Z ms\")."
+        "Start each experience bullet with a strong action verb followed by "
+        "what you built and the result you measured."
     )
 
     if job_description:
         improvements.append(
-            "Mirror two or three phrases from the target job description "
-            "verbatim (where truthful) so keyword matching is robust."
+            "Mirror two or three phrases from the target job description in "
+            "your resume wherever it is truthful."
+        )
+        improvements.append(
+            "This makes keyword matching against the job posting more reliable."
         )
 
     return improvements
@@ -157,29 +189,31 @@ async def generate_coaching(
     # Defensive: contract says resume_improvements must have ≥ 1 actionable item.
     if not resume_improvements:
         resume_improvements = [
-            "Rework experience bullets to start with a strong verb + artifact + "
-            "metric (e.g. \"Shipped X serving Y QPS, cutting p95 by Z ms\")."
+            "Start each experience bullet with a strong action verb followed by "
+            "what you built and the result you measured."
         ]
 
+    role_label = job_title or target_job_id
     if job_skills:
         coverage = len(matching_skills)
         total = len(job_skills)
         if missing_skills:
+            top_gaps = _format_skills(missing_skills[:3])
             rationale = (
-                f"Candidate covers {coverage}/{total} ({match_score}%) of the "
-                f"required skills for \"{job_title or target_job_id}\". "
-                f"Biggest gaps: {', '.join(missing_skills[:3])}."
+                f"Candidate covers {coverage} of {total} required skills "
+                f"for the {role_label} role, which is {match_score} percent. "
+                f"The biggest gaps are {top_gaps}."
             )
         else:
             rationale = (
                 f"Candidate already covers all {total} required skills for "
-                f"\"{job_title or target_job_id}\" — focus on impact/metrics "
-                "rather than adding more skills."
+                f"the {role_label} role. Focus on demonstrating impact and "
+                "measurable outcomes rather than adding more skills."
             )
     else:
         rationale = (
-            "Target job has no declared required skills, so this coaching "
-            "focuses on presentation quality rather than skill gaps."
+            "The target job does not list required skills, so this coaching "
+            "focuses on resume presentation rather than skill gaps."
         )
 
     return CoachResponse(

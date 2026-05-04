@@ -37,6 +37,34 @@ class Settings(BaseSettings):
 
     model_config = {"env_file": ".env", "case_sensitive": False}
 
+    def validate_for_real_mode(self) -> None:
+        """Fail fast when ``USE_MOCK_SERVICES=false`` but the upstream
+        service URLs are missing or blank.
+
+        This is called once at process startup. It is a no-op when
+        ``use_mock_services`` is True, so the mock/demo path remains
+        zero-config.
+        """
+        if self.use_mock_services:
+            return
+        missing: list[str] = []
+        required = {
+            "PROFILE_SERVICE_URL": self.profile_service_url,
+            "JOB_SERVICE_URL": self.job_service_url,
+            "APPLICATION_SERVICE_URL": self.application_service_url,
+            "MESSAGING_SERVICE_URL": self.messaging_service_url,
+        }
+        for name, value in required.items():
+            if not value or not str(value).strip():
+                missing.append(name)
+        if missing:
+            raise RuntimeError(
+                "USE_MOCK_SERVICES=false but the following upstream "
+                f"service URLs are not set: {', '.join(missing)}. "
+                "Either set them in the environment or set "
+                "USE_MOCK_SERVICES=true for local development."
+            )
+
 
 @lru_cache
 def get_settings() -> Settings:
