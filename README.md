@@ -142,7 +142,7 @@ Open the Vite URL shown in the terminal and use the app through the gateway inst
 ### Backend-only validation
 If you are not running the React UI, validate the integrated stack with contract tests, `pytest`, the smoke scripts above, or API clients (for example the Postman collection under `docs/submission/`).
 
-## Data Pipeline (Member 6)
+## Data Pipeline 
 
 ### Datasets
 | Dataset | Source | Contents |
