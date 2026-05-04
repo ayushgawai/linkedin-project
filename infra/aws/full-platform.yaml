@@ -26,12 +26,14 @@ Parameters:
   ConnectionImageUri: { Type: String }
   AnalyticsImageUri: { Type: String }
   AiAgentImageUri: { Type: String }
+  PostsImageUri: { Type: String }
   DataBootstrapImageUri: { Type: String }
   DatasetS3Prefix: { Type: String, Default: raw }
   DataBucketName: { Type: String, Default: '' }
 
 Conditions:
   HasCustomDataBucketName: !Not [!Equals [!Ref DataBucketName, '']]
+  CreateManagedDataBucket: !Not [!Condition HasCustomDataBucketName]
 
 Resources:
   Vpc:
@@ -135,6 +137,8 @@ Resources:
 
   Database:
     Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Properties:
       AllocatedStorage: 20
       DBName: !Ref DbName
@@ -153,8 +157,7 @@ Resources:
 
   Cluster:
     Type: AWS::ECS::Cluster
-    Properties:
-      ClusterName: linkedinclone-full-cluster
+    Properties: {}
 
   ExecutionRole:
     Type: AWS::IAM::Role
@@ -199,8 +202,14 @@ Resources:
                   - s3:PutObject
                   - s3:ListBucket
                 Resource:
-                  - !GetAtt RawDatasetBucket.Arn
-                  - !Sub '${RawDatasetBucket.Arn}/*'
+                  - !If
+                    - HasCustomDataBucketName
+                    - !Sub 'arn:aws:s3:::${DataBucketName}'
+                    - !GetAtt RawDatasetBucket.Arn
+                  - !If
+                    - HasCustomDataBucketName
+                    - !Sub 'arn:aws:s3:::${DataBucketName}/*'
+                    - !Sub '${RawDatasetBucket.Arn}/*'
               - Effect: Allow
                 Action:
                   - secretsmanager:GetSecretValue
@@ -328,6 +337,7 @@ Resources:
 
   RawDatasetBucket:
     Type: AWS::S3::Bucket
+    Condition: CreateManagedDataBucket
     Properties:
       BucketName: !If
         - HasCustomDataBucketName
@@ -363,7 +373,7 @@ Resources:
   Namespace:
     Type: AWS::ServiceDiscovery::PrivateDnsNamespace
     Properties:
-      Name: linkedinclone.local
+      Name: !Sub '${AWS::StackName}.local'
       Vpc: !Ref Vpc
 
   # --- Service discovery registrations
@@ -391,7 +401,15 @@ Resources:
       DnsConfig:
         DnsRecords: [{ Type: A, TTL: 10 }]
 
-  # --- Supporting infra containers (Mongo / Redis / Kafka)
+  ZookeeperDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: zookeeper
+      NamespaceId: !Ref Namespace
+      DnsConfig:
+        DnsRecords: [{ Type: A, TTL: 10 }]
+
+  # --- Supporting infra containers (Mongo / Redis / Zookeeper / Kafka)
   MongoTask:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -400,6 +418,9 @@ Resources:
       Memory: 512
       NetworkMode: awsvpc
       RequiresCompatibilities: [FARGATE]
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
       ExecutionRoleArn: !GetAtt ExecutionRole.Arn
       ContainerDefinitions:
         - Name: mongodb
@@ -421,8 +442,6 @@ Resources:
           Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
       ServiceRegistries:
         - RegistryArn: !GetAtt MongoDiscovery.Arn
-          ContainerName: mongodb
-          ContainerPort: 27017
 
   RedisTask:
     Type: AWS::ECS::TaskDefinition
@@ -432,6 +451,9 @@ Resources:
       Memory: 512
       NetworkMode: awsvpc
       RequiresCompatibilities: [FARGATE]
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
       ExecutionRoleArn: !GetAtt ExecutionRole.Arn
       ContainerDefinitions:
         - Name: redis
@@ -453,8 +475,42 @@ Resources:
           Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
       ServiceRegistries:
         - RegistryArn: !GetAtt RedisDiscovery.Arn
-          ContainerName: redis
-          ContainerPort: 6379
+
+  ZookeeperTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: linkedinclone-zookeeper
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: zookeeper
+          Image: confluentinc/cp-zookeeper:7.6.1
+          PortMappings: [{ ContainerPort: 2181 }]
+          Essential: true
+          Environment:
+            - { Name: ZOOKEEPER_CLIENT_PORT, Value: '2181' }
+            - { Name: ZOOKEEPER_TICK_TIME, Value: '2000' }
+
+  ZookeeperService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref Cluster
+      DesiredCount: 1
+      LaunchType: FARGATE
+      TaskDefinition: !Ref ZookeeperTask
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: [!Ref ServiceSecurityGroup]
+          Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
+      ServiceRegistries:
+        - RegistryArn: !GetAtt ZookeeperDiscovery.Arn
 
   KafkaTask:
     Type: AWS::ECS::TaskDefinition
@@ -464,27 +520,31 @@ Resources:
       Memory: 1024
       NetworkMode: awsvpc
       RequiresCompatibilities: [FARGATE]
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
       ExecutionRoleArn: !GetAtt ExecutionRole.Arn
       ContainerDefinitions:
         - Name: kafka
-          Image: bitnami/kafka:3.7
+          Image: confluentinc/cp-kafka:7.6.1
           PortMappings: [{ ContainerPort: 9092 }]
           Essential: true
           Environment:
-            - { Name: KAFKA_CFG_NODE_ID, Value: '1' }
-            - { Name: KAFKA_CFG_PROCESS_ROLES, Value: 'broker,controller' }
-            - { Name: KAFKA_CFG_CONTROLLER_QUORUM_VOTERS, Value: '1@kafka.linkedinclone.local:9093' }
-            - { Name: KAFKA_CFG_LISTENERS, Value: 'PLAINTEXT://:9092,CONTROLLER://:9093' }
-            - { Name: KAFKA_CFG_ADVERTISED_LISTENERS, Value: 'PLAINTEXT://kafka.linkedinclone.local:9092' }
-            - { Name: KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP, Value: 'PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT' }
-            - { Name: KAFKA_CFG_CONTROLLER_LISTENER_NAMES, Value: 'CONTROLLER' }
-            - { Name: KAFKA_CFG_INTER_BROKER_LISTENER_NAME, Value: 'PLAINTEXT' }
-            - { Name: KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE, Value: 'true' }
-            - { Name: ALLOW_PLAINTEXT_LISTENER, Value: 'yes' }
+            - Name: KAFKA_ZOOKEEPER_CONNECT
+              Value: !Sub 'zookeeper.${AWS::StackName}.local:2181'
+            - { Name: KAFKA_LISTENERS, Value: 'PLAINTEXT://0.0.0.0:9092' }
+            - Name: KAFKA_ADVERTISED_LISTENERS
+              Value: !Sub 'PLAINTEXT://kafka.${AWS::StackName}.local:9092'
+            - { Name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP, Value: 'PLAINTEXT:PLAINTEXT' }
+            - { Name: KAFKA_INTER_BROKER_LISTENER_NAME, Value: 'PLAINTEXT' }
+            - { Name: KAFKA_AUTO_CREATE_TOPICS_ENABLE, Value: 'true' }
+            - { Name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, Value: '1' }
+            - { Name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, Value: '1' }
+            - { Name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, Value: '1' }
 
   KafkaService:
     Type: AWS::ECS::Service
-    DependsOn: KafkaDiscovery
+    DependsOn: [KafkaDiscovery, ZookeeperService]
     Properties:
       Cluster: !Ref Cluster
       DesiredCount: 1
@@ -497,14 +557,11 @@ Resources:
           Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
       ServiceRegistries:
         - RegistryArn: !GetAtt KafkaDiscovery.Arn
-          ContainerName: kafka
-          ContainerPort: 9092
 
   # --- Public entrypoint: ALB -> api-gateway only
   LoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: linkedinclone-full-alb
       Scheme: internet-facing
       SecurityGroups: [!Ref AlbSecurityGroup]
       Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
@@ -531,7 +588,7 @@ Resources:
   ApiGatewayLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /ecs/linkedinclone/api-gateway
+      LogGroupName: !Sub '/ecs/${AWS::StackName}/api-gateway'
       RetentionInDays: 7
 
   ApiGatewayTask:
@@ -542,6 +599,9 @@ Resources:
       Memory: 512
       NetworkMode: awsvpc
       RequiresCompatibilities: [FARGATE]
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
       ExecutionRoleArn: !GetAtt ExecutionRole.Arn
       TaskRoleArn: !GetAtt TaskRole.Arn
       ContainerDefinitions:
@@ -556,13 +616,14 @@ Resources:
               awslogs-stream-prefix: ecs
           Environment:
             - { Name: PORT, Value: '8000' }
-            - { Name: PROFILE_URL, Value: 'http://profile.linkedinclone.local:8001' }
-            - { Name: JOB_URL, Value: 'http://job.linkedinclone.local:8002' }
-            - { Name: APPLICATION_URL, Value: 'http://application.linkedinclone.local:8003' }
-            - { Name: MESSAGING_URL, Value: 'http://messaging.linkedinclone.local:8004' }
-            - { Name: CONNECTION_URL, Value: 'http://connection.linkedinclone.local:8005' }
-            - { Name: ANALYTICS_URL, Value: 'http://analytics.linkedinclone.local:8006' }
-            - { Name: AI_URL, Value: 'http://ai-agent.linkedinclone.local:8007' }
+            - { Name: PROFILE_URL, Value: !Sub 'http://profile.${AWS::StackName}.local:8001' }
+            - { Name: JOB_URL, Value: !Sub 'http://job.${AWS::StackName}.local:8002' }
+            - { Name: APPLICATION_URL, Value: !Sub 'http://application.${AWS::StackName}.local:8003' }
+            - { Name: MESSAGING_URL, Value: !Sub 'http://messaging.${AWS::StackName}.local:8004' }
+            - { Name: CONNECTION_URL, Value: !Sub 'http://connection.${AWS::StackName}.local:8005' }
+            - { Name: ANALYTICS_URL, Value: !Sub 'http://analytics.${AWS::StackName}.local:8006' }
+            - { Name: AI_URL, Value: !Sub 'http://ai-agent.${AWS::StackName}.local:8007' }
+            - { Name: POSTS_URL, Value: !Sub 'http://posts.${AWS::StackName}.local:8008' }
 
   ApiGatewayService:
     Type: AWS::ECS::Service
@@ -632,27 +693,37 @@ Resources:
       NamespaceId: !Ref Namespace
       DnsConfig: { DnsRecords: [{ Type: A, TTL: 10 }] }
 
+  PostsDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: posts
+      NamespaceId: !Ref Namespace
+      DnsConfig: { DnsRecords: [{ Type: A, TTL: 10 }] }
+
   ProfileLogGroup:
     Type: AWS::Logs::LogGroup
-    Properties: { LogGroupName: /ecs/linkedinclone/profile, RetentionInDays: 7 }
+    Properties: { LogGroupName: !Sub '/ecs/${AWS::StackName}/profile', RetentionInDays: 7 }
   JobLogGroup:
     Type: AWS::Logs::LogGroup
-    Properties: { LogGroupName: /ecs/linkedinclone/job, RetentionInDays: 7 }
+    Properties: { LogGroupName: !Sub '/ecs/${AWS::StackName}/job', RetentionInDays: 7 }
   ApplicationLogGroup:
     Type: AWS::Logs::LogGroup
-    Properties: { LogGroupName: /ecs/linkedinclone/application, RetentionInDays: 7 }
+    Properties: { LogGroupName: !Sub '/ecs/${AWS::StackName}/application', RetentionInDays: 7 }
   MessagingLogGroup:
     Type: AWS::Logs::LogGroup
-    Properties: { LogGroupName: /ecs/linkedinclone/messaging, RetentionInDays: 7 }
+    Properties: { LogGroupName: !Sub '/ecs/${AWS::StackName}/messaging', RetentionInDays: 7 }
   ConnectionLogGroup:
     Type: AWS::Logs::LogGroup
-    Properties: { LogGroupName: /ecs/linkedinclone/connection, RetentionInDays: 7 }
+    Properties: { LogGroupName: !Sub '/ecs/${AWS::StackName}/connection', RetentionInDays: 7 }
   AnalyticsLogGroup:
     Type: AWS::Logs::LogGroup
-    Properties: { LogGroupName: /ecs/linkedinclone/analytics, RetentionInDays: 7 }
+    Properties: { LogGroupName: !Sub '/ecs/${AWS::StackName}/analytics', RetentionInDays: 7 }
   AiAgentLogGroup:
     Type: AWS::Logs::LogGroup
-    Properties: { LogGroupName: /ecs/linkedinclone/ai-agent, RetentionInDays: 7 }
+    Properties: { LogGroupName: !Sub '/ecs/${AWS::StackName}/ai-agent', RetentionInDays: 7 }
+  PostsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub '/ecs/${AWS::StackName}/posts', RetentionInDays: 7 }
 
   ProfileTask:
     Type: AWS::ECS::TaskDefinition
@@ -662,6 +733,9 @@ Resources:
       Memory: 512
       NetworkMode: awsvpc
       RequiresCompatibilities: [FARGATE]
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
       ExecutionRoleArn: !GetAtt ExecutionRole.Arn
       TaskRoleArn: !GetAtt TaskRole.Arn
       ContainerDefinitions:
@@ -681,7 +755,7 @@ Resources:
             - { Name: DB_USER, Value: !Ref DbUser }
             - { Name: DB_PASS, Value: !Ref DbPassword }
             - { Name: DB_NAME, Value: !Ref DbName }
-            - { Name: KAFKA_BROKERS, Value: 'kafka.linkedinclone.local:9092' }
+            - { Name: KAFKA_BROKERS, Value: !Sub 'kafka.${AWS::StackName}.local:9092' }
             - { Name: STORAGE_PROVIDER, Value: 's3' }
             - { Name: S3_REGION, Value: !Ref AWS::Region }
             - { Name: S3_BUCKET, Value: !If [HasCustomDataBucketName, !Ref DataBucketName, !Sub '${AWS::StackName}-${AWS::AccountId}-raw-data'] }
@@ -706,8 +780,6 @@ Resources:
           Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
       ServiceRegistries:
         - RegistryArn: !GetAtt ProfileDiscovery.Arn
-          ContainerName: profile
-          ContainerPort: 8001
 
   JobTask:
     Type: AWS::ECS::TaskDefinition
@@ -717,6 +789,9 @@ Resources:
       Memory: 512
       NetworkMode: awsvpc
       RequiresCompatibilities: [FARGATE]
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
       ExecutionRoleArn: !GetAtt ExecutionRole.Arn
       TaskRoleArn: !GetAtt TaskRole.Arn
       ContainerDefinitions:
@@ -736,8 +811,8 @@ Resources:
             - { Name: DB_USER, Value: !Ref DbUser }
             - { Name: DB_PASS, Value: !Ref DbPassword }
             - { Name: DB_NAME, Value: !Ref DbName }
-            - { Name: REDIS_URL, Value: 'redis://redis.linkedinclone.local:6379' }
-            - { Name: KAFKA_BROKERS, Value: 'kafka.linkedinclone.local:9092' }
+            - { Name: REDIS_URL, Value: !Sub 'redis://redis.${AWS::StackName}.local:6379' }
+            - { Name: KAFKA_BROKERS, Value: !Sub 'kafka.${AWS::StackName}.local:9092' }
 
   JobService:
     Type: AWS::ECS::Service
@@ -754,8 +829,6 @@ Resources:
           Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
       ServiceRegistries:
         - RegistryArn: !GetAtt JobDiscovery.Arn
-          ContainerName: job
-          ContainerPort: 8002
 
   ApplicationTask:
     Type: AWS::ECS::TaskDefinition
@@ -765,6 +838,9 @@ Resources:
       Memory: 512
       NetworkMode: awsvpc
       RequiresCompatibilities: [FARGATE]
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
       ExecutionRoleArn: !GetAtt ExecutionRole.Arn
       TaskRoleArn: !GetAtt TaskRole.Arn
       ContainerDefinitions:
@@ -784,7 +860,7 @@ Resources:
             - { Name: DB_USER, Value: !Ref DbUser }
             - { Name: DB_PASS, Value: !Ref DbPassword }
             - { Name: DB_NAME, Value: !Ref DbName }
-            - { Name: KAFKA_BROKERS, Value: 'kafka.linkedinclone.local:9092' }
+            - { Name: KAFKA_BROKERS, Value: !Sub 'kafka.${AWS::StackName}.local:9092' }
 
   ApplicationService:
     Type: AWS::ECS::Service
@@ -801,8 +877,6 @@ Resources:
           Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
       ServiceRegistries:
         - RegistryArn: !GetAtt ApplicationDiscovery.Arn
-          ContainerName: application
-          ContainerPort: 8003
 
   MessagingTask:
     Type: AWS::ECS::TaskDefinition
@@ -812,6 +886,9 @@ Resources:
       Memory: 512
       NetworkMode: awsvpc
       RequiresCompatibilities: [FARGATE]
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
       ExecutionRoleArn: !GetAtt ExecutionRole.Arn
       TaskRoleArn: !GetAtt TaskRole.Arn
       ContainerDefinitions:
@@ -830,8 +907,8 @@ Resources:
             - { Name: DB_USER, Value: !Ref DbUser }
             - { Name: DB_PASS, Value: !Ref DbPassword }
             - { Name: DB_NAME, Value: !Ref DbName }
-            - { Name: KAFKA_BROKERS, Value: 'kafka.linkedinclone.local:9092' }
-            - { Name: ANALYTICS_SERVICE_URL, Value: 'http://analytics.linkedinclone.local:8006' }
+            - { Name: KAFKA_BROKERS, Value: !Sub 'kafka.${AWS::StackName}.local:9092' }
+            - { Name: ANALYTICS_SERVICE_URL, Value: !Sub 'http://analytics.${AWS::StackName}.local:8006' }
 
   MessagingService:
     Type: AWS::ECS::Service
@@ -848,8 +925,6 @@ Resources:
           Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
       ServiceRegistries:
         - RegistryArn: !GetAtt MessagingDiscovery.Arn
-          ContainerName: messaging
-          ContainerPort: 8004
 
   ConnectionTask:
     Type: AWS::ECS::TaskDefinition
@@ -859,6 +934,9 @@ Resources:
       Memory: 512
       NetworkMode: awsvpc
       RequiresCompatibilities: [FARGATE]
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
       ExecutionRoleArn: !GetAtt ExecutionRole.Arn
       TaskRoleArn: !GetAtt TaskRole.Arn
       ContainerDefinitions:
@@ -877,9 +955,9 @@ Resources:
             - { Name: DB_USER, Value: !Ref DbUser }
             - { Name: DB_PASS, Value: !Ref DbPassword }
             - { Name: DB_NAME, Value: !Ref DbName }
-            - { Name: KAFKA_BROKERS, Value: 'kafka.linkedinclone.local:9092' }
-            - { Name: ANALYTICS_SERVICE_URL, Value: 'http://analytics.linkedinclone.local:8006' }
-            - { Name: MONGO_URI, Value: 'mongodb://mongodb.linkedinclone.local:27017' }
+            - { Name: KAFKA_BROKERS, Value: !Sub 'kafka.${AWS::StackName}.local:9092' }
+            - { Name: ANALYTICS_SERVICE_URL, Value: !Sub 'http://analytics.${AWS::StackName}.local:8006' }
+            - { Name: MONGO_URI, Value: !Sub 'mongodb://mongodb.${AWS::StackName}.local:27017' }
             - { Name: MONGO_DB, Value: !Ref DbName }
 
   ConnectionService:
@@ -897,8 +975,6 @@ Resources:
           Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
       ServiceRegistries:
         - RegistryArn: !GetAtt ConnectionDiscovery.Arn
-          ContainerName: connection
-          ContainerPort: 8005
 
   AnalyticsTask:
     Type: AWS::ECS::TaskDefinition
@@ -908,6 +984,9 @@ Resources:
       Memory: 512
       NetworkMode: awsvpc
       RequiresCompatibilities: [FARGATE]
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
       ExecutionRoleArn: !GetAtt ExecutionRole.Arn
       TaskRoleArn: !GetAtt TaskRole.Arn
       ContainerDefinitions:
@@ -927,9 +1006,9 @@ Resources:
             - { Name: DB_USER, Value: !Ref DbUser }
             - { Name: DB_PASS, Value: !Ref DbPassword }
             - { Name: DB_NAME, Value: !Ref DbName }
-            - { Name: MONGO_URI, Value: 'mongodb://mongodb.linkedinclone.local:27017' }
-            - { Name: REDIS_URL, Value: 'redis://redis.linkedinclone.local:6379' }
-            - { Name: KAFKA_BROKERS, Value: 'kafka.linkedinclone.local:9092' }
+            - { Name: MONGO_URI, Value: !Sub 'mongodb://mongodb.${AWS::StackName}.local:27017' }
+            - { Name: REDIS_URL, Value: !Sub 'redis://redis.${AWS::StackName}.local:6379' }
+            - { Name: KAFKA_BROKERS, Value: !Sub 'kafka.${AWS::StackName}.local:9092' }
             - { Name: BENCH_ADMIN_TOKEN, Value: 'dev-only' }
 
   AnalyticsService:
@@ -947,8 +1026,6 @@ Resources:
           Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
       ServiceRegistries:
         - RegistryArn: !GetAtt AnalyticsDiscovery.Arn
-          ContainerName: analytics
-          ContainerPort: 8006
 
   AiAgentTask:
     Type: AWS::ECS::TaskDefinition
@@ -958,6 +1035,9 @@ Resources:
       Memory: 1024
       NetworkMode: awsvpc
       RequiresCompatibilities: [FARGATE]
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
       ExecutionRoleArn: !GetAtt ExecutionRole.Arn
       TaskRoleArn: !GetAtt TaskRole.Arn
       ContainerDefinitions:
@@ -977,14 +1057,45 @@ Resources:
             - { Name: DB_USER, Value: !Ref DbUser }
             - { Name: DB_PASS, Value: !Ref DbPassword }
             - { Name: DB_NAME, Value: !Ref DbName }
-            - { Name: MONGO_URI, Value: 'mongodb://mongodb.linkedinclone.local:27017' }
-            - { Name: KAFKA_BROKERS, Value: 'kafka.linkedinclone.local:9092' }
+            - { Name: MONGO_URI, Value: !Sub 'mongodb://mongodb.${AWS::StackName}.local:27017' }
+            - { Name: KAFKA_BROKERS, Value: !Sub 'kafka.${AWS::StackName}.local:9092' }
           Secrets:
             - { Name: OPENAI_API_KEY, ValueFrom: !Sub '${AppSecrets}:openai_api_key::' }
 
+  PostsTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: linkedinclone-posts
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: posts
+          Image: !Ref PostsImageUri
+          PortMappings: [{ ContainerPort: 8008 }]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref PostsLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          Environment:
+            - { Name: PORT, Value: '8008' }
+            - { Name: DB_HOST, Value: !GetAtt Database.Endpoint.Address }
+            - { Name: DB_PORT, Value: '3306' }
+            - { Name: DB_USER, Value: !Ref DbUser }
+            - { Name: DB_PASS, Value: !Ref DbPassword }
+            - { Name: DB_NAME, Value: !Ref DbName }
+
   DataBootstrapLogGroup:
     Type: AWS::Logs::LogGroup
-    Properties: { LogGroupName: /ecs/linkedinclone/data-bootstrap, RetentionInDays: 7 }
+    Properties: { LogGroupName: !Sub '/ecs/${AWS::StackName}/data-bootstrap', RetentionInDays: 7 }
 
   DataBootstrapTask:
     Type: AWS::ECS::TaskDefinition
@@ -994,6 +1105,9 @@ Resources:
       Memory: 1024
       NetworkMode: awsvpc
       RequiresCompatibilities: [FARGATE]
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
       ExecutionRoleArn: !GetAtt ExecutionRole.Arn
       TaskRoleArn: !GetAtt TaskRole.Arn
       ContainerDefinitions:
@@ -1012,7 +1126,7 @@ Resources:
             - { Name: DB_USER, Value: !Ref DbUser }
             - { Name: DB_PASS, Value: !Ref DbPassword }
             - { Name: DB_NAME, Value: !Ref DbName }
-            - { Name: MONGO_URI, Value: 'mongodb://mongodb.linkedinclone.local:27017' }
+            - { Name: MONGO_URI, Value: !Sub 'mongodb://mongodb.${AWS::StackName}.local:27017' }
             - { Name: AWS_REGION, Value: !Ref AWS::Region }
             - { Name: DATASET_S3_BUCKET, Value: !If [HasCustomDataBucketName, !Ref DataBucketName, !Sub '${AWS::StackName}-${AWS::AccountId}-raw-data'] }
             - { Name: DATASET_S3_PREFIX, Value: !Ref DatasetS3Prefix }
@@ -1050,13 +1164,27 @@ Resources:
           Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
       ServiceRegistries:
         - RegistryArn: !GetAtt AiAgentDiscovery.Arn
-          ContainerName: ai-agent
-          ContainerPort: 8007
+
+  PostsService:
+    Type: AWS::ECS::Service
+    DependsOn: [MongoService, RedisService, KafkaService, BootstrapSeedRun]
+    Properties:
+      Cluster: !Ref Cluster
+      DesiredCount: 1
+      LaunchType: FARGATE
+      TaskDefinition: !Ref PostsTask
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: [!Ref ServiceSecurityGroup]
+          Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
+      ServiceRegistries:
+        - RegistryArn: !GetAtt PostsDiscovery.Arn
 
 Outputs:
   AlbDnsName: { Value: !GetAtt LoadBalancer.DNSName }
   DatabaseEndpoint: { Value: !GetAtt Database.Endpoint.Address }
-  ServiceNamespace: { Value: linkedinclone.local }
+  ServiceNamespace: { Value: !Sub '${AWS::StackName}.local' }
   RawDatasetBucketName: { Value: !If [HasCustomDataBucketName, !Ref DataBucketName, !Sub '${AWS::StackName}-${AWS::AccountId}-raw-data'] }
   AppSecretsArn: { Value: !Ref AppSecrets }
   KaggleSecretsArn: { Value: !Ref KaggleSecrets }
