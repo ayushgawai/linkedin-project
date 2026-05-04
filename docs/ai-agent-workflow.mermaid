@@ -28,7 +28,7 @@ flowchart TD
         A7["POST /ai/approve\nstore decision in MongoDB"]
     end
 
-    subgraph ExternalServices["External Services (mocked)"]
+    subgraph ExternalServices["External Services (real microservices over REST)"]
         E1[Application Service :8003\nPOST /applications/byJob]
         E2[Profile Service :8001\nPOST /members/get]
         E3[Messaging Service :8004\nPOST /messages/send]
