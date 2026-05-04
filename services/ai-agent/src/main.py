@@ -76,6 +76,11 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
 
     logger.info("AI Agent Service starting up…")
 
+    # Fail fast when running in real-integration mode without all upstream
+    # service URLs configured. This prevents a partially-wired deployment
+    # from silently returning empty results from missing services.
+    get_settings().validate_for_real_mode()
+
     # Ensure MongoDB indexes (safe to call repeatedly)
     ensure_indexes()
 
