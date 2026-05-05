@@ -35,6 +35,7 @@ export type AiShortlistCandidate = {
   candidate_name?: string
   candidate_headline?: string
   candidate_skills?: string[]
+  matched_skills?: string[]
   score: number
   skill_overlap?: number
   embedding_similarity?: number

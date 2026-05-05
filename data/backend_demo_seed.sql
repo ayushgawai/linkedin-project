@@ -192,6 +192,80 @@ ON DUPLICATE KEY UPDATE
   start_year = VALUES(start_year),
   end_year = VALUES(end_year);
 
+INSERT INTO member_experience (
+  exp_id,
+  member_id,
+  company,
+  title,
+  start_date,
+  end_date,
+  description,
+  is_current
+)
+VALUES
+(
+  '33333333-3333-3333-3333-333333330111',
+  '66666666-6666-6666-6666-666666666666',
+  'Nimbus Labs',
+  'Software Engineer',
+  '2022-06-01',
+  '2024-08-01',
+  'Built internal tooling, API integrations, and data pipelines for a cloud analytics product.',
+  FALSE
+),
+(
+  '33333333-3333-3333-3333-333333330112',
+  '77777777-7777-7777-7777-777777777777',
+  'Cloudline Ventures',
+  'Backend Engineering Intern',
+  '2024-05-01',
+  NULL,
+  'Implemented service instrumentation and support workflows for candidate operations.',
+  TRUE
+)
+ON DUPLICATE KEY UPDATE
+  company = VALUES(company),
+  title = VALUES(title),
+  start_date = VALUES(start_date),
+  end_date = VALUES(end_date),
+  description = VALUES(description),
+  is_current = VALUES(is_current);
+
+INSERT INTO member_education (
+  edu_id,
+  member_id,
+  institution,
+  degree,
+  field,
+  start_year,
+  end_year
+)
+VALUES
+(
+  '44444444-4444-4444-4444-444444440111',
+  '66666666-6666-6666-6666-666666666666',
+  'San Jose State University',
+  'BS',
+  'Computer Science',
+  2018,
+  2022
+),
+(
+  '44444444-4444-4444-4444-444444440112',
+  '77777777-7777-7777-7777-777777777777',
+  'University of California, Berkeley',
+  'BS',
+  'Electrical Engineering and Computer Sciences',
+  2023,
+  2027
+)
+ON DUPLICATE KEY UPDATE
+  institution = VALUES(institution),
+  degree = VALUES(degree),
+  field = VALUES(field),
+  start_year = VALUES(start_year),
+  end_year = VALUES(end_year);
+
 INSERT INTO jobs (
   job_id,
   company_id,

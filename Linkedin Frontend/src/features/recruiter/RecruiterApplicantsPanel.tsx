@@ -249,6 +249,28 @@ export function RecruiterApplicantsPanel({ jobId, mode, onCloseEmbedded }: Recru
             description: `${applicant.member_name} will see this in Notifications (refresh if already open).`,
           })
         }
+        if (vars.status === 'offer') {
+          try {
+            await updateMemberApplicationStatus(vars.applicationId, 'offer', undefined, applicant.member_id)
+          } catch {
+            /* tracker row may be missing for seeded-only applicants */
+          }
+          const meta = await resolveJobMeta()
+          if (USE_MOCKS) {
+            pushMockApplicationOutcomeNotification({
+              recipient_member_id: applicant.member_id,
+              job_id: jobId,
+              job_title: meta.title,
+              company_name: meta.company_name,
+              kind: 'offer',
+            })
+          }
+          toast({
+            variant: 'success',
+            title: 'Offer sent',
+            description: `${applicant.member_name} will see this in Notifications (refresh if already open).`,
+          })
+        }
         if (vars.status === 'rejected') {
           try {
             await updateMemberApplicationStatus(vars.applicationId, 'rejected', undefined, applicant.member_id)
@@ -481,7 +503,7 @@ export function RecruiterApplicantsPanel({ jobId, mode, onCloseEmbedded }: Recru
                         size="sm"
                         variant="destructive"
                         loading={updateMutation.isPending}
-                        disabled={undoMutation.isPending || current.status === 'rejected'}
+                        disabled={undoMutation.isPending || current.status === 'rejected' || current.status === 'offer'}
                         onClick={() => updateMutation.mutate({ applicationId: current.application_id, status: 'rejected' })}
                       >
                         Reject

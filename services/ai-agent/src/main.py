@@ -1228,8 +1228,8 @@ async def skill_match(body: MatchRequest) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _extract_resume_text(b64_content: str, filename: str) -> str:
-    """Decode a base64-encoded resume file and extract plain text."""
+def _extract_resume_text(b64_content: str, filename: str) -> tuple[bytes, str]:
+    """Decode a base64-encoded resume and return (raw_bytes, extracted_text)."""
     import base64
     import io
 
@@ -1237,7 +1237,7 @@ def _extract_resume_text(b64_content: str, filename: str) -> str:
         raw = base64.b64decode(b64_content)
     except Exception as exc:
         logger.warning("resume base64 decode failed: {}", exc)
-        return ""
+        return b"", ""
 
     ext = (filename or "").lower().rsplit(".", 1)[-1] if "." in (filename or "") else ""
 
@@ -1245,22 +1245,21 @@ def _extract_resume_text(b64_content: str, filename: str) -> str:
         try:
             import pypdf
             reader = pypdf.PdfReader(io.BytesIO(raw))
-            return "\n".join(page.extract_text() or "" for page in reader.pages)
+            return raw, "\n".join(page.extract_text() or "" for page in reader.pages)
         except Exception as exc:
             logger.warning("PDF parse failed, falling back to raw decode: {}", exc)
-            return raw.decode("utf-8", errors="ignore")
+            return raw, raw.decode("utf-8", errors="ignore")
 
     if ext == "docx":
         try:
             import docx as python_docx
             doc = python_docx.Document(io.BytesIO(raw))
-            return "\n".join(p.text for p in doc.paragraphs)
+            return raw, "\n".join(p.text for p in doc.paragraphs)
         except Exception as exc:
             logger.warning("DOCX parse failed, falling back to raw decode: {}", exc)
-            return raw.decode("utf-8", errors="ignore")
+            return raw, raw.decode("utf-8", errors="ignore")
 
-    # txt / any other text format
-    return raw.decode("utf-8", errors="ignore")
+    return raw, raw.decode("utf-8", errors="ignore")
 
 
 async def _run_coach(
@@ -1269,6 +1268,7 @@ async def _run_coach(
     trace_id: str,
     task_id: str,
     resume_text: str | None,
+    resume_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Shared logic for both coach endpoints."""
     from .skills.career_coach import generate_coaching
@@ -1308,19 +1308,25 @@ async def _run_coach(
             logger.error("MongoDB failure update also failed: {}", db_exc)
         return _err("SKILL_ERROR", str(exc), trace_id=trace_id)
 
+    result_dict = response.model_dump()
+    if resume_meta:
+        result_dict["resume_id"] = resume_meta.get("resume_id")
+        result_dict["resume_filename"] = resume_meta.get("filename")
+        result_dict["resume_download_url"] = resume_meta.get("download_url")
+
     try:
         get_ai_traces().update_one(
             {"task_id": task_id},
             {"$set": {
                 "status": TaskStatus.COMPLETED.value,
-                "result": response.model_dump(),
+                "result": result_dict,
                 "updated_at": datetime.utcnow(),
             }},
         )
     except Exception as exc:
         logger.error("MongoDB update failed for ai/coach: {}", exc)
 
-    return _ok(response.model_dump(), trace_id)
+    return _ok(result_dict, trace_id)
 
 
 @app.post("/ai/coach", tags=["Skills"])
@@ -1336,16 +1342,56 @@ async def ai_coach(body: CoachRequest) -> dict[str, Any]:
     task_id = str(uuid.uuid4())
 
     resume_text: str | None = None
+    resume_meta: dict[str, Any] | None = None
+
     if body.resume_base64 and body.resume_base64.strip():
-        resume_text = _extract_resume_text(
-            body.resume_base64, body.resume_filename or ""
+        raw_bytes, resume_text = _extract_resume_text(
+            body.resume_base64, body.resume_filename or "resume.pdf"
         )
         if resume_text:
-            logger.info(
-                "coach: resume extracted len={} trace={}",
-                len(resume_text), trace_id,
-            )
+            logger.info("coach: resume extracted len={} trace={}", len(resume_text), trace_id)
+        if raw_bytes:
+            try:
+                from .resume_store import store_resume
+                resume_meta = store_resume(
+                    member_id=body.member_id,
+                    filename=body.resume_filename or "resume.pdf",
+                    raw_bytes=raw_bytes,
+                    extracted_text=resume_text or "",
+                    job_id=body.target_job_id,
+                )
+            except Exception as exc:
+                logger.warning("resume storage failed (non-fatal): {}", exc)
 
     return await _run_coach(
-        body.member_id, body.target_job_id, trace_id, task_id, resume_text
+        body.member_id, body.target_job_id, trace_id, task_id, resume_text, resume_meta
     )
+
+
+@app.get("/ai/resumes/{member_id}", tags=["Skills"])
+async def list_member_resumes(member_id: str) -> dict[str, Any]:
+    """List all resumes uploaded by a member."""
+    trace_id = str(uuid.uuid4())
+    try:
+        from .resume_store import list_resumes_for_member
+        resumes = list_resumes_for_member(member_id)
+        return _ok({"resumes": resumes, "count": len(resumes)}, trace_id)
+    except Exception as exc:
+        return _err("RESUME_ERROR", str(exc), trace_id=trace_id)
+
+
+@app.get("/ai/resume/download/{resume_id}", tags=["Skills"])
+async def get_resume_download(resume_id: str) -> dict[str, Any]:
+    """Get a fresh download URL for a specific resume."""
+    trace_id = str(uuid.uuid4())
+    try:
+        from .resume_store import get_resume_metadata, get_download_url
+        meta = get_resume_metadata(resume_id)
+        if not meta:
+            raise HTTPException(status_code=404, detail="Resume not found")
+        url = get_download_url(resume_id)
+        return _ok({"resume_id": resume_id, "download_url": url, "filename": meta.get("filename")}, trace_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return _err("RESUME_ERROR", str(exc), trace_id=trace_id)

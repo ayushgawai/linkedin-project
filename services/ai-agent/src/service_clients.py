@@ -222,6 +222,9 @@ async def get_job(job_id: str) -> dict[str, Any]:
             resp = await client.post(url, json=payload)
             resp.raise_for_status()
             data = resp.json()
+            # Job service returns data directly (no { data: {...} } wrapper)
+            if "job_id" in data:
+                return data
             return data.get("data", {})
     except Exception as exc:
         logger.error("get_job failed for {}: {}", job_id, exc)
@@ -325,6 +328,9 @@ async def get_member_profile(member_id: str) -> dict[str, Any]:
             resp = await client.post(url, json=payload)
             resp.raise_for_status()
             data = resp.json()
+            # Profile service returns data directly (no { data: {...} } wrapper)
+            if "member_id" in data:
+                return data
             return data.get("data", {})
     except Exception as exc:
         logger.error("get_member_profile failed for {}: {}", member_id, exc)

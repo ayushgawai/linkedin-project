@@ -12,6 +12,8 @@ Results are persisted to MongoDB ``ai_traces``.
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import re
 import uuid
 from datetime import datetime
@@ -129,6 +131,52 @@ _YEAR_RANGE_RE = re.compile(
 _INSTITUTION_KEYWORDS = {
     "university", "college", "institute", "school", "academy",
 }
+
+
+def _decode_resume_data_url(resume_text: str) -> str:
+    """Convert a browser data URL resume payload into plain text.
+
+    The frontend often stores uploaded resumes as ``data:...;base64,...`` so
+    recruiters can download the original file. The parser needs the extracted
+    plain text, not the raw data URL. This helper decodes PDF/DOCX/TXT payloads
+    and falls back to UTF-8 decoding if structured extraction fails.
+    """
+    text = (resume_text or "").strip()
+    if not text.startswith("data:") or "," not in text:
+        return text
+
+    meta, payload = text.split(",", 1)
+    mime = meta[5:].split(";")[0].strip().lower()
+    try:
+        raw = base64.b64decode(payload)
+    except Exception:
+        return text
+
+    if mime in {"application/pdf", "application/x-pdf"}:
+        try:
+            import pypdf
+
+            reader = pypdf.PdfReader(io.BytesIO(raw))
+            return "\n".join(page.extract_text() or "" for page in reader.pages).strip() or raw.decode("utf-8", errors="ignore")
+        except Exception:
+            return raw.decode("utf-8", errors="ignore")
+
+    if mime in {
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/msword",
+    }:
+        try:
+            import docx as python_docx
+
+            doc = python_docx.Document(io.BytesIO(raw))
+            return "\n".join(p.text for p in doc.paragraphs).strip() or raw.decode("utf-8", errors="ignore")
+        except Exception:
+            return raw.decode("utf-8", errors="ignore")
+
+    if mime.startswith("text/") or mime in {"application/json", "application/xml", "text/plain"}:
+        return raw.decode("utf-8", errors="ignore")
+
+    return raw.decode("utf-8", errors="ignore")
 
 # ---------------------------------------------------------------------------
 # Deterministic extraction helpers
@@ -291,11 +339,12 @@ async def parse_resume(
     _task_id = task_id or str(uuid.uuid4())
     _trace_id = trace_id or str(uuid.uuid4())
     parse_error: str | None = None
+    normalized_text = _decode_resume_data_url(resume_text)
 
     for attempt in range(1, 3):  # max 2 attempts
         try:
             # 1. Try LLM
-            llm_result = await _llm_parse(resume_text)
+            llm_result = await _llm_parse(normalized_text)
 
             if llm_result:
                 skills = llm_result.get("skills", [])
@@ -312,9 +361,9 @@ async def parse_resume(
                 summary = llm_result.get("summary", "")
             else:
                 # 2. Deterministic fallback
-                skills = _extract_skills(resume_text)
-                years = _extract_years_experience(resume_text)
-                education = _extract_education(resume_text)
+                skills = _extract_skills(normalized_text)
+                years = _extract_years_experience(normalized_text)
+                education = _extract_education(normalized_text)
                 summary = _build_summary(skills, years, education)
 
             result = ParseResumeResponse(

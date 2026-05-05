@@ -32,6 +32,11 @@ def get_ai_traces() -> Collection:
     return get_db()["ai_traces"]
 
 
+def get_resumes() -> Collection:
+    """Return the resumes collection (uploaded resume metadata + extracted text)."""
+    return get_db()["resumes"]
+
+
 def get_processed_events() -> Collection:
     """
     Return the processed_events collection — append-only ledger of consumed

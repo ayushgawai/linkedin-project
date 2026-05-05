@@ -225,7 +225,7 @@ function TopCandidatesCard({ candidates }: { candidates: AiShortlistCandidate[] 
           const semPct = scoreToPct(c.embedding_similarity ?? 0)
           const name = (c.candidate_name?.trim() || 'Candidate')
           const initials = name.split(/\s+/).map((s) => s[0]).slice(0, 2).join('').toUpperCase() || 'C'
-          const matchedSkills = (c.candidate_skills ?? []).slice(0, 6)
+          const matchedSkills = (c.matched_skills && c.matched_skills.length > 0 ? c.matched_skills : (c.candidate_skills ?? [])).slice(0, 6)
           return (
             <div
               key={`${c.member_id}-${idx}`}
@@ -285,7 +285,9 @@ function TopCandidatesCard({ candidates }: { candidates: AiShortlistCandidate[] 
 
               {matchedSkills.length > 0 ? (
                 <div className="mt-3">
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-text-tertiary">Top skills</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-text-tertiary">
+                    {c.matched_skills && c.matched_skills.length > 0 ? 'Matched skills' : 'Top skills'}
+                  </p>
                   <ul className="mt-1.5 flex flex-wrap gap-1.5">
                     {matchedSkills.map((s) => (
                       <li

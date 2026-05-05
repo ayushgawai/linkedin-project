@@ -175,6 +175,7 @@ async def match_candidates(
                 score=0.0,
                 skill_overlap=0.0,
                 embedding_similarity=0.0,
+                matched_skills=[],
                 rationale="Insufficient profile data",
             ))
             continue
@@ -212,6 +213,7 @@ async def match_candidates(
             score=final_score,
             skill_overlap=round(skill_overlap, 4),
             embedding_similarity=round(emb_sim, 4),
+            matched_skills=matching_skills,
             rationale=rationale,
         ))
 

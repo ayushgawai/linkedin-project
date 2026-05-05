@@ -241,6 +241,7 @@ class CandidateMatch(BaseModel):
     score: float
     skill_overlap: float
     embedding_similarity: float
+    matched_skills: list[str] = Field(default_factory=list)
     rationale: str
 
 

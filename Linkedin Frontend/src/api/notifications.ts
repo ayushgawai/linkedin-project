@@ -440,13 +440,13 @@ export async function muteNotificationType(
   writeNotificationLocalState(state)
 }
 
-/** Mock: notify the applicant when a recruiter moves them to interview or rejects them. */
+/** Mock: notify the applicant when a recruiter moves them to interview, offer, or rejects them. */
 export function pushMockApplicationOutcomeNotification(input: {
   recipient_member_id: string
   job_id: string
   job_title: string
   company_name: string
-  kind: 'interview' | 'rejected'
+  kind: 'interview' | 'offer' | 'rejected'
 }): void {
   const record: NotificationRecord = {
     notification_id: `notif-app-${input.recipient_member_id}-${Date.now()}`,
@@ -455,11 +455,15 @@ export function pushMockApplicationOutcomeNotification(input: {
     title:
       input.kind === 'interview'
         ? `Your application for ${input.job_title} moved to Interview`
-        : `Your application for ${input.job_title} was not selected`,
+        : input.kind === 'offer'
+          ? `Your application for ${input.job_title} moved forward`
+          : `Your application for ${input.job_title} was not selected`,
     preview:
       input.kind === 'interview'
         ? 'Tap to view status details'
-        : `Tap to view status details · ${input.company_name}`,
+        : input.kind === 'offer'
+          ? `${input.company_name} shared a positive update. Tap to view status details.`
+          : `Tap to view status details · ${input.company_name}`,
     timestamp: 'Just now',
     unread: true,
     target_url: `/jobs/${input.job_id}`,

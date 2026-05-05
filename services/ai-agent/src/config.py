@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     coach_llm_model: str = "gpt-4o-mini"
     coach_llm_timeout_sec: float = 45.0
 
+    # S3 resume storage — uses the existing raw-data bucket; falls back to Mongo-only when unset
+    resume_s3_bucket: str = ""
+    resume_s3_prefix: str = "resumes"
+    aws_region: str = "us-west-1"
+
     # Server
     service_port: int = 8007
     log_level: str = "INFO"
@@ -39,7 +44,7 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: str = "http://localhost:3000"
 
-    model_config = {"env_file": ".env", "case_sensitive": False}
+    model_config = {"env_file": ".env", "case_sensitive": False, "extra": "ignore"}
 
     def validate_for_real_mode(self) -> None:
         """Fail fast when ``USE_MOCK_SERVICES=false`` but the upstream
