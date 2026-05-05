@@ -178,7 +178,37 @@ export type CareerCoachResponse = {
   trace_id?: string
 }
 
-export async function getCareerCoaching(member_id: string, target_job_id: string): Promise<CareerCoachResponse> {
-  const response = await apiClient.post<unknown>('/ai/coach', { member_id, target_job_id })
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      // Strip the data URL prefix (e.g. "data:application/pdf;base64,")
+      const base64 = result.includes(',') ? result.split(',')[1] : result
+      resolve(base64)
+    }
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
+export async function getCareerCoaching(
+  member_id: string,
+  target_job_id: string,
+  resumeFile?: File | null,
+): Promise<CareerCoachResponse> {
+  let resume_base64: string | undefined
+  let resume_filename: string | undefined
+
+  if (resumeFile) {
+    resume_base64 = await fileToBase64(resumeFile)
+    resume_filename = resumeFile.name
+  }
+
+  const response = await apiClient.post<unknown>('/ai/coach', {
+    member_id,
+    target_job_id,
+    ...(resume_base64 ? { resume_base64, resume_filename } : {}),
+  })
   return unwrapApiData<CareerCoachResponse>(response.data)
 }

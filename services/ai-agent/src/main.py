@@ -238,11 +238,24 @@ def _frontend_task_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
     else:
         status = "running"
 
-    # Map steps -> frontend AiTaskStep
-    steps_out: list[dict[str, Any]] = []
-    for idx, s in enumerate(doc.get("steps", []) or []):
+    # Map steps -> frontend AiTaskStep, deduplicating by step name.
+    # The MongoDB steps array stores raw progress events (running then
+    # completed/failed for the same step name). We keep only the last
+    # entry for each step name so the frontend never shows a step as
+    # "running" when it has already completed.
+    STATUS_RANK = {"failed": 3, "rejected": 3, "completed": 2, "running": 1, "pending": 0}
+    seen: dict[str, dict[str, Any]] = {}  # step_name -> best entry so far
+    raw_steps = doc.get("steps", []) or []
+    for idx, s in enumerate(raw_steps):
         step_name = s.get("step") or f"step-{idx+1}"
         step_status = (s.get("status") or "running").lower()
+        prev = seen.get(step_name)
+        if prev is None or STATUS_RANK.get(step_status, 0) >= STATUS_RANK.get(prev.get("_st", "running"), 0):
+            seen[step_name] = {**s, "_st": step_status}
+
+    steps_out: list[dict[str, Any]] = []
+    for idx, (step_name, s) in enumerate(seen.items()):
+        step_status = s.get("_st", "running")
         agent_name = s.get("agent_name") or "AI Agent"
         if agent_name == "AI Agent":
             if "resume" in step_name or "parsing" in step_name:
@@ -259,6 +272,14 @@ def _frontend_task_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
             st = "completed" if step_status == "completed" else "rejected"
         else:
             st = "running"
+        partial = s.get("partial_result") or {}
+        output_msg = partial.get("message") if isinstance(partial, dict) else None
+        if not output_msg and isinstance(partial, dict):
+            # Summarize meaningful partial results into a readable message
+            if "application_count" in partial:
+                output_msg = f"{partial['application_count']} application(s) found"
+            elif "job_title" in partial:
+                output_msg = f"Job: {partial['job_title']}"
         steps_out.append(
             {
                 "step_id": s.get("step_id") or f"step-{idx+1}",
@@ -266,9 +287,7 @@ def _frontend_task_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
                 "step_index": idx,
                 "agent_name": agent_name,
                 "status": st,
-                "output": (s.get("partial_result") or {}).get("message")
-                if isinstance(s.get("partial_result"), dict)
-                else None,
+                "output": output_msg,
             }
         )
 
@@ -305,6 +324,9 @@ def _frontend_task_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
                     status = "completed"
                 else:
                     status = "failed" if approval and approval.get("state") == "send_failed" else "completed"
+                # Remove the generic "drafting" pipeline step so the approval step
+                # (added below) is the only "Outreach Draft Generator" entry shown.
+                steps_out = [s for s in steps_out if s.get("step_name") != "drafting"]
                 steps_out.append(
                     {
                         "step_id": drafted.get("member_id"),
@@ -1192,26 +1214,57 @@ async def skill_match(body: MatchRequest) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@app.post("/ai/coach", tags=["Skills"])
-async def ai_coach(body: CoachRequest) -> dict[str, Any]:
-    """
-    Career Coach Agent — analyses a member profile against a target job and
-    returns a structured skill-gap report (skills to add, headline rewrite,
-    concrete resume improvements, and rationale).
-    """
+def _extract_resume_text(b64_content: str, filename: str) -> str:
+    """Decode a base64-encoded resume file and extract plain text."""
+    import base64
+    import io
+
+    try:
+        raw = base64.b64decode(b64_content)
+    except Exception as exc:
+        logger.warning("resume base64 decode failed: {}", exc)
+        return ""
+
+    ext = (filename or "").lower().rsplit(".", 1)[-1] if "." in (filename or "") else ""
+
+    if ext == "pdf":
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(io.BytesIO(raw))
+            return "\n".join(page.extract_text() or "" for page in reader.pages)
+        except Exception as exc:
+            logger.warning("PDF parse failed, falling back to raw decode: {}", exc)
+            return raw.decode("utf-8", errors="ignore")
+
+    if ext == "docx":
+        try:
+            import docx as python_docx
+            doc = python_docx.Document(io.BytesIO(raw))
+            return "\n".join(p.text for p in doc.paragraphs)
+        except Exception as exc:
+            logger.warning("DOCX parse failed, falling back to raw decode: {}", exc)
+            return raw.decode("utf-8", errors="ignore")
+
+    # txt / any other text format
+    return raw.decode("utf-8", errors="ignore")
+
+
+async def _run_coach(
+    member_id: str,
+    target_job_id: str,
+    trace_id: str,
+    task_id: str,
+    resume_text: str | None,
+) -> dict[str, Any]:
+    """Shared logic for both coach endpoints."""
     from .skills.career_coach import generate_coaching
 
-    trace_id = str(uuid.uuid4())
-    task_id = str(uuid.uuid4())
-
-    # Persist task document up front so the coach trace is queryable even
-    # if the skill call fails.
     try:
         get_ai_traces().insert_one({
             "task_id": task_id,
             "trace_id": trace_id,
-            "member_id": body.member_id,
-            "target_job_id": body.target_job_id,
+            "member_id": member_id,
+            "target_job_id": target_job_id,
             "task_type": "coach",
             "status": TaskStatus.RUNNING.value,
             "steps": [],
@@ -1224,7 +1277,7 @@ async def ai_coach(body: CoachRequest) -> dict[str, Any]:
 
     try:
         response = await generate_coaching(
-            body.member_id, body.target_job_id, trace_id
+            member_id, target_job_id, trace_id, resume_text=resume_text
         )
     except Exception as exc:  # noqa: BLE001
         logger.error("coach skill failed task={} trace={}: {}", task_id, trace_id, exc)
@@ -1254,3 +1307,31 @@ async def ai_coach(body: CoachRequest) -> dict[str, Any]:
         logger.error("MongoDB update failed for ai/coach: {}", exc)
 
     return _ok(response.model_dump(), trace_id)
+
+
+@app.post("/ai/coach", tags=["Skills"])
+async def ai_coach(body: CoachRequest) -> dict[str, Any]:
+    """
+    Career Coach Agent — analyses a member profile (and optional uploaded resume)
+    against a target job and returns a structured skill-gap report.
+
+    Pass ``resume_base64`` (base64-encoded PDF/DOCX/TXT bytes) and
+    ``resume_filename`` to enable resume-specific feedback.
+    """
+    trace_id = str(uuid.uuid4())
+    task_id = str(uuid.uuid4())
+
+    resume_text: str | None = None
+    if body.resume_base64 and body.resume_base64.strip():
+        resume_text = _extract_resume_text(
+            body.resume_base64, body.resume_filename or ""
+        )
+        if resume_text:
+            logger.info(
+                "coach: resume extracted len={} trace={}",
+                len(resume_text), trace_id,
+            )
+
+    return await _run_coach(
+        body.member_id, body.target_job_id, trace_id, task_id, resume_text
+    )

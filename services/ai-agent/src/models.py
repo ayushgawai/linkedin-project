@@ -278,6 +278,8 @@ class OutreachDraftResponse(BaseModel):
 class CoachRequest(BaseModel):
     member_id: str
     target_job_id: str
+    resume_base64: Optional[str] = None   # base64-encoded PDF/DOCX/TXT bytes
+    resume_filename: Optional[str] = None  # used to detect file type
 
 
 class CoachResponse(BaseModel):

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { getCareerCoaching, type CareerCoachResponse } from '../../api/ai'
 import { getJob } from '../../api/jobs'
@@ -105,6 +105,8 @@ export default function CareerCoachPage(): JSX.Element {
   const [memberId, setMemberId] = useState(user?.member_id ?? '')
   const [targetJobId, setTargetJobId] = useState(() => params.get('target_job_id') ?? '')
   const [report, setReport] = useState<CareerCoachResponse | null>(null)
+  const [resumeFile, setResumeFile] = useState<File | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (user?.member_id) setMemberId((prev) => (prev.trim().length === 0 ? user.member_id : prev))
@@ -114,6 +116,18 @@ export default function CareerCoachPage(): JSX.Element {
 
   const coachingSelf = Boolean(user?.member_id && memberId.trim() === user.member_id)
 
+  function handleResumeChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] ?? null
+    setResumeFile(file)
+    // Reset so user can re-upload the same filename after editing
+    e.target.value = ''
+  }
+
+  function handleRemoveResume() {
+    setResumeFile(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
   const jobPreviewQuery = useQuery({
     queryKey: ['job', targetJobId.trim()],
     queryFn: () => getJob(targetJobId.trim()),
@@ -122,7 +136,7 @@ export default function CareerCoachPage(): JSX.Element {
   })
 
   const coachMutation = useMutation({
-    mutationFn: async () => getCareerCoaching(memberId.trim(), targetJobId.trim()),
+    mutationFn: async () => getCareerCoaching(memberId.trim(), targetJobId.trim(), resumeFile),
     onSuccess: (data) => setReport(data),
   })
 
@@ -139,7 +153,7 @@ export default function CareerCoachPage(): JSX.Element {
           <div>
             <h1 className="text-xl font-semibold text-text-primary">Career Coach</h1>
             <p className="mt-1 text-sm text-text-secondary">
-              Compare your profile to a target job and get headline and resume guidance. The coach API uses your profile and job IDs; we show your name and job title when we can load them.
+              Compare your profile to a target job and get headline and resume guidance. Optionally upload your resume (PDF, DOCX, or TXT) for hyper-specific, line-by-line feedback tied to the job description.
             </p>
           </div>
 
@@ -209,7 +223,40 @@ export default function CareerCoachPage(): JSX.Element {
             </div>
           </div>
 
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,.docx,.txt"
+            className="hidden"
+            onChange={handleResumeChange}
+          />
+
           <div className="flex flex-wrap items-center gap-2">
+            {/* Resume upload button */}
+            {resumeFile ? (
+              <div className="flex items-center gap-1.5 rounded-lg border border-success/40 bg-success/10 px-3 py-1.5">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0 text-success" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
+                </svg>
+                <span className="max-w-[180px] truncate text-xs font-medium text-text-primary">{resumeFile.name}</span>
+                <button
+                  type="button"
+                  aria-label="Remove resume"
+                  onClick={handleRemoveResume}
+                  className="ml-0.5 rounded-full p-0.5 text-text-tertiary hover:text-danger"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              </div>
+            ) : (
+              <Button variant="secondary" onClick={() => fileInputRef.current?.click()}>
+                Add resume
+              </Button>
+            )}
+
             <Button variant="primary" disabled={!canRun || coachMutation.isPending} onClick={() => coachMutation.mutate()}>
               {coachMutation.isPending ? 'Generating…' : 'Generate suggestions'}
             </Button>
@@ -221,7 +268,14 @@ export default function CareerCoachPage(): JSX.Element {
       {report ? (
         <Card>
           <Card.Header>
-            <h2 className="text-lg font-semibold text-text-primary">Your coaching report</h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-lg font-semibold text-text-primary">Your coaching report</h2>
+              {resumeFile ? (
+                <span className="rounded-full border border-brand-primary/30 bg-brand-primary/10 px-2 py-0.5 text-xs font-medium text-brand-primary">
+                  Resume-based
+                </span>
+              ) : null}
+            </div>
           </Card.Header>
           <Card.Body>
             <CoachReport report={report} />

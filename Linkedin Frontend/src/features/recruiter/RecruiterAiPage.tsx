@@ -144,7 +144,12 @@ function formatTaskOutcome(task: AiTask): string {
   if (task.final_output === 'shortlist_ready') return 'Shortlist ready'
   if (task.final_output === 'matches_ready') return 'Matches ready'
   if (task.final_output) return task.final_output.replace(/_/g, ' ')
-  if (task.status === 'completed') return 'Finished'
+  if (task.status === 'completed') {
+    // Check if any step mentions no applications
+    const noApps = task.steps.some((s) => (s.output ?? '').toLowerCase().includes('no application'))
+    if (noApps) return 'No candidates found'
+    return 'Finished'
+  }
   if (task.status === 'waiting_approval') return 'Awaiting your approval'
   return 'In progress'
 }
@@ -223,6 +228,15 @@ export default function RecruiterAiPage(): JSX.Element {
     enabled: Boolean(recruiterId),
   })
 
+  // Auto-select the first job when there's only one option so the native
+  // <select> visual state matches the React controlled value.
+  useEffect(() => {
+    const jobs = jobsQuery.data ?? []
+    if (jobs.length === 1 && !jobId) {
+      setJobId(jobs[0].job_id)
+    }
+  }, [jobsQuery.data, jobId])
+
   const jobTitleById = useMemo(() => {
     const m = new Map<string, string>()
     for (const job of jobsQuery.data ?? []) {
@@ -274,7 +288,9 @@ export default function RecruiterAiPage(): JSX.Element {
       return
     }
 
-    const wsBase = (import.meta.env.VITE_AI_WS_BASE_URL || import.meta.env.VITE_WS_BASE_URL).replace(/\/$/, '')
+    const apiBase = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/+$/, '') || 'http://127.0.0.1:8011'
+    const wsDefault = apiBase.replace(/^http/, 'ws')
+    const wsBase = (import.meta.env.VITE_AI_WS_BASE_URL || import.meta.env.VITE_WS_BASE_URL || wsDefault).replace(/\/$/, '')
     const wsUrl = `${wsBase}/ai/tasks/${activeTask.task_id}?token=${encodeURIComponent(token)}`
 
     try {
@@ -396,6 +412,9 @@ export default function RecruiterAiPage(): JSX.Element {
 
   useEffect(() => {
     if (!activeTask?.task_id) return
+    const isTerminal = activeTask.status === 'completed' || activeTask.status === 'failed'
+    // Poll faster while running; back off once terminal.
+    const interval = isTerminal ? 15000 : 2000
     const id = window.setInterval(async () => {
       try {
         const status = await getTaskStatus(activeTask.task_id)
@@ -409,9 +428,9 @@ export default function RecruiterAiPage(): JSX.Element {
       } catch {
         // no-op
       }
-    }, 5000)
+    }, interval)
     return () => window.clearInterval(id)
-  }, [activeTask?.task_id, queryClient])
+  }, [activeTask?.task_id, activeTask?.status, queryClient])
 
   const startMutation = useMutation({
     mutationFn: () =>
@@ -432,6 +451,19 @@ export default function RecruiterAiPage(): JSX.Element {
       setStreamLog('')
       setEvents((prev) => [{ ts: new Date().toISOString(), topic: 'ai.requests', event: 'task.started' }, ...prev])
       await tasksQuery.refetch()
+      // Immediately poll the new task status so we don't wait for the first interval tick.
+      try {
+        const status = await getTaskStatus(result.task_id)
+        queryClient.setQueryData<AiTask[]>(['ai-tasks'], (prev) => {
+          const list = prev ?? []
+          if (list.some((task) => task.task_id === status.task_id)) {
+            return list.map((task) => (task.task_id === status.task_id ? status : task))
+          }
+          return [status, ...list]
+        })
+      } catch {
+        // no-op
+      }
       toast({ variant: 'success', title: 'Copilot task started' })
     },
     onError: (error: { message?: string }) => {
@@ -1085,7 +1117,10 @@ export default function RecruiterAiPage(): JSX.Element {
                 variant="native"
                 value={jobId}
                 onValueChange={setJobId}
-                options={(jobsQuery.data ?? []).map((job) => ({ value: job.job_id, label: `${job.title} • ${job.company_name}` }))}
+                options={[
+                  ...(jobsQuery.data?.length !== 1 ? [{ value: '', label: 'Select a job…', disabled: true }] : []),
+                  ...(jobsQuery.data ?? []).map((job) => ({ value: job.job_id, label: `${job.title} • ${job.company_name}` })),
+                ]}
               />
             </div>
           ) : null}
