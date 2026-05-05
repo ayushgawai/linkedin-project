@@ -30,6 +30,25 @@ export type AiTaskStep = {
   draft_content?: string
 }
 
+export type AiShortlistCandidate = {
+  member_id: string
+  candidate_name?: string
+  candidate_headline?: string
+  candidate_skills?: string[]
+  score: number
+  skill_overlap?: number
+  embedding_similarity?: number
+  rationale?: string
+  outreach_draft?: string | null
+  draft_status?: string
+}
+
+export type AiTaskMetrics = {
+  candidates_evaluated?: number
+  top_score?: number
+  avg_score?: number
+}
+
 export type AiTask = {
   task_id: string
   trace_id: string
@@ -40,6 +59,8 @@ export type AiTask = {
   updated_at: string
   steps: AiTaskStep[]
   final_output?: string
+  shortlist?: AiShortlistCandidate[] | null
+  metrics?: AiTaskMetrics | null
   error?: string
 }
 

@@ -106,6 +106,25 @@ def _embed_local(texts: list[str], dim: int = 256) -> list[list[float]]:
 # ---------------------------------------------------------------------------
 
 
+def _explode_skill_tokens(skills: list[str] | None) -> set[str]:
+    """Split comma/pipe/slash/semicolon-glued skill entries into atomic tokens.
+
+    Handles UI inputs where a recruiter typed all skills into one box
+    (e.g. "SQS, SNS, Lambda, DynamoDB") so the skill-set used for Jaccard
+    is the actual set of skills, not a single multi-comma string.
+    """
+    out: set[str] = set()
+    for entry in (skills or []):
+        if not isinstance(entry, str):
+            continue
+        # Split on common separators recruiters might use.
+        for piece in re.split(r"[,;|/\n]+", entry):
+            tok = piece.strip().lower()
+            if tok:
+                out.add(tok)
+    return out
+
+
 async def match_candidates(
     job_id: str,
     job_description: str,
@@ -120,7 +139,7 @@ async def match_candidates(
     if not candidate_profiles:
         return MatchResponse(job_id=job_id, matches=[])
 
-    job_skill_set = {s.lower() for s in job_skills}
+    job_skill_set = _explode_skill_tokens(job_skills)
 
     # Build candidate text summaries for embedding
     candidate_texts: list[str] = []
@@ -143,10 +162,10 @@ async def match_candidates(
     matches: list[CandidateMatch] = []
 
     for idx, cp in enumerate(candidate_profiles):
-        cand_skills = {s.lower() for s in (cp.skills or [])}
+        cand_skills = _explode_skill_tokens(cp.skills)
         resume_skills: set[str] = set()
         if cp.parsed_resume:
-            resume_skills = {s.lower() for s in cp.parsed_resume.skills}
+            resume_skills = _explode_skill_tokens(cp.parsed_resume.skills)
         all_cand_skills = cand_skills | resume_skills
 
         # Edge case: no skills and no resume text
@@ -172,11 +191,21 @@ async def match_candidates(
         final_score = round(final_score, 4)
 
         matching_skills = sorted(job_skill_set & all_cand_skills)
-        rationale = (
-            f"Skill overlap {skill_overlap:.0%} "
-            f"(matched: {', '.join(matching_skills[:5]) or 'none'}); "
-            f"semantic similarity {emb_sim:.0%}."
-        )
+        missing = sorted(job_skill_set - all_cand_skills)[:5]
+        if matching_skills:
+            why = (
+                f"Matched {len(matching_skills)}/{len(job_skill_set)} required skills "
+                f"({', '.join(matching_skills[:6])})."
+            )
+            if missing:
+                why += f" Missing: {', '.join(missing)}."
+            why += f" Resume relevance to JD: {emb_sim:.0%}."
+        else:
+            why = (
+                f"No required skills matched (job needs {', '.join(sorted(job_skill_set)[:6]) or 'unspecified'}). "
+                f"Resume topic similarity {emb_sim:.0%} only — weak fit."
+            )
+        rationale = why
 
         matches.append(CandidateMatch(
             member_id=cp.member_id,

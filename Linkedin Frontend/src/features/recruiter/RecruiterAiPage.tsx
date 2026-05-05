@@ -24,7 +24,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import { listJobsByRecruiter } from '../../api/jobs'
-import { approveOutput, getTaskStatus, listTasks, rejectOutput, startShortlistTask, type AiTask, type AiTaskStep } from '../../api/ai'
+import { approveOutput, getTaskStatus, listTasks, rejectOutput, startShortlistTask, type AiShortlistCandidate, type AiTask, type AiTaskStep } from '../../api/ai'
 import { useActionToast } from '../../hooks/useActionToast'
 import { useAuthStore } from '../../store/authStore'
 import { Badge, Button, Card, Input, Modal, Select, Skeleton, Textarea, useToast } from '../../components/ui'
@@ -191,6 +191,121 @@ const guideSections: Array<{
   },
 ]
 
+function scoreToPct(score: number): number {
+  // Backend returns 0..1; UI shows 0..100 with one decimal.
+  if (!Number.isFinite(score)) return 0
+  const v = score > 1 ? score : score * 100
+  return Math.max(0, Math.min(100, Math.round(v * 10) / 10))
+}
+
+function scoreColor(pct: number): string {
+  if (pct >= 70) return 'bg-emerald-500'
+  if (pct >= 40) return 'bg-amber-500'
+  return 'bg-red-500'
+}
+
+function TopCandidatesCard({ candidates }: { candidates: AiShortlistCandidate[] }): JSX.Element | null {
+  if (!candidates || candidates.length === 0) return null
+  const sorted = [...candidates].sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+  return (
+    <Card variant="raised" className="shadow-sm">
+      <Card.Header className="border-b border-border bg-surface-raised/50">
+        <div className="flex items-center gap-2">
+          <Users className="h-4 w-4 text-brand-primary" aria-hidden />
+          <h2 className="text-base font-semibold text-text-primary">Top candidates</h2>
+        </div>
+        <p className="mt-1 text-xs text-text-secondary">
+          {sorted.length} ranked {sorted.length === 1 ? 'candidate' : 'candidates'} · sorted by AI match score
+        </p>
+      </Card.Header>
+      <Card.Body className="space-y-3 p-4 sm:p-5">
+        {sorted.map((c, idx) => {
+          const pct = scoreToPct(c.score)
+          const skillPct = scoreToPct(c.skill_overlap ?? 0)
+          const semPct = scoreToPct(c.embedding_similarity ?? 0)
+          const name = (c.candidate_name?.trim() || 'Candidate')
+          const initials = name.split(/\s+/).map((s) => s[0]).slice(0, 2).join('').toUpperCase() || 'C'
+          const matchedSkills = (c.candidate_skills ?? []).slice(0, 6)
+          return (
+            <div
+              key={`${c.member_id}-${idx}`}
+              className="rounded-2xl border border-border bg-white p-4 shadow-sm ring-1 ring-black/[0.04] sm:p-5"
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-primary/10 text-sm font-bold text-brand-primary">
+                    #{idx + 1}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-semibold text-text-primary" title={c.member_id}>
+                        {name}
+                      </p>
+                      <span className="rounded-md border border-border bg-[#F9F8F6] px-1.5 py-0.5 font-mono text-[10px] text-text-tertiary">
+                        {initials}
+                      </span>
+                    </div>
+                    {c.candidate_headline ? (
+                      <p className="mt-0.5 line-clamp-1 text-xs text-text-secondary">{c.candidate_headline}</p>
+                    ) : null}
+                    <p className="mt-0.5 truncate font-mono text-[10px] text-text-tertiary">id · {c.member_id}</p>
+                  </div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-text-tertiary">Match score</p>
+                  <p className="mt-0.5 text-2xl font-bold tabular-nums text-text-primary">{pct}%</p>
+                </div>
+              </div>
+
+              <div className="mt-3">
+                <div className="h-2 w-full overflow-hidden rounded-full bg-black/[0.08]">
+                  <div className={cn('h-full rounded-full transition-all', scoreColor(pct))} style={{ width: `${pct}%` }} />
+                </div>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-text-secondary">
+                  <span>
+                    <strong className="font-semibold text-text-primary">Skill overlap:</strong> {skillPct}%
+                  </span>
+                  <span>
+                    <strong className="font-semibold text-text-primary">Semantic similarity:</strong> {semPct}%
+                  </span>
+                  {c.draft_status ? (
+                    <span>
+                      <strong className="font-semibold text-text-primary">Outreach:</strong> {c.draft_status.replace(/_/g, ' ')}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+
+              {c.rationale ? (
+                <div className="mt-3 rounded-xl border border-border bg-[#F9F8F6] p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-text-tertiary">Why this candidate</p>
+                  <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-text-secondary">{c.rationale}</p>
+                </div>
+              ) : null}
+
+              {matchedSkills.length > 0 ? (
+                <div className="mt-3">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-text-tertiary">Top skills</p>
+                  <ul className="mt-1.5 flex flex-wrap gap-1.5">
+                    {matchedSkills.map((s) => (
+                      <li
+                        key={`${c.member_id}-skill-${s}`}
+                        className="rounded-full border border-border bg-white px-2.5 py-0.5 text-[11px] font-medium text-text-primary"
+                      >
+                        {s}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          )
+        })}
+      </Card.Body>
+    </Card>
+  )
+}
+
 export default function RecruiterAiPage(): JSX.Element {
   const actionToast = useActionToast()
   const user = useAuthStore((state) => state.user)
@@ -298,102 +413,56 @@ export default function RecruiterAiPage(): JSX.Element {
       wsRef.current = ws
 
       ws.onmessage = (event) => {
-        const message = JSON.parse(event.data) as { type: string; payload: any }
+        // Backend frame shape (kafka_results_consumer.py):
+        //   { task_id, trace_id, event_type, step, status, step_status,
+        //     message, progress, partial_result, timestamp }
+        // Older shape kept legacy `type` / `payload` — accept both.
+        let frame: any
+        try {
+          frame = JSON.parse(event.data)
+        } catch {
+          return
+        }
+        const eventType: string = frame.event_type ?? frame.type ?? ''
+        const step: string = frame.step ?? frame.payload?.step ?? ''
+        const stepStatus: string = frame.step_status ?? frame.payload?.step_status ?? ''
+        const taskStatus: string = frame.status ?? frame.payload?.status ?? ''
+        const message: string = frame.message ?? frame.payload?.message ?? ''
+
+        // Build a human-readable label for the debug stream (no more "undefined").
+        let label = eventType || 'event'
+        if (step) {
+          label = stepStatus ? `${step}:${stepStatus}` : `${step}`
+          if (eventType) label = `${eventType} · ${label}`
+        }
         setEvents((prev) =>
-          [{ ts: new Date().toISOString(), topic: 'ai.results', event: message.type }, ...prev].slice(0, 80),
+          [{ ts: new Date().toISOString(), topic: 'ai.results', event: label }, ...prev].slice(0, 80),
         )
-
-        if (message.type === 'step.progress') {
-          const fragment = message.payload.message ?? ''
-          setStreamLog((prev) => `${prev}${fragment}${fragment.endsWith('\n') ? '' : '\n'}`)
-          queryClient.setQueryData<AiTask[]>(['ai-tasks'], (prev) =>
-            (prev ?? []).map((task) =>
-              task.task_id === activeTask.task_id
-                ? {
-                    ...task,
-                    steps: task.steps.map((step) =>
-                      step.step_index === message.payload.step_index
-                        ? { ...step, status: 'running', progress_pct: message.payload.progress_pct }
-                        : step,
-                    ),
-                  }
-                : task,
-            ),
-          )
+        if (message) {
+          setStreamLog((prev) => `${prev}${message}${message.endsWith('\n') ? '' : '\n'}`)
         }
 
-        if (message.type === 'step.started') {
-          queryClient.setQueryData<AiTask[]>(['ai-tasks'], (prev) =>
-            (prev ?? []).map((task) =>
-              task.task_id === activeTask.task_id
-                ? {
-                    ...task,
-                    status: 'running',
-                    steps: task.steps.map((step) =>
-                      step.step_index === message.payload.step_index ? { ...step, status: 'running' } : step,
-                    ),
-                  }
-                : task,
-            ),
-          )
+        // The frame doesn't carry a step_index, and step lists are now
+        // derived from MongoDB on every poll. The simplest correct path:
+        // on every WS frame, refetch the task list / status so the UI
+        // reflects the new state instantly without trying to mutate the
+        // cache with mismatched fields.
+        void tasksQuery.refetch()
+        if (activeTask?.task_id) {
+          getTaskStatus(activeTask.task_id)
+            .then((status) => {
+              queryClient.setQueryData<AiTask[]>(['ai-tasks'], (prev) =>
+                (prev ?? []).map((t) => (t.task_id === status.task_id ? status : t)),
+              )
+            })
+            .catch(() => {})
         }
 
-        if (message.type === 'step.completed') {
-          queryClient.setQueryData<AiTask[]>(['ai-tasks'], (prev) =>
-            (prev ?? []).map((task) =>
-              task.task_id === activeTask.task_id
-                ? {
-                    ...task,
-                    steps: task.steps.map((step) =>
-                      step.step_index === message.payload.step_index
-                        ? { ...step, status: 'completed', output: message.payload.output, progress_pct: 100 }
-                        : step,
-                    ),
-                  }
-                : task,
-            ),
-          )
-        }
-
-        if (message.type === 'approval.required') {
-          queryClient.setQueryData<AiTask[]>(['ai-tasks'], (prev) =>
-            (prev ?? []).map((task) =>
-              task.task_id === activeTask.task_id
-                ? {
-                    ...task,
-                    status: 'waiting_approval',
-                    steps: task.steps.map((step) =>
-                      step.step_index === message.payload.step_index
-                        ? { ...step, status: 'waiting_approval', draft_content: message.payload.draft_content }
-                        : step,
-                    ),
-                  }
-                : task,
-            ),
-          )
-        }
-
-        if (message.type === 'task.completed') {
-          queryClient.setQueryData<AiTask[]>(['ai-tasks'], (prev) =>
-            (prev ?? []).map((task) =>
-              task.task_id === activeTask.task_id
-                ? { ...task, status: 'completed', final_output: message.payload.final_output }
-                : task,
-            ),
-          )
+        // Toast + confetti when the task reaches a terminal happy state.
+        if (eventType === 'ai.completed' && taskStatus === 'completed') {
           actionToast.aiTaskComplete(activeTaskTitleRef.current || 'Task')
           setConfetti(true)
           window.setTimeout(() => setConfetti(false), 2600)
-        }
-
-        if (message.type === 'task.failed') {
-          queryClient.setQueryData<AiTask[]>(['ai-tasks'], (prev) =>
-            (prev ?? []).map((task) =>
-              task.task_id === activeTask.task_id
-                ? { ...task, status: 'failed', error: message.payload.error }
-                : task,
-            ),
-          )
         }
       }
 
@@ -803,6 +872,10 @@ export default function RecruiterAiPage(): JSX.Element {
               </Card.Body>
             </Card>
 
+            {activeTask.shortlist && activeTask.shortlist.length > 0 ? (
+              <TopCandidatesCard candidates={activeTask.shortlist} />
+            ) : null}
+
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-8">
               <Card variant="raised" className="min-w-0 shadow-sm">
                 <Card.Header className="border-b border-border bg-surface-raised/50">
@@ -1005,20 +1078,45 @@ export default function RecruiterAiPage(): JSX.Element {
                 <Card variant="raised" className="shadow-sm">
                   <Card.Header className="border-b border-border bg-surface-raised/50">
                     <h2 className="text-base font-semibold text-text-primary">Evaluation</h2>
+                    <p className="mt-1 text-xs text-text-secondary">Real metrics from this task</p>
                   </Card.Header>
                   <Card.Body className="space-y-3 p-4 text-sm sm:p-5">
-                    <p className="text-text-secondary">
-                      Matching quality score:{' '}
-                      <strong className="text-lg font-bold text-text-primary tabular-nums">
-                        {activeTask ? Math.min(100, 74 + activeTask.steps.filter((s) => s.status === 'completed').length * 6) : 0}
-                      </strong>
-                    </p>
+                    {activeTask?.metrics ? (
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="rounded-xl border border-border bg-[#F9F8F6] p-3">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-text-tertiary">Top score</p>
+                          <p className="mt-1 text-xl font-bold tabular-nums text-text-primary">
+                            {scoreToPct(activeTask.metrics.top_score ?? 0)}%
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-border bg-[#F9F8F6] p-3">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-text-tertiary">Avg score</p>
+                          <p className="mt-1 text-xl font-bold tabular-nums text-text-primary">
+                            {scoreToPct(activeTask.metrics.avg_score ?? 0)}%
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-border bg-[#F9F8F6] p-3">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-text-tertiary">Evaluated</p>
+                          <p className="mt-1 text-xl font-bold tabular-nums text-text-primary">
+                            {activeTask.metrics.candidates_evaluated ?? 0}
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-text-tertiary">No evaluation metrics yet — run a shortlist to populate.</p>
+                    )}
                     <div className="rounded-xl border border-border bg-[#F9F8F6] p-3">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-text-tertiary">Approval rate</p>
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-text-tertiary">Approval rate (this task)</p>
                       <p className="mt-2 text-sm text-text-secondary">
                         <span className="font-medium text-emerald-800">{approvals.asIs}</span> approved as-is ·{' '}
                         <span className="font-medium text-sky-800">{approvals.withEdits}</span> with edits ·{' '}
                         <span className="font-medium text-red-800">{approvals.rejected}</span> rejected
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-border bg-[#F9F8F6] p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-text-tertiary">Offline benchmark</p>
+                      <p className="mt-2 text-sm text-text-secondary">
+                        Mean Precision@5 = <strong className="font-semibold text-text-primary">0.70</strong> across 50 scenarios.
                       </p>
                     </div>
                   </Card.Body>

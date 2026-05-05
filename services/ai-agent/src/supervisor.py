@@ -46,7 +46,8 @@ if TYPE_CHECKING:
 
 TOP_N = 3  # number of candidates to generate outreach drafts for
 SKILL_TIMEOUT = 30  # seconds per skill call
-MIN_OUTREACH_SCORE = 0.15  # candidates scoring below this get a "below-threshold" note instead of a draft
+MIN_OUTREACH_SCORE = 0.40  # candidates scoring below this get a "below-threshold" note instead of a draft
+MIN_SKILL_OVERLAP_FOR_OUTREACH = 0.10  # require at least one meaningfully matched required skill
 
 
 def _normalize_score_threshold(value: Any) -> float:
@@ -389,23 +390,41 @@ class HiringAssistantSupervisor:
                 profile = profiles_by_member.get(match.member_id, {})
                 parsed = parsed_resumes.get(match.member_id)
 
-                # Gate on minimum score — below threshold gets a note, not a draft.
-                if match.score < min_outreach_score:
+                candidate_name = f"{profile.get('first_name', '')} {profile.get('last_name', '')}".strip() or "Candidate"
+                candidate_headline = profile.get('headline') or ''
+                candidate_skills = profile.get('skills') or (parsed.skills if parsed else [])
+
+                # Gate on minimum score AND minimum skill overlap.
+                # A 0-skill semantic-only match is not a viable shortlist —
+                # surface it so the recruiter can see the rationale, but do
+                # not draft outreach (would mislead them into thinking the
+                # candidate is a real fit).
+                weak_skill = (match.skill_overlap or 0) < MIN_SKILL_OVERLAP_FOR_OUTREACH
+                weak_score = match.score < min_outreach_score
+                if weak_skill or weak_score:
+                    reason = "below_threshold"
+                    if weak_skill and not weak_score:
+                        reason = "no_skill_match"
+                    elif weak_skill:
+                        reason = "no_skill_match"
                     shortlist.append({
                         "member_id": match.member_id,
+                        "candidate_name": candidate_name,
+                        "candidate_headline": candidate_headline,
+                        "candidate_skills": candidate_skills,
                         "score": match.score,
                         "skill_overlap": match.skill_overlap,
                         "embedding_similarity": match.embedding_similarity,
                         "rationale": match.rationale,
                         "outreach_draft": None,
-                        "draft_status": "below_threshold",
+                        "draft_status": reason,
                     })
                     continue
 
                 outreach_req = OutreachDraftRequest(
                     member_id=match.member_id,
-                    candidate_name=f"{profile.get('first_name', '')} {profile.get('last_name', '')}".strip() or "Candidate",
-                    candidate_skills=profile.get("skills", []),
+                    candidate_name=candidate_name,
+                    candidate_skills=candidate_skills,
                     candidate_summary=parsed.summary if parsed else "",
                     job_title=job_title,
                     job_description=job_description,
@@ -428,6 +447,9 @@ class HiringAssistantSupervisor:
 
                 shortlist.append({
                     "member_id": match.member_id,
+                    "candidate_name": candidate_name,
+                    "candidate_headline": candidate_headline,
+                    "candidate_skills": candidate_skills,
                     "score": match.score,
                     "skill_overlap": match.skill_overlap,
                     "embedding_similarity": match.embedding_similarity,
@@ -436,30 +458,12 @@ class HiringAssistantSupervisor:
                     "draft_status": draft_status,
                 })
 
-            if shortlist and not any(candidate.get("outreach_draft") for candidate in shortlist):
-                # Seeded classroom/demo data can score low with deterministic
-                # fallback embeddings. Still generate one draft for the
-                # strongest candidate so the human-approval step is demoable.
-                best = shortlist[0]
-                profile = profiles_by_member.get(best["member_id"], {})
-                parsed = parsed_resumes.get(best["member_id"])
-                outreach_req = OutreachDraftRequest(
-                    member_id=best["member_id"],
-                    candidate_name=f"{profile.get('first_name', '')} {profile.get('last_name', '')}".strip() or "Candidate",
-                    candidate_skills=profile.get("skills", []),
-                    candidate_summary=parsed.summary if parsed else "",
-                    job_title=job_title,
-                    job_description=job_description,
-                    company_name=company_name,
-                )
-                try:
-                    draft = await asyncio.wait_for(
-                        draft_outreach(outreach_req), timeout=SKILL_TIMEOUT
-                    )
-                    best["outreach_draft"] = draft.draft_message
-                    best["draft_status"] = "fallback_generated"
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("Fallback outreach draft failed for {}: {}", best["member_id"], exc)
+            # NOTE: We intentionally do NOT generate a "fallback" outreach for
+            # the strongest candidate when none clear the threshold. Drafting
+            # for a 0-skill / sub-threshold match misleads the recruiter into
+            # thinking we found a real fit. A clean "no viable matches"
+            # outcome is more honest and lets the recruiter widen the search
+            # or post a job with better skills.
 
             await self._emit_progress(
                 task_id, trace_id, "drafting", "completed",
@@ -479,16 +483,19 @@ class HiringAssistantSupervisor:
             log_label = "Shortlist"
         else:
             # Match-only: return ranked candidates with scores, no drafts.
-            matches_out = [
-                {
+            matches_out = []
+            for m in top_matches:
+                p = profiles_by_member.get(m.member_id, {})
+                matches_out.append({
                     "member_id": m.member_id,
+                    "candidate_name": f"{p.get('first_name', '')} {p.get('last_name', '')}".strip() or "Candidate",
+                    "candidate_headline": p.get("headline") or "",
+                    "candidate_skills": p.get("skills") or [],
                     "score": m.score,
                     "skill_overlap": m.skill_overlap,
                     "embedding_similarity": m.embedding_similarity,
                     "rationale": m.rationale,
-                }
-                for m in top_matches
-            ]
+                })
             final_result = {"matches": matches_out, "metrics": metrics}
             log_label = "Match"
 

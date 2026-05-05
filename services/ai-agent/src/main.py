@@ -341,6 +341,18 @@ def _frontend_task_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
         elif "matches" in result:
             final_output = "matches_ready"
 
+    # Surface the ranked candidate list (shortlist or matches) so the
+    # frontend can render the "Top candidates" panel with scores + rationale.
+    shortlist_out: list[dict[str, Any]] | None = None
+    metrics_out: dict[str, Any] | None = None
+    if isinstance(result, dict):
+        if isinstance(result.get("shortlist"), list):
+            shortlist_out = result.get("shortlist")
+        elif isinstance(result.get("matches"), list):
+            shortlist_out = result.get("matches")
+        if isinstance(result.get("metrics"), dict):
+            metrics_out = result.get("metrics")
+
     return {
         "task_id": task_id,
         "trace_id": trace_id,
@@ -351,6 +363,8 @@ def _frontend_task_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
         "updated_at": updated_at.isoformat() + "Z" if hasattr(updated_at, "isoformat") else str(updated_at or ""),
         "steps": steps_out,
         "final_output": final_output,
+        "shortlist": shortlist_out,
+        "metrics": metrics_out,
         "error": doc.get("error"),
     }
 
