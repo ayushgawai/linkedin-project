@@ -21,6 +21,11 @@
 #   bash infra/perf/scripts/run_all.sh full
 #   BENCH_JMETER_DURATION=30 bash infra/perf/scripts/run_all.sh
 #
+# JMeter target (override for local direct-to-service ports):
+#   TARGET_HOST / TARGET_PORT default to the AWS ALB (:80). For localhost, the
+#   script passes each scenario's service port (8001–8006). To hit a local
+#   api-gateway on one port for all scenarios: BENCH_JMETER_PORT_OVERRIDE=8011
+#
 # JTL names include thread count: {scenario}_{mode}_{threads}u_{timestamp}.jtl
 # so charts can filter apples-to-apples (see BENCH_CHART_THREADS / compare_chart.py).
 # =============================================================================
@@ -36,6 +41,8 @@ RESULTS_DIR="$PERF_DIR/results"
 mkdir -p "$RESULTS_DIR"
 
 HOST="${BENCH_HOST:-localhost}"
+TARGET_HOST="${TARGET_HOST:-linked-loadb-bumsxkwdghxt-21024123.us-west-1.elb.amazonaws.com}"
+TARGET_PORT="${TARGET_PORT:-80}"
 THREADS="${BENCH_JMETER_THREADS:-100}"
 RAMP="${BENCH_JMETER_RAMP:-10}"
 DURATION="${BENCH_JMETER_DURATION:-60}"
@@ -136,7 +143,7 @@ else
   MODES=(on off)
 fi
 
-echo "[run_all] host=$HOST threads=$THREADS duration=${DURATION}s results=$RESULTS_DIR"
+echo "[run_all] bench_host=$HOST (docker/curl) jmeter_target=$TARGET_HOST:$TARGET_PORT threads=$THREADS duration=${DURATION}s results=$RESULTS_DIR"
 
 apply_mode() {
   local mode="$1"
@@ -173,7 +180,7 @@ flush_cache() {
 }
 
 run_one() {
-  local scenario_id="$1" scenario_name="$2" jmx="$3" port="$4" mode="$5"
+  local scenario_id="$1" scenario_name="$2" jmx="$3" service_port="$4" mode="$5"
   apply_mode "$mode"
   local ts; ts="$(date +%Y%m%d-%H%M%S)"
   local tag="${scenario_id}_${MODE_LABEL}_${THREADS}u_${ts}"
@@ -181,13 +188,22 @@ run_one() {
   local report_dir="$RESULTS_DIR/${tag}"
   mkdir -p "$report_dir"
 
+  local jport
+  if [[ -n "${BENCH_JMETER_PORT_OVERRIDE:-}" ]]; then
+    jport="$BENCH_JMETER_PORT_OVERRIDE"
+  elif [[ "$TARGET_HOST" == "localhost" || "$TARGET_HOST" == "127.0.0.1" ]]; then
+    jport="$service_port"
+  else
+    jport="$TARGET_PORT"
+  fi
+
   echo ""
   echo "[run_all] ==== Scenario $scenario_id ($scenario_name) — mode=$mode ===="
   flush_cache
   sleep 3
 
   jmeter -n -t "$PLANS_DIR/$jmx" -l "$jtl" -e -o "$report_dir" \
-    -Jhost="$HOST" -Jport="$port" \
+    -Jhost="$TARGET_HOST" -Jport="$jport" \
     -Jthreads="$THREADS" -Jrampup="$RAMP" -Jduration="$DURATION" \
     -Jdata_dir="$DATA_DIR" \
     -j "$RESULTS_DIR/${tag}.jmeter.log" \

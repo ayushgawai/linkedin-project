@@ -4,11 +4,30 @@
 // a fresh working set without editing the plans.
 //
 // Usage:  node infra/perf/scripts/extract_ids.js
+//
+// MySQL connection (same variables as services / docker-compose):
+//   Local (Docker): DB_HOST=127.0.0.1  DB_PORT=3307  (or host port from .env)
+//   AWS RDS:        DB_HOST=<DatabaseEndpoint from CloudFormation stack output>
+//                   DB_PORT=3306
+//                   DB_USER / DB_PASS / DB_NAME — match the ECS/RDS deploy
+//                   (e.g. admin + AWS_DB_PASSWORD + linkedinclone).
+//   RDS security group must allow inbound TCP 3306 from your IP (or VPN/bastion).
+//
+// Optional TLS (common for RDS):
+//   DB_SSL=true                    — enable mysql2 TLS
+//   DB_SSL_REJECT_UNAUTHORIZED=false  — set if you hit cert hostname mismatches (dev only)
 
 import mysql from 'mysql2/promise';
 import fs from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
+
+const useSsl = process.env.DB_SSL === 'true' || process.env.DB_SSL === '1';
+const ssl = useSsl
+  ? {
+      rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false',
+    }
+  : undefined;
 
 const CFG = {
   host: process.env.DB_HOST || 'localhost',
@@ -16,6 +35,7 @@ const CFG = {
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASS || 'linkedin',
   database: process.env.DB_NAME || 'linkedinclone',
+  ...(ssl ? { ssl } : {}),
 };
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
@@ -29,7 +49,7 @@ const SEARCH_KEYWORDS = [
 ];
 
 async function main() {
-  console.log('[extract] connecting to MySQL', `${CFG.host}:${CFG.port}/${CFG.database}`);
+  console.log('[extract] connecting to MySQL', `${CFG.host}:${CFG.port}/${CFG.database}`, useSsl ? '(TLS)' : '');
   const conn = await mysql.createConnection(CFG);
   try {
     await writeCsv(
